@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">huvu</string>
+    <string name="title_activity_main">huvu</string>
+    <string name="package_name">com.huvu.app</string>
+    <string name="custom_url_scheme">com.huvu.app</string>
+</resources>
