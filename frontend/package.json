@@ -4,8 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev:web": "vite --mode web",
+    "dev:phone": "vite --mode phone",
+    "dev:firetv": "vite --mode firetv",
+    "build:web": "tsc -b && vite build --mode web",
+    "build:phone": "tsc -b && vite build --mode phone",
+    "build:firetv": "tsc -b && vite build --mode firetv",
     "lint": "oxlint",
     "preview": "vite preview"
   },
