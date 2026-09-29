@@ -34,6 +34,9 @@ const FLOWER_BIG = ui.flowerSize;
 const FLOWER_SMALL = 56;
 // Words of one written reply that may grow the garland: about one flower.
 const WRITE_WORDS_MAX = 85;
+// Where the docked flower's center sits above the bottom edge: level with
+// the "write" button.
+const DOCK_Y = 46;
 
 const PHASE_HINT: Record<Exclude<VoicePhase, "idle">, string> = {
   listening: "listening",
@@ -62,6 +65,10 @@ export function Stage() {
 
   const [view, setView] = useState<View>({ kind: "stage", focus: null });
   const [mode, setMode] = useState<Mode>(initialMode);
+  // Voice mode: scrolling the stage docks the flower, small, at the bottom,
+  // so a long answer gets the screen. Tapping it, pressing the talk key, or
+  // speaking while it listens brings it back.
+  const [docked, setDocked] = useState(false);
   const [draft, setDraft] = useState("");
   // Turns asked before this moment (seeded or restored) never grow the
   // garland and are never announced.
@@ -95,6 +102,10 @@ export function Stage() {
   };
 
   const voice = useVoiceSession((text) => submit(text, transcriptRef.current ? snapshot(transcriptRef.current) : undefined));
+  if (docked && voice.transcript) setDocked(false);
+  const dock = () => {
+    if (mode === "voice" && view.kind === "stage") setDocked(true);
+  };
 
   const toStage = (focus: string | null) => {
     if (TV) (document.activeElement as HTMLElement | null)?.blur();
@@ -106,6 +117,7 @@ export function Stage() {
     if (!ui.modeSwitchable) return;
     voice.exit();
     setMode("text");
+    setDocked(false);
   };
 
   const onEdit = (turn: thread.Turn, from: Snapshot) => {
@@ -171,7 +183,9 @@ export function Stage() {
   });
   const { onFlower } = useStable({
     onFlower: () => {
-      if (mode === "voice") {
+      if (docked) {
+        setDocked(false);
+      } else if (mode === "voice") {
         leaveVoice();
       } else {
         textareaRef.current?.blur();
@@ -190,7 +204,7 @@ export function Stage() {
     } else if (up || heroId !== latest?.id) {
       toHistory(heroId);
     }
-  });
+  }, dock);
 
   const moveCursor = (step: number) => {
     if (view.kind !== "history") return;
@@ -199,13 +213,27 @@ export function Stage() {
     else if (next >= 0) setView({ kind: "history", cursor: turns[next].id });
   };
 
+  // Fire TV has no scroll gesture, so on the stage up and down scroll the
+  // list a page at a time first, the way a scroll does on web and phone:
+  // a long answer and the panels under it stay in reach. Only at the
+  // list's edge do they leave the stage.
+  const scrollList = (up: boolean) => {
+    const list = listRef.current;
+    if (!list) return false;
+    const room = up ? list.scrollTop : list.scrollHeight - list.clientHeight - list.scrollTop;
+    if (room < 1) return false;
+    list.scrollBy({ top: (up ? -0.7 : 0.7) * list.clientHeight, behavior: "smooth" });
+    dock();
+    return true;
+  };
+
   // Fire TV: up and down walk the history, right reaches the rewind
   // button of the turn in focus, left comes back.
   const onTvArrow = (e: KeyboardEvent) => {
     const current = view.kind === "history" ? view.cursor : heroId;
     const moves: Record<string, () => void> = {
-      ArrowUp: () => (view.kind === "stage" ? toHistory(heroId) : moveCursor(-1)),
-      ArrowDown: () => (view.kind === "stage" ? heroId !== latest?.id && toHistory(heroId) : moveCursor(1)),
+      ArrowUp: () => (view.kind === "stage" ? scrollList(true) || toHistory(heroId) : moveCursor(-1)),
+      ArrowDown: () => (view.kind === "stage" ? scrollList(false) || (heroId !== latest?.id && toHistory(heroId)) : moveCursor(1)),
       ArrowRight: () => current && focusables.current.get(current)?.edit?.focus(),
       ArrowLeft: () =>
         view.kind === "history" && current
@@ -232,6 +260,7 @@ export function Stage() {
       const eligible = !e.repeat && t?.tagName !== "BUTTON" && (TV ? view.kind === "stage" : !inField || draft === "");
       if (eligible) {
         e.preventDefault();
+        setDocked(false);
         if (!voice.hold()) return;
         const timer = window.setTimeout(() => {
           if (!ptt.current) return;
@@ -351,15 +380,24 @@ export function Stage() {
   // (or scrolling back down) brings it back.
   const flowerAway = inVoice && view.kind === "history";
   const voiceStage = inVoice && !flowerAway;
-  // Voice mode: the flower sits in the middle and the turn stays above it.
-  // Text mode: the flower sits in the composer and the turn fills the rest.
+  // Voice mode: the flower sits in the middle and the turn stays above it,
+  // or docked at the bottom, composer-sized, under a turn that fills the
+  // rest. Text mode: the flower sits in the composer and the turn fills
+  // the rest.
   const flowerAt =
     geo &&
     (inVoice
-      ? { x: geo.w / 2 - FLOWER_BIG / 2, y: geo.h / 2 - FLOWER_BIG / 2, scale: flowerAway ? 0.35 : 1, opacity: flowerAway ? 0 : 1 }
+      ? {
+          x: geo.w / 2 - FLOWER_BIG / 2,
+          y: (docked ? geo.h - DOCK_Y : geo.h / 2) - FLOWER_BIG / 2,
+          scale: (docked ? FLOWER_SMALL / FLOWER_BIG : 1) * (flowerAway ? 0.35 : 1),
+          opacity: flowerAway ? 0 : 1,
+        }
       : { x: geo.slotX - FLOWER_BIG / 2, y: geo.slotY - FLOWER_BIG / 2, scale: FLOWER_SMALL / FLOWER_BIG, opacity: 1 });
-  // In voice history the list stops just above the "write" button.
-  const listBottom = !geo ? 0 : voiceStage ? geo.h / 2 + FLOWER_BIG / 2 : inVoice ? 88 : geo.composerH;
+  // In voice history, and under a docked flower, the list stops just above
+  // the "write" button.
+  const listBottom = !geo ? 0 : voiceStage && !docked ? geo.h / 2 + FLOWER_BIG / 2 : inVoice ? 88 : geo.composerH;
+  const voiceCaption = voiceStage && !docked;
   // Screen readers hear each answer once, when it is complete.
   const announcement = latest && latest.at >= sessionStart && !latest.running ? latest.answer : "";
 
@@ -414,11 +452,11 @@ export function Stage() {
       <m.div
         aria-live="polite"
         initial={false}
-        animate={{ opacity: voiceStage ? 1 : 0 }}
+        animate={{ opacity: voiceCaption ? 1 : 0 }}
         transition={{ duration: 0.6, ease: EASE }}
-        inert={!voiceStage}
+        inert={!voiceCaption}
         style={{ top: `calc(50% + ${FLOWER_BIG / 2 + 20}px)` }}
-        className={`absolute inset-x-0 z-20 flex flex-col items-center ${voiceStage ? "" : "pointer-events-none"}`}
+        className={`absolute inset-x-0 z-20 flex flex-col items-center ${voiceCaption ? "" : "pointer-events-none"}`}
       >
         <p
           ref={transcriptRef}
@@ -487,7 +525,7 @@ export function Stage() {
             state={inVoice ? PHASE_FLOWER[voice.phase] : "bud"}
             size={FLOWER_BIG}
             level={voice.level}
-            label={inVoice ? "back to writing" : "speak to huvu"}
+            label={!inVoice ? "speak to huvu" : docked ? "bring the flower back" : "back to writing"}
             onClick={TV ? undefined : onFlower}
             focusable={!TV}
           />

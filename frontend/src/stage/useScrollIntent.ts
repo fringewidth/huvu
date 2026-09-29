@@ -14,8 +14,9 @@ const TOUCH_THRESHOLD = 60;
 // The list is the only thing that scrolls, so a gesture counts only once
 // the list can't take it, and only if it didn't scroll the list itself:
 // reading up to the top of a long answer and carrying on never flips the
-// view. A fresh gesture from the edge does.
-export function useScrollIntent(listRef: RefObject<HTMLElement | null>, onIntent: (up: boolean) => void) {
+// view. A fresh gesture from the edge does. `onListScroll` hears every
+// gesture the list took instead.
+export function useScrollIntent(listRef: RefObject<HTMLElement | null>, onIntent: (up: boolean) => void, onListScroll: () => void) {
   // `spent`: this gesture scrolled the list, or already fired.
   const gesture = useRef({ sum: 0, spent: false, wheelAt: 0 });
   const listMovedAt = useRef(0);
@@ -51,7 +52,10 @@ export function useScrollIntent(listRef: RefObject<HTMLElement | null>, onIntent
     const listTakes = !!list && (dy < 0 ? list.scrollTop > 0 : list.scrollTop + list.clientHeight < list.scrollHeight - 1);
     const listMoved = !!list && list.scrollTop !== listTop.current;
     if (list) listTop.current = list.scrollTop;
-    if (listTakes || listMoved) g.spent = true;
+    if (listTakes || listMoved) {
+      g.spent = true;
+      onListScroll();
+    }
     if (g.spent || now - listMovedAt.current < EDGE_REST_MS) {
       g.sum = 0;
       return;
