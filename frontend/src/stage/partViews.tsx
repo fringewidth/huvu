@@ -1,8 +1,7 @@
-import type { RichPart } from "./turns";
 import { capsClass } from "./style";
+import type { ToolPart } from "../chat/thread";
 
 // The hero views of the tool parts listed in parts.ts.
-type ToolPart = Extract<RichPart, { kind: "tool" }>;
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";

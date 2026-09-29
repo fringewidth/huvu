@@ -1,5 +1,7 @@
-import { useId } from "react";
-import { motion, useSpring, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "motion/react";
+import { memo, useId } from "react";
+import * as m from "motion/react-m";
+import { useSpring, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "motion/react";
+import { EASE } from "../stage/style";
 
 // The flower is voice mode's stand-in for huvu. Closed to a bud while you
 // type; open and dancing once voice mode is on. While it listens it swells
@@ -19,7 +21,6 @@ interface VoiceFlowerProps {
   focusable?: boolean;
 }
 
-const EASE = [0.2, 0.8, 0.2, 1] as const;
 const PETAL = "M0,0 C-20,-6 -19,-36 -3,-45 C13,-41 12,-11 0,0Z";
 const RING = [0, 72, 144, 216, 288];
 
@@ -37,7 +38,7 @@ const MOTION: Record<FlowerState, { animate: TargetAndTransition; transition: Tr
   thinking: { animate: { rotate: 360, scale: 1 }, transition: { duration: 9, repeat: Infinity, ease: "linear" } },
 };
 
-export function VoiceFlower({ state, size, level, label, onClick, focusable = true }: VoiceFlowerProps) {
+export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label, onClick, focusable = true }: VoiceFlowerProps) {
   // A loud voice swells the flower by at most a sixth, on a slow, heavy
   // spring, so it breathes with you instead of jumping at every syllable.
   const grow = useSpring(
@@ -62,46 +63,46 @@ export function VoiceFlower({ state, size, level, label, onClick, focusable = tr
       className="relative flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-1 focus-visible:ring-sindoor/70 focus-visible:ring-offset-8 focus-visible:ring-offset-transparent"
       style={{ width: size, height: size }}
     >
-      <motion.span
+      <m.span
         aria-hidden="true"
         className="absolute inset-[18%] rounded-full bg-marigold blur-2xl"
         initial={false}
         animate={{ opacity: state === "speaking" ? 0.32 : 0 }}
         transition={{ duration: 1.2, ease: EASE }}
       />
-      <motion.span aria-hidden="true" className="absolute inset-0 will-change-transform" style={{ scale: grow }}>
-        <motion.span
+      <m.span aria-hidden="true" className="absolute inset-0 will-change-transform" style={{ scale: grow }}>
+        <m.span
           className="absolute inset-0 will-change-transform"
           initial={false}
           animate={state === "listening" ? { scale: [1, 1.8], opacity: [0.4, 0] } : { scale: 1, opacity: 0 }}
           transition={state === "listening" ? { duration: 2.4, repeat: Infinity, ease: "easeOut" } : { duration: 0.6 }}
         >
           <PetalArt inner={false} />
-        </motion.span>
-        <motion.span
+        </m.span>
+        <m.span
           className="absolute inset-0 will-change-transform"
           initial={false}
           animate={{ scale: bud ? 0.7 : 1, rotate: bud ? -26 : 0 }}
           transition={{ duration: 0.9, ease: EASE }}
         >
-          <motion.span
+          <m.span
             className="absolute inset-0 will-change-transform"
             initial={false}
             animate={MOTION[state].animate}
             transition={MOTION[state].transition}
           >
             <PetalArt inner />
-          </motion.span>
-        </motion.span>
-      </motion.span>
+          </m.span>
+        </m.span>
+      </m.span>
     </button>
   );
-}
+});
 
 // The flower drawing itself, never animated from inside. `inner` adds the
 // smaller second ring and the core; without it this is the outer ring
 // alone, which the listening echo uses.
-function PetalArt({ inner }: { inner: boolean }) {
+const PetalArt = memo(function PetalArt({ inner }: { inner: boolean }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const petals = RING.map((deg) => <path key={deg} d={PETAL} fill={`url(#petal-${uid})`} transform={`rotate(${deg})`} />);
   return (
@@ -130,4 +131,4 @@ function PetalArt({ inner }: { inner: boolean }) {
       </g>
     </svg>
   );
-}
+});

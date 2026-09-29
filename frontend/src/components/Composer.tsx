@@ -1,8 +1,9 @@
-import { useLayoutEffect, type RefObject } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { enterSends, showSendButton, TARGET } from "../config/interaction";
+import { memo, useLayoutEffect, type RefObject } from "react";
+import * as m from "motion/react-m";
+import { AnimatePresence } from "motion/react";
+import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
-import { capsClass } from "../stage/style";
+import { capsClass, EASE } from "../stage/style";
 
 interface ComposerProps {
   ref: RefObject<HTMLDivElement | null>;
@@ -15,7 +16,6 @@ interface ComposerProps {
   draft: string;
   onDraft: (text: string) => void;
   onSubmit: (text: string, from: Snapshot) => void;
-  placeholder: string;
   rewinding: boolean;
   onCancelRewind: () => void;
   // A reply is still coming in; the composer offers to stop it.
@@ -23,13 +23,23 @@ interface ComposerProps {
   onStop: () => void;
 }
 
-const EASE = [0.2, 0.8, 0.2, 1] as const;
-
 // Your words are always sans serif, the same face as the YOU cue they fly
 // up into, so the text can travel without changing its type. The composer
 // never leaves the layout: voice mode only fades and lowers it, so nothing
 // around it has to reflow.
-export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onSubmit, placeholder, rewinding, onCancelRewind, running, onStop }: ComposerProps) {
+export const Composer = memo(function Composer({
+  ref,
+  slotRef,
+  textareaRef,
+  shown,
+  draft,
+  onDraft,
+  onSubmit,
+  rewinding,
+  onCancelRewind,
+  running,
+  onStop,
+}: ComposerProps) {
   const canSend = draft.trim().length > 0;
 
   // An edit flies the old ask back down into the field.
@@ -42,11 +52,11 @@ export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onS
     if (!el || !canSend) return;
     onSubmit(draft.trim(), snapshot(el));
     // Phone: the keyboard goes down so the answer gets the whole screen.
-    if (!enterSends[TARGET]) el.blur();
+    if (!ui.enterSends) el.blur();
   };
 
   return (
-    <motion.div
+    <m.div
       ref={ref}
       initial={false}
       animate={shown ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
@@ -62,7 +72,7 @@ export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onS
           </label>
           <AnimatePresence>
             {rewinding && (
-              <motion.button
+              <m.button
                 type="button"
                 onClick={onCancelRewind}
                 initial={{ opacity: 0, x: -6 }}
@@ -72,12 +82,12 @@ export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onS
                 className={`${capsClass} -my-3 min-h-11 px-2 text-ivory/60 transition-colors duration-500 hover:text-ivory`}
               >
                 cancel
-              </motion.button>
+              </m.button>
             )}
           </AnimatePresence>
           <AnimatePresence>
             {running && (
-              <motion.button
+              <m.button
                 type="button"
                 onClick={onStop}
                 initial={{ opacity: 0 }}
@@ -88,7 +98,7 @@ export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onS
               >
                 <span className="size-1.5 bg-sindoor" />
                 stop
-              </motion.button>
+              </m.button>
             )}
           </AnimatePresence>
         </div>
@@ -98,19 +108,19 @@ export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onS
             ref={textareaRef}
             rows={1}
             value={draft}
-            placeholder={placeholder}
-            enterKeyHint={enterSends[TARGET] ? "send" : "enter"}
+            placeholder={ui.placeholder}
+            enterKeyHint={ui.enterSends ? "send" : "enter"}
             onChange={(e) => onDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (!enterSends[TARGET] || e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+              if (!ui.enterSends || e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
               e.preventDefault();
               send();
             }}
             className="halo max-h-[36dvh] min-w-0 flex-1 resize-none border-0 border-b border-sindoor/40 bg-transparent pb-2 font-display text-[20px] font-medium leading-[1.4] text-ivory caret-sindoor outline-none transition-colors duration-500 [field-sizing:content] placeholder:text-ivory/40 focus:border-sindoor/90 sm:text-[24px]"
           />
           <AnimatePresence>
-            {showSendButton[TARGET] && canSend && (
-              <motion.button
+            {ui.sendButton && canSend && (
+              <m.button
                 type="button"
                 onClick={send}
                 initial={{ opacity: 0 }}
@@ -120,12 +130,12 @@ export function Composer({ ref, slotRef, textareaRef, shown, draft, onDraft, onS
                 className={`${capsClass} mb-1 flex min-h-11 shrink-0 items-center px-3 text-ivory`}
               >
                 send
-              </motion.button>
+              </m.button>
             )}
           </AnimatePresence>
           <div ref={slotRef} aria-hidden="true" className="size-14 shrink-0" />
         </div>
       </div>
-    </motion.div>
+    </m.div>
   );
-}
+});

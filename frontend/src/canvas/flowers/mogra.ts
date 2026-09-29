@@ -1,14 +1,11 @@
-// Mogra (jasmine) — ported placeholder, see genda.ts for context. Uses
-// cluster whorls: several small six-petal florets scattered around the
+// Mogra (jasmine). Several small six-petal florets scattered around the
 // slot, rather than one ring of full-size petals.
-import { rand, randInt } from "../flowerGenerator";
+import { rand, randInt } from "../util";
 import type { FlowerSpec } from "../types";
 
 export default function mogra(): FlowerSpec {
   const shape = { skew: rand(1.0, 1.15), tip: rand(0.7, 0.95), taper: 0.05, ruffle: 0, ruffleFreq: 3 };
   return {
-    name: "mogra",
-    size: 1,
     shape,
     palette: { hMin: 270, hMax: 300, sMin: 0.12, sMax: 0.25, lOuter: 0.96, lInner: 0.84, spread: 6 },
     whorls: [

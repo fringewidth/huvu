@@ -1,9 +1,11 @@
 import { memo, useLayoutEffect, useRef, useState, type Ref } from "react";
-import { AnimatePresence, motion, type Variants } from "motion/react";
+import * as m from "motion/react-m";
+import { AnimatePresence, type Variants } from "motion/react";
+import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
-import { chipsFor, kindOf, partsInSlot, type ImagePart, type Slot, type ToolPart } from "../stage/parts";
-import { capsClass } from "../stage/style";
-import type { RichPart, Turn } from "../stage/turns";
+import { chipsFor, kindOf, partsInSlot, type Slot } from "../stage/parts";
+import { capsClass, EASE } from "../stage/style";
+import type { ImagePart, RichPart, ToolPart, Turn } from "../chat/thread";
 
 // One turn, in one of two sizes. As the hero it is the whole stage: the
 // answer set large, images and panels open. As a history row it sits at
@@ -30,11 +32,8 @@ interface TurnViewProps {
   turn: Turn;
   variant: TurnVariant;
   wide: boolean;
-  editLabel: string;
   actions: TurnActions;
 }
-
-const EASE = [0.2, 0.8, 0.2, 1] as const;
 
 // Short answers are set huge; longer ones step down as they stream in.
 const HERO_TIERS = [
@@ -65,7 +64,7 @@ const fade = {
   exit: { opacity: 0, transition: { duration: 0.25, ease: EASE } },
 };
 
-export const TurnView = memo(function TurnView({ ref, turn, variant, wide, editLabel, actions }: TurnViewProps) {
+export const TurnView = memo(function TurnView({ ref, turn, variant, wide, actions }: TurnViewProps) {
   const cueRef = useRef<HTMLSpanElement>(null);
   const hero = variant === "hero";
   const chips = chipsFor(turn.parts);
@@ -81,18 +80,21 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, editL
     if (cueRef.current) land("ask", turn.ask, cueRef.current);
   }, [turn.ask]);
 
-  const fold = (slot: Slot) => (
-    <AnimatePresence initial={false} mode="popLayout">
-      {hero && partsInSlot(turn.parts, slot).length > 0 && (
-        <motion.div key={slot} {...fade}>
-          <HeroParts parts={turn.parts} slot={slot} onChoose={actions.choose} />
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
+  const fold = (slot: Slot) => {
+    const here = hero ? partsInSlot(turn.parts, slot) : [];
+    return (
+      <AnimatePresence initial={false} mode="popLayout">
+        {here.length > 0 && (
+          <m.div key={slot} {...fade}>
+            <HeroParts here={here} onChoose={actions.choose} />
+          </m.div>
+        )}
+      </AnimatePresence>
+    );
+  };
 
   return (
-    <motion.li
+    <m.li
       ref={ref}
       layout="position"
       initial={{ opacity: 0 }}
@@ -126,7 +128,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, editL
           onClick={() => cueRef.current && actions.edit(turn, snapshot(cueRef.current))}
           className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/45 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60 in-data-[target=firetv]:focus-visible:ring-2`}
         >
-          {editLabel}
+          {ui.editLabel}
         </button>
       </div>
 
@@ -136,7 +138,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, editL
         {turn.running && !turn.answer && <span className="thinking-thread" aria-label="huvu is thinking" />}
         {turn.answer && (
           <AnimatePresence initial={false} mode="popLayout" custom={shape.ratio}>
-            <motion.p
+            <m.p
               key={size.key}
               custom={shape.ratio}
               variants={crossfade}
@@ -151,7 +153,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, editL
               {/* Words fade in one by one only on the answer's first
                   appearance, not again on every size change. */}
               <AnswerText text={turn.answer} streaming={turn.running && shape.ratio === 1} />
-            </motion.p>
+            </m.p>
           </AnimatePresence>
         )}
         {turn.ending && !turn.running && (
@@ -175,21 +177,20 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, editL
 
       <AnimatePresence initial={false} mode="popLayout">
         {!hero && chips.length > 0 && (
-          <motion.div key="chips" {...fade} className="pointer-events-none relative z-10 flex flex-wrap gap-2">
+          <m.div key="chips" {...fade} className="pointer-events-none relative z-10 flex flex-wrap gap-2">
             {chips.map((chip) => (
               <span key={chip} className={`${capsClass} rounded-full border border-ivory/20 px-3 py-1.5 text-ivory/60`}>
                 {chip}
               </span>
             ))}
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
-    </motion.li>
+    </m.li>
   );
 });
 
-function HeroParts({ parts, slot, onChoose }: { parts: RichPart[]; slot: Slot; onChoose: (text: string) => void }) {
-  const here = partsInSlot(parts, slot);
+function HeroParts({ here, onChoose }: { here: RichPart[]; onChoose: (text: string) => void }) {
   const images = here.filter((p): p is ImagePart => p.kind === "image");
   const tools = here.filter((p): p is ToolPart => p.kind === "tool");
   return (

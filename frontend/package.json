@@ -14,7 +14,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@assistant-ui/react": "^0.15.21",
     "@capacitor/android": "8.5.2",
     "@capacitor/app": "^8.1.1",
     "@capacitor/cli": "8.5.2",

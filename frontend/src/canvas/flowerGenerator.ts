@@ -1,50 +1,20 @@
-// Flower generator core: turns a declarative spec (whorls, petal shape,
-// palette) into a flat list of petal poses, plus the fill routines used to
-// actually paint one. One file per real flower species lives in flowers/
-// and just describes a spec — this module is the only place that knows
-// how to resolve and draw one.
+// Turns a flower spec (whorls, petal shape, palette) into a flat list of
+// petal poses, and paints them. The species in flowers/ only describe
+// specs; this is the one place that knows how to resolve and draw one.
 import { floretDisc, floretRing } from "./cluster";
-import type {
-  Brush,
-  ClusterDiscWhorl,
-  ClusterRingWhorl,
-  CoreType,
-  FanWhorl,
-  Flower,
-  FlowerSpec,
-  Palette,
-  PaletteSpec,
-  PetalShape,
-  Point,
-  Pose,
-  RingWhorl,
-  Whorl,
-} from "./types";
-
-export const TAU = Math.PI * 2;
-
-export const rand = (a: number, b: number) => a + Math.random() * (b - a);
-export const randInt = (a: number, b: number) => Math.floor(rand(a, b + 1));
-export function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-export function hsl(h: number, s: number, l: number): string {
-  h = ((h % 360) + 360) % 360;
-  return `hsl(${h.toFixed(1)}, ${(Math.min(1, Math.max(0, s)) * 100).toFixed(1)}%, ${(Math.min(0.97, Math.max(0.3, l)) * 100).toFixed(1)}%)`;
-}
+import type { Brush, CoreType, FanWhorl, Flower, FlowerSpec, Palette, PaletteSpec, PetalShape, Point, Pose, RingWhorl, Whorl } from "./types";
+import { hsl, rand, TAU } from "./util";
 
 // A palette maps petal tone (0 = outer edge, 1 = center) to a color.
-// `nudge` shifts hue slightly; kept for later audio-reactive use.
-export function makePalette({ hMin, hMax, sMin, sMax, lOuter, lInner, spread }: PaletteSpec): Palette {
+function makePalette({ hMin, hMax, sMin, sMax, lOuter, lInner, spread }: PaletteSpec): Palette {
   const h = rand(hMin, hMax);
   const s = rand(sMin, sMax);
-  return (tone, nudge = 0) => hsl(h + (tone - 0.5) * spread + nudge * 10, s, lOuter + (lInner - lOuter) * tone);
+  return (tone) => hsl(h + (tone - 0.5) * spread, s, lOuter + (lInner - lOuter) * tone);
 }
 
-// Whorls resolve into a flat list of petal poses. "ring" (default) —
-// evenly spaced around a full circle, starting at `phase`. "fan" — spread
-// across an arc `span` wide, centered on `center`.
+// A "ring" (the default) spaces its petals evenly around a full circle,
+// starting at `phase`. A "fan" spreads them across an arc `span` wide,
+// centered on `center`.
 function resolveRing(whorl: RingWhorl): Pose[] {
   const { count, phase = 0, ...rest } = whorl;
   const poses: Pose[] = [];
@@ -64,38 +34,21 @@ function resolveFan(whorl: FanWhorl): Pose[] {
   return poses;
 }
 
-// "cluster" — scattered florets (each its own small ring of petals). The
-// scatter math lives in cluster.ts since it's a placement pattern, not
-// petal geometry.
-const CLUSTER_RESOLVERS = {
-  ring: floretRing as (w: ClusterRingWhorl | ClusterDiscWhorl) => Pose[],
-  disc: floretDisc as (w: ClusterRingWhorl | ClusterDiscWhorl) => Pose[],
-};
-
-export function resolveWhorls(whorls: Whorl[]): Pose[] {
-  const poses: Pose[] = [];
-  whorls.forEach((whorl, whorlIndex) => {
-    let resolved: Pose[];
-    if (whorl.kind === "fan") resolved = resolveFan(whorl);
-    else if (whorl.kind === "cluster") resolved = CLUSTER_RESOLVERS[whorl.clusterKind ?? "ring"](whorl);
-    else resolved = resolveRing(whorl);
-    for (const p of resolved) poses.push({ ...p, whorlIndex });
-  });
-  return poses;
+// A "cluster" scatters florets, each its own small ring (see cluster.ts).
+function resolveWhorl(whorl: Whorl): Pose[] {
+  if (whorl.kind === "fan") return resolveFan(whorl);
+  if (whorl.kind !== "cluster") return resolveRing(whorl);
+  return whorl.clusterKind === "disc" ? floretDisc(whorl) : floretRing(whorl);
 }
 
-// Builds a flower instance from a declarative spec. `shape` may be a
-// single shape object (applied to every petal) or an array with one shape
-// per whorl, so a species can e.g. make its inner whorl pointier than its
-// outer one.
+// `shape` is one shape for every petal, or one per whorl, so a species
+// can make its inner whorl pointier than its outer one.
 export function createFlower(spec: FlowerSpec): Flower {
-  const poses = resolveWhorls(spec.whorls);
-  const shapes = Array.isArray(spec.shape) ? spec.shape : null;
-  for (const p of poses) {
-    p.shape = shapes ? shapes[p.whorlIndex ?? 0] : (spec.shape as PetalShape);
-  }
+  const poses = spec.whorls.flatMap((whorl, i) => {
+    const shape = Array.isArray(spec.shape) ? spec.shape[i] : spec.shape;
+    return resolveWhorl(whorl).map((p) => ({ ...p, shape }));
+  });
   return {
-    name: spec.name,
     pal: makePalette(spec.palette),
     core: spec.core ?? "none",
     size: spec.size ?? 1,
@@ -136,8 +89,7 @@ export function petalOutline(
 }
 
 // ---------- petal fill ----------
-// Petals paint in as an instant watercolor fill, one after another. Growth
-// (the spline technique) is reserved for the garland string, not petals.
+// One instant watercolor fill.
 export function fillPetal(brush: Brush, outline: Point[], color: string, alpha: number, bleed: number, texture: number): void {
   brush.fill(color, alpha);
   brush.fillBleed(bleed, "out");
@@ -149,7 +101,7 @@ export function fillPetal(brush: Brush, outline: Point[], color: string, alpha: 
 // as flat wedges: an optional drop shadow (pose.shadow, for florets
 // scattered off-center), and either a two-tone inner petal (pose.twoTone)
 // or a brighter inner highlight layer for any petal long enough to carry
-// one. `loud` is 0..1, the current audio level — 1 for a static render.
+// one. `loud` is the voice level, 0 to 1.
 export function paintPetal(
   brush: Brush,
   flower: Flower,
@@ -157,7 +109,7 @@ export function paintPetal(
   cx0: number,
   cy0: number,
   s: number,
-  { loud = 1, nudge = 0, accent = false }: { loud?: number; nudge?: number; accent?: boolean } = {},
+  { loud = 1, accent = false }: { loud?: number; accent?: boolean } = {},
 ): void {
   const shape = pose.shape!;
   const len = pose.len * s * (0.75 + 0.5 * loud);
@@ -180,7 +132,7 @@ export function paintPetal(
   fillPetal(
     brush,
     petalOutline(cx, cy, pose.theta, pose.base * s, len, wid, curl, shape),
-    flower.pal(pose.tone, nudge),
+    flower.pal(pose.tone),
     alpha,
     0.25 + 0.4 * loud,
     0.3 + 0.3 * loud,
@@ -189,7 +141,7 @@ export function paintPetal(
     fillPetal(
       brush,
       petalOutline(cx, cy, pose.theta, pose.base * s, len * 0.45, wid * 0.7, curl, shape),
-      flower.pal(1, nudge),
+      flower.pal(1),
       70,
       0.3,
       0.3,
@@ -198,7 +150,7 @@ export function paintPetal(
     fillPetal(
       brush,
       petalOutline(cx, cy, pose.theta, pose.base * s, len * 0.5, wid * 0.55, curl, shape),
-      flower.pal(Math.min(1, pose.tone + 0.35), nudge),
+      flower.pal(Math.min(1, pose.tone + 0.35)),
       28 + 30 * loud,
       0.2,
       0.25,
@@ -217,9 +169,7 @@ function circlePts(x: number, y: number, r: number): Point[] {
   return pts;
 }
 
-// Paints the flower's center, keyed by `flower.core`. Shared across
-// species — a per-flower spec just names one of these types rather than
-// each flower file reimplementing its own center.
+// Paints the flower's center. A species names its core type in its spec.
 export function paintCore(brush: Brush, flower: Flower, cx: number, cy: number, s: number): void {
   const c: CoreType = flower.core;
   if (!c || c === "none") return;
@@ -239,7 +189,7 @@ export function paintCore(brush: Brush, flower: Flower, cx: number, cy: number, 
     const a = -Math.PI / 2 + rand(-0.5, 0.5);
     const L = s * 1.25;
     const x1 = cx + Math.cos(a) * L, y1 = cy + Math.sin(a) * L;
-    fillPetal(brush, [[cx - 2, cy], [x1 - 1.5, y1], [x1 + 1.5, y1], [cx + 2, cy]], flower.pal(1, 0), 120, 0.1, 0.2);
+    fillPetal(brush, [[cx - 2, cy], [x1 - 1.5, y1], [x1 + 1.5, y1], [cx + 2, cy]], flower.pal(1), 120, 0.1, 0.2);
     fillPetal(brush, circlePts(cx, cy, s * 0.14), hsl(350, 0.7, 0.3), 80, 0.2, 0.5);
     for (let k = 0; k < 6; k++) {
       fillPetal(brush, circlePts(x1 + rand(-0.12, 0.12) * s, y1 + rand(-0.12, 0.12) * s, s * 0.04), hsl(48, 0.95, 0.6), 100, 0.1, 0.2);

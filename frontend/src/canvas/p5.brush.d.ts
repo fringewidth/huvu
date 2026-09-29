@@ -1,7 +1,5 @@
-// p5.brush ships no types. GardenCanvas.tsx imports the module namespace
-// and casts it to the `Brush` interface in types.ts, which is the actual
-// source of truth for what we call on it — this just satisfies the
-// import itself.
+// p5.brush ships no types. garden.ts casts the module to `Brush` in
+// types.ts; this only lets the import resolve.
 declare module "p5.brush/standalone" {
   const brush: unknown;
   export default brush;

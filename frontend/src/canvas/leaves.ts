@@ -1,11 +1,9 @@
-// Leaves along the garland thread. A leaf is just a petal shape at leaf
-// proportions, so this reuses petalOutline/fillPetal from the generator
-// rather than defining its own geometry.
-import { fillPetal, hsl, petalOutline, rand } from "./flowerGenerator";
+// Leaves along the garland thread. A leaf is a petal at leaf proportions.
+import { fillPetal, petalOutline } from "./flowerGenerator";
 import type { Brush, LeafType, PetalShape } from "./types";
+import { hsl, rand } from "./util";
 
-// Keyed by the `leaf` field a flower spec names. 'none' means the species
-// doesn't get a leaf dropped next to it on the strand.
+// Keyed by the `leaf` a flower spec names. "none" gets no leaf.
 const LEAF_SHAPES: Partial<Record<LeafType, PetalShape & { aspect: number }>> = {
   oval: { skew: 1.0, tip: 1.0, taper: 0.1, ruffle: 0, ruffleFreq: 3, aspect: 0.34 },
   long: { skew: 1.3, tip: 1.2, taper: 0.05, ruffle: 0, ruffleFreq: 3, aspect: 0.22 },

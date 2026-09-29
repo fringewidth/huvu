@@ -1,13 +1,11 @@
-// Champa (plumeria) — ported placeholder, see genda.ts for context.
-import { pick, rand } from "../flowerGenerator";
+// Champa (plumeria).
+import { pick, rand } from "../util";
 import type { FlowerSpec } from "../types";
 
 export default function champa(): FlowerSpec {
   const shape = { skew: rand(1.35, 1.6), tip: rand(0.6, 0.8), taper: 0, ruffle: 0, ruffleFreq: 3 };
   const twist = pick([-1, 1]) * rand(0.25, 0.4);
   return {
-    name: "champa",
-    size: 1,
     shape,
     palette: { hMin: 40, hMax: 55, sMin: 0.7, sMax: 0.9, lOuter: 0.93, lInner: 0.7, spread: 4 },
     whorls: [

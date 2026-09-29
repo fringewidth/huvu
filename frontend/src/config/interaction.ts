@@ -1,59 +1,86 @@
 export type Target = "web" | "phone" | "firetv";
 export type Mode = "text" | "voice";
 
-const VALID_TARGETS: Target[] = ["web", "phone", "firetv"];
+// Everything about how the UI behaves on one build target. This answers
+// "what does this screen look like". What the device can do (wake word is
+// Android only) is a platform check, kept apart from this on purpose.
+interface Profile {
+  defaultMode: Mode;
+  // Fire TV is voice only, with no toggle rendered at all.
+  modeSwitchable: boolean;
+  // Enter sends on web. Phone keyboards put Enter where a new line
+  // belongs, so phone sends only with its send button.
+  enterSends: boolean;
+  sendButton: boolean;
+  // The key held down to talk. Release sends. Phone has no hardware key
+  // for this, so the flower is the only way into voice there. Fire TV's
+  // select button arrives in the WebView as Enter.
+  pushToTalkKey: string | null;
+  placeholder: string;
+  idleHint: string;
+  // Fire TV has no text, so editing a turn there means asking it again.
+  editLabel: string;
+  // The voice flower's full size, in px.
+  flowerSize: number;
+  // Phone screens are dense enough that 1.5x looks like 2x, at almost half
+  // the pixels for the garden to wash every frame.
+  maxPixelDensity: number;
+}
 
+const PROFILES: Record<Target, Profile> = {
+  web: {
+    defaultMode: "text",
+    modeSwitchable: true,
+    enterSends: true,
+    sendButton: false,
+    pushToTalkKey: " ",
+    placeholder: "write, or hold space to speak",
+    idleHint: "hold space to speak, or click the flower",
+    editLabel: "edit",
+    flowerSize: 168,
+    maxPixelDensity: 2,
+  },
+  phone: {
+    defaultMode: "text",
+    modeSwitchable: true,
+    enterSends: false,
+    sendButton: true,
+    pushToTalkKey: null,
+    placeholder: "write, or tap the flower",
+    idleHint: "tap the flower to listen",
+    editLabel: "edit",
+    flowerSize: 168,
+    maxPixelDensity: 1.5,
+  },
+  firetv: {
+    defaultMode: "voice",
+    modeSwitchable: false,
+    enterSends: false,
+    sendButton: false,
+    pushToTalkKey: "Enter",
+    placeholder: "",
+    idleHint: "hold select to speak",
+    editLabel: "rewind",
+    flowerSize: 200,
+    maxPixelDensity: 2,
+  },
+};
+
+// No default and no fallback: every script names its target.
 function resolveTarget(): Target {
   const raw = import.meta.env.VITE_TARGET;
-  if (!VALID_TARGETS.includes(raw as Target)) {
-    throw new Error(
-      `VITE_TARGET must be set to one of ${VALID_TARGETS.join(", ")}, got ${JSON.stringify(raw)}`,
-    );
+  if (!Object.hasOwn(PROFILES, raw)) {
+    throw new Error(`VITE_TARGET must be one of ${Object.keys(PROFILES).join(", ")}, got ${JSON.stringify(raw)}`);
   }
   return raw;
 }
 
 export const TARGET: Target = resolveTarget();
+export const ui: Profile = PROFILES[TARGET];
+export const TV = TARGET === "firetv";
 
-export const defaultMode: Record<Target, Mode> = {
-  web: "text",
-  phone: "text",
-  firetv: "voice",
-};
-
-export const modeSwitchable: Record<Target, boolean> = {
-  web: true,
-  phone: true,
-  firetv: false,
-};
-
+// The phone widget's quick-voice button deep-links with ?mode=voice.
 export function initialMode(): Mode {
-  if (typeof window !== "undefined" && modeSwitchable[TARGET]) {
-    const requested = new URLSearchParams(window.location.search).get("mode");
-    if (requested === "text" || requested === "voice") return requested;
-  }
-  return defaultMode[TARGET];
+  const requested = new URLSearchParams(window.location.search).get("mode");
+  return ui.modeSwitchable && (requested === "text" || requested === "voice") ? requested : ui.defaultMode;
 }
-
-// Enter sends on web. Phone keyboards put Enter where a new line belongs,
-// so phone sends only through the send button. Fire TV has no text input.
-export const enterSends: Record<Target, boolean> = {
-  web: true,
-  phone: false,
-  firetv: false,
-};
-
-export const showSendButton: Record<Target, boolean> = {
-  web: false,
-  phone: true,
-  firetv: false,
-};
-
-// The key held down to talk. Release sends. Phone has no hardware key for
-// this, the flower is the only way into voice there. Fire TV's select
-// button arrives in the WebView as Enter.
-export const pushToTalkKey: Record<Target, string | null> = {
-  web: " ",
-  phone: null,
-  firetv: "Enter",
-};

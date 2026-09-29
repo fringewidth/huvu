@@ -28,10 +28,11 @@ const server = createServer(async (req, res) => {
     "Transfer-Encoding": "chunked",
   });
 
-  const words = ["Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin sed euismod erat, eget vulputate leo. Praesent lacus ante, dapibus eu ligula eu, fringilla varius ex. Nullam vel tincidunt lectus. Quisque eget erat nisi. Nunc vitae lorem vehicula ligula convallis lobortis sed nec arcu. Suspendisse potenti. Quisque ornare hendrerit diam, eget sagittis metus faucibus a. In ultricies lacus pulvinar massa gravida imperdiet. Etiam sit amet orci vitae enim sodales pulvinar. Mauris bibendum lectus ligula."];
-  for (const word of words) {
+  const text =
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin sed euismod erat, eget vulputate leo. Praesent lacus ante, dapibus eu ligula eu, fringilla varius ex. Nullam vel tincidunt lectus. Quisque eget erat nisi. Nunc vitae lorem vehicula ligula convallis lobortis sed nec arcu. Suspendisse potenti. Quisque ornare hendrerit diam, eget sagittis metus faucibus a. In ultricies lacus pulvinar massa gravida imperdiet. Etiam sit amet orci vitae enim sodales pulvinar. Mauris bibendum lectus ligula.";
+  for (const word of text.split(" ")) {
     res.write(word + " ");
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 60));
   }
 
   res.end();

@@ -1,11 +1,8 @@
-// Floret-cluster placement: scatters several small florets (each its own
-// tiny ring of petals) around a whorl's center, instead of one ring of
-// full-size petals. Used by species like mogra/rugmini where the "flower"
-// is really a bunch of small blossoms bunched together.
+// Floret clusters: several small florets, each its own tiny ring of
+// petals, scattered around a whorl's center. For species like mogra and
+// rugmini, where one "flower" is a bunch of small blossoms.
 import type { ClusterDiscWhorl, ClusterRingWhorl, Pose } from "./types";
-
-const TAU = Math.PI * 2;
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+import { rand, TAU } from "./util";
 
 // One floret at the center (offset 0), the rest scattered at random angles
 // within [offsetMin, offsetMax] of it. Marks every petal `shadow: true` so

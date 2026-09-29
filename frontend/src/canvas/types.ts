@@ -1,6 +1,4 @@
-// Shared types for the garden canvas. p5.brush ships no TypeScript types
-// of its own, so `Brush` is a minimal interface covering only the methods
-// this module tree actually calls.
+// p5.brush ships no types. `Brush` covers only the methods the garden calls.
 export type Point = [number, number];
 
 export interface Brush {
@@ -18,14 +16,12 @@ export interface Brush {
   noFill(): void;
   noHatch(): void;
   noWash(): void;
-  set(name: string, color: string, weight: number): void;
   fill(color: string, alpha: number): void;
   fillBleed(strength: number, direction?: "out" | "in"): void;
   fillTexture(strength: number, border: number, scatter?: boolean): void;
   polygon(points: Point[]): unknown;
   wash(color: string, alpha: number): void;
   rect(x: number, y: number, w: number, h: number, mode?: "corner" | "center"): void;
-  spline(points: Point[], curvature?: number): unknown;
 }
 
 export interface PetalShape {
@@ -47,9 +43,7 @@ export interface Pose {
   dy?: number;
   shadow?: boolean;
   twoTone?: boolean;
-  whorlIndex?: number;
-  // Filled in by createFlower() right after a whorl resolves into poses —
-  // always present on any pose actually used for rendering.
+  // Set by createFlower(), so present on every pose that gets painted.
   shape?: PetalShape;
 }
 
@@ -66,7 +60,7 @@ export interface PaletteSpec {
   spread: number;
 }
 
-export type Palette = (tone: number, nudge?: number) => string;
+export type Palette = (tone: number) => string;
 
 interface WhorlBase {
   base: number;
@@ -113,8 +107,7 @@ export interface ClusterDiscWhorl {
   base: number;
   len: number;
   aspect: number;
-  // Only meaningful when toneRandom is false/omitted — otherwise each
-  // floret picks its own random tone and this is unused.
+  // Ignored when toneRandom is set: each floret then picks its own tone.
   tone?: number;
   radiusX: number;
   radiusY: number;
@@ -124,7 +117,6 @@ export interface ClusterDiscWhorl {
 export type Whorl = RingWhorl | FanWhorl | ClusterRingWhorl | ClusterDiscWhorl;
 
 export interface FlowerSpec {
-  name: string;
   size?: number;
   shape: PetalShape | PetalShape[];
   palette: PaletteSpec;
@@ -134,7 +126,6 @@ export interface FlowerSpec {
 }
 
 export interface Flower {
-  name: string;
   pal: Palette;
   core: CoreType;
   size: number;

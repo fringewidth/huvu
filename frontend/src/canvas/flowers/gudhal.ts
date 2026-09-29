@@ -1,12 +1,10 @@
-// Gudhal (hibiscus) — ported placeholder, see genda.ts for context.
-import { rand } from "../flowerGenerator";
+// Gudhal (hibiscus).
+import { rand } from "../util";
 import type { FlowerSpec } from "../types";
 
 export default function gudhal(): FlowerSpec {
   const shape = { skew: rand(1.05, 1.25), tip: rand(0.5, 0.7), taper: 0.05, ruffle: rand(0.08, 0.16), ruffleFreq: 5 };
   return {
-    name: "gudhal",
-    size: 1,
     shape,
     palette: { hMin: 350, hMax: 8, sMin: 0.8, sMax: 0.95, lOuter: 0.6, lInner: 0.42, spread: 6 },
     whorls: [

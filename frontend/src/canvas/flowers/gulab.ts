@@ -1,6 +1,6 @@
-// Gulab (rose) — ported placeholder, see genda.ts for context. Four rings
-// sharing one aspect ratio, spiraling inward tighter and paler.
-import { rand } from "../flowerGenerator";
+// Gulab (rose). Four rings sharing one aspect ratio, spiraling inward
+// tighter and paler.
+import { rand } from "../util";
 import type { FlowerSpec } from "../types";
 
 export default function gulab(): FlowerSpec {
@@ -8,8 +8,6 @@ export default function gulab(): FlowerSpec {
   const phase = rand(0, Math.PI * 2);
   const aspect = rand(0.7, 0.9);
   return {
-    name: "gulab",
-    size: 1,
     shape,
     palette: { hMin: 342, hMax: 360, sMin: 0.75, sMax: 0.9, lOuter: 0.62, lInner: 0.42, spread: 6 },
     whorls: [

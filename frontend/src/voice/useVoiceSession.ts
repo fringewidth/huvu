@@ -1,8 +1,9 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { AssistantRuntime } from "@assistant-ui/react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { useMotionValue } from "motion/react";
-import { HUVU_SPEAK_EVENT, HUVU_SPOKE_EVENT } from "../canvas/events";
-import { startMicMeter, type MicMeter } from "./micMeter";
+import { getThread, subscribe } from "../chat/thread";
+import { resumeAudio } from "./audio";
+import { acquireMic, closeMic, type Mic } from "./mic";
+import { speak, stopSpeaking, warmSpeaker } from "./speaker";
 import { createTranscriber } from "./transcriber";
 
 // One turn of voice mode goes listening, then thinking once the utterance
@@ -15,21 +16,24 @@ export type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
 // Silent rounds hands-free tolerates before it stops listening, so a quiet
 // room doesn't loop forever.
 const MAX_SILENT_ROUNDS = 3;
+// Share of the recent peak that counts as room noise, not speech.
+const NOISE_FLOOR = 0.12;
 
-export function useVoiceSession(runtime: AssistantRuntime, onUtterance: (text: string) => void) {
+export function useVoiceSession(onUtterance: (text: string) => void) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [transcriber] = useState(createTranscriber);
   const level = useMotionValue(0);
   const handsFree = useRef(false);
   const silentRounds = useRef(0);
-  // Where the sent utterance's reply stands. "sent" until its run shows
-  // up in the thread: before that, the thread's last answer is still the
-  // previous turn's and must not count.
+  // Where the sent utterance's reply stands. "sent" until its turn shows
+  // up running: before that, the last answer is still the previous turn's
+  // and must not count.
   const awaiting = useRef<"none" | "sent" | "running">("none");
+  // Only the latest reply's end moves the session on.
+  const utterance = useRef(0);
   const utter = useRef(onUtterance);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     utter.current = onUtterance;
   });
 
@@ -63,7 +67,15 @@ export function useVoiceSession(runtime: AssistantRuntime, onUtterance: (text: s
     else setPhase("idle");
   }
 
+  // Every way into voice is a user gesture. Wake the audio here, and load
+  // huvu's voice before there is anything to say.
+  function warm(): void {
+    resumeAudio();
+    void warmSpeaker().catch((err) => console.error("voice: clip failed to load", err));
+  }
+
   function begin(free: boolean): void {
+    warm();
     handsFree.current = free;
     silentRounds.current = 0;
     if (free) listen(false);
@@ -74,6 +86,7 @@ export function useVoiceSession(runtime: AssistantRuntime, onUtterance: (text: s
   // still working on the last utterance.
   function hold(): boolean {
     if (awaiting.current !== "none") return false;
+    warm();
     handsFree.current = false;
     listen(true);
     return true;
@@ -96,54 +109,54 @@ export function useVoiceSession(runtime: AssistantRuntime, onUtterance: (text: s
     transcriber.abort();
     setTranscript("");
     setPhase("idle");
+    closeMic();
   }
+
+  const onSpoke = useEffectEvent((id: number) => {
+    if (id === utterance.current && phase === "speaking") afterSpeech();
+  });
 
   const onThread = useEffectEvent(() => {
     if (awaiting.current === "none") return;
-    const { messages, isRunning } = runtime.thread.getState();
-    if (isRunning) awaiting.current = "running";
+    const { turns, running } = getThread();
+    if (running) awaiting.current = "running";
     if (awaiting.current !== "running") return;
-    const last = messages.at(-1);
-    const said = last?.role === "assistant" && last.content.some((p) => p.type === "text" && p.text.trim() !== "");
-    if (said) {
+    if (turns.at(-1)?.answer) {
       awaiting.current = "none";
-      window.dispatchEvent(new CustomEvent(HUVU_SPEAK_EVENT));
       setPhase("speaking");
+      const id = ++utterance.current;
+      speak()
+        .catch((err) => console.error("voice: playback failed", err))
+        .finally(() => onSpoke(id));
       return;
     }
     // The run ended with nothing said (backend down, cancelled).
-    if (!isRunning) {
+    if (!running) {
       awaiting.current = "none";
       afterSpeech();
     }
   });
 
-  const onSpoke = useEffectEvent(() => {
-    if (phase === "speaking") afterSpeech();
-  });
+  useEffect(() => subscribe(() => onThread()), []);
 
-  useEffect(() => runtime.thread.subscribe(() => onThread()), [runtime]);
-
-  useEffect(() => {
-    const handler = () => onSpoke();
-    window.addEventListener(HUVU_SPOKE_EVENT, handler);
-    return () => window.removeEventListener(HUVU_SPOKE_EVENT, handler);
-  }, []);
-
+  // The flower swells with your voice while it listens.
   useEffect(() => {
     if (phase !== "listening") return;
-    let meter: MicMeter | null = null;
+    let mic: Mic | null = null;
     let raf = 0;
     let dead = false;
-    startMicMeter()
+    acquireMic()
       .then((m) => {
-        if (dead) return m.stop();
-        meter = m;
-        // Rise a little faster than fall, and never jump: the raw level
-        // twitches with every syllable.
+        if (dead) return m.release();
+        mic = m;
+        let peak = 0.05;
         let smooth = 0;
         const tick = () => {
-          const raw = m.level();
+          const r = m.rms();
+          peak = Math.max(peak * 0.995, r, 0.04);
+          const raw = Math.max(0, Math.min(1, (r / peak - NOISE_FLOOR) / (1 - NOISE_FLOOR)));
+          // Rise a little faster than fall, and never jump: the raw level
+          // twitches with every syllable.
           smooth += (raw - smooth) * (raw > smooth ? 0.12 : 0.05);
           level.set(smooth);
           raf = requestAnimationFrame(tick);
@@ -154,12 +167,18 @@ export function useVoiceSession(runtime: AssistantRuntime, onUtterance: (text: s
     return () => {
       dead = true;
       cancelAnimationFrame(raf);
-      meter?.stop();
+      mic?.release();
       level.set(0);
     };
   }, [phase, level]);
 
-  useEffect(() => () => transcriber.abort(), [transcriber]);
+  useEffect(
+    () => () => {
+      transcriber.abort();
+      stopSpeaking();
+    },
+    [transcriber],
+  );
 
   return { phase, transcript, level, begin, hold, dropHold, release, exit };
 }

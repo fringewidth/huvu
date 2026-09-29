@@ -1,14 +1,12 @@
 import type { FC } from "react";
-import type { RichPart } from "./turns";
 import { BrowserPanel, Choices, GenericNote, WebSearchNote } from "./partViews";
+import type { RichPart, ToolPart } from "../chat/thread";
 
 // Everything in a turn that isn't plain text: images, tool calls, and
 // whatever ad hoc thing a tool wants to show tomorrow. Each tool name maps
 // to a chip (what a collapsed history row shows) and a hero view (what the
 // stage shows when the turn is big). A tool without an entry here still
 // gets a chip and a one-line note, so a new tool never breaks the stage.
-export type ToolPart = Extract<RichPart, { kind: "tool" }>;
-export type ImagePart = Extract<RichPart, { kind: "image" }>;
 
 // Where a part sits in the hero: notes above the answer, panels below it,
 // choices last.

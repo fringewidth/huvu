@@ -1,9 +1,8 @@
-// The garland's connecting string. One continuous path, traced forward as
-// audio noise drives it — see growStrand() for the growth math and
-// drawStrandGrowth() for how the newly-grown bit gets painted.
-import { pick, randInt, rand } from "./flowerGenerator";
+// The garland's thread: one continuous path, grown forward by huvu's
+// voice (or written words), with flower slots spaced along it.
 import { makeGreen, type Green } from "./leaves";
 import type { Brush, Point } from "./types";
+import { pick, rand, randInt } from "./util";
 
 export interface Strand {
   path: Point[];
@@ -16,8 +15,8 @@ export interface Strand {
   tracedCount: number;
   leafPhase: number;
   green: Green;
-  // How many slots' flowers have fully finished blooming (incremented by
-  // the caller). Growth is capped to this — see growthCap().
+  // Slots whose flowers have finished blooming. The caller counts these,
+  // and growthCap() holds growth at the next unfinished one.
   completedSlots: number;
 }
 
@@ -45,9 +44,8 @@ function edgePoint(side: "left" | "right" | "top" | "bottom", W: number, H: numb
   return [W * rand(0.15, 0.85), H * 0.9];
 }
 
-// Builds a fresh strand: a Catmull-Rom path between two random screen
-// edges, with flower slots spaced along it. Growth/slot-crossing state
-// starts at zero — nothing is drawn until growStrand() advances it.
+// A fresh strand: a Catmull-Rom path between two random screen edges.
+// Nothing is drawn until growStrand() advances it.
 export function buildStrand(W: number, H: number, R0: number): Strand {
   const sides: Array<"left" | "right" | "top" | "bottom"> = ["left", "right", "top", "bottom"];
   const s0 = pick(sides);
@@ -92,20 +90,15 @@ export function buildStrand(W: number, H: number, R0: number): Strand {
   };
 }
 
-// The furthest the string is allowed to grow this frame: up to the next
-// slot that hasn't finished blooming yet, not beyond. Once that flower
-// completes (strand.completedSlots increments), the cap moves to the slot
-// after it. Without this, a loud voice can grow the whole string across
-// the screen in a couple of seconds while only the first flower or two
-// have had time to actually bloom.
+// The furthest the thread may grow: up to the next slot whose flower
+// hasn't finished blooming. Without this, a loud voice grows the whole
+// thread across the screen before the first flowers have opened.
 export function growthCap(strand: Strand): number {
   return strand.completedSlots < strand.slots.length ? strand.slotDist[strand.completedSlots] : strand.total;
 }
 
-// Advances how much of the strand has grown, by `deltaDist` (px along the
-// path) — the caller derives this from audio loudness/onsets each frame.
-// Returns the indices of any flower slots just grown past, for the caller
-// to spawn a flower (and maybe a leaf) at.
+// Grows the strand by `deltaDist` px along the path. Returns the slots
+// just grown past, for the caller to bloom a flower (and maybe a leaf) at.
 export function growStrand(strand: Strand, deltaDist: number): number[] {
   strand.grownDist = Math.min(strand.total, strand.grownDist + deltaDist);
   const crossed: number[] = [];
@@ -120,12 +113,9 @@ export function strandDone(strand: Strand): boolean {
   return strand.grownDist >= strand.total;
 }
 
-// Paints only the newly-grown segment of the string as a filled ribbon,
-// using the same watercolor fill/bleed/texture as petals — a painted
-// strip, not a technical pen line. Drawing just the increment (not the
-// whole prefix again) keeps growth reading as growth: each frame adds one
-// new brushstroke sized by how much louder the sound was, rather than
-// every frame re-touching everything already drawn.
+// Paints only the newly grown segment, as a watercolor ribbon like the
+// petals. Each frame adds one new stroke sized by how loud huvu was,
+// instead of re-touching everything already drawn.
 export function drawStrandGrowth(brush: Brush, strand: Strand, threadColor: string, halfWidth: number): void {
   const from = strand.tracedCount;
   let to = from;
