@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { Button } from "./ui/button";
+import { HUVU_SPEAK_EVENT, HUVU_SPOKE_EVENT, HUVU_WROTE_EVENT } from "../canvas/events";
 import type { Brush, Point } from "../canvas/types";
+import { TARGET } from "../config/interaction";
 import {
   createFlower,
   fillPetal,
@@ -15,7 +16,7 @@ import {
 } from "../canvas/flowerGenerator";
 import { buildStrand, drawStrandGrowth, growStrand, growthCap, strandDone, type Strand } from "../canvas/garland";
 import { paintLeaf } from "../canvas/leaves";
-import { createAudioEngine } from "../canvas/audio";
+import { createAudioEngine, listenForBargeIn } from "../canvas/audio";
 import type { Flower, FlowerSpec } from "../canvas/types";
 import genda from "../canvas/flowers/genda";
 import kamal from "../canvas/flowers/kamal";
@@ -82,8 +83,6 @@ interface BloomJob {
 
 export function GardenCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const statusRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -101,12 +100,22 @@ export function GardenCanvas() {
       const A = createAudioEngine();
       const W = window.innerWidth;
       const H = window.innerHeight;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // Phone screens are dense enough that 1.5x looks the same as 2x, and
+      // it is almost half the pixels to wash and composite every frame.
+      const dpr = Math.min(window.devicePixelRatio || 1, TARGET === "phone" ? 1.5 : 2);
       const R0 = Math.min(W, H) * 0.055;
 
-      const GROWTH_MIN = R0 * 1.2;
-      const GROWTH_MAX = R0 * 9;
-      const ONSET_BURST = R0 * 3;
+      // Strand growth per second while huvu talks, from just above the
+      // silence gate to full loudness, plus a burst on each syllable onset.
+      const GROWTH_MIN = R0 * 0.85;
+      const GROWTH_MAX = R0 * 6.3;
+      const ONSET_BURST = R0 * 2.1;
+      // Written replies grow the garland too: a little strand per word,
+      // drawn as if huvu had said them at a steady, moderate volume. One
+      // flower slot is R0 * 1.55 of strand, so this is about one flower per
+      // 17 words. Stage caps how many words one reply may send.
+      const WRITE_PER_WORD = R0 * 0.02;
+      const WRITE_LOUD = 0.45;
 
       brush.createCanvas(W, H, { parent: container, pixelDensity: dpr });
       brush.noStroke();
@@ -122,6 +131,10 @@ export function GardenCanvas() {
       let bloomQueue: BloomJob[] = [];
       let active: BloomJob | null = null;
       let petalAcc = 0;
+      // Strand still owed to written words. While it lasts, and until the
+      // flowers it started have opened, writing stands in for a voice.
+      let writeBudget = 0;
+      let writeTail = false;
 
       function pickArch(): string {
         let total = 0;
@@ -173,8 +186,8 @@ export function GardenCanvas() {
         fillPetal(brush, petalOutline(p.x, p.y, p.theta, 0, p.len, p.len * p.aspect, 0.15, p.shape), p.color, p.alpha, 0.4, 0.4);
       }
 
-      function fadeTail() {
-        if (!trail.length) return;
+      function fadeTail(): boolean {
+        if (!trail.length) return false;
         let painted = 0;
         for (const e of trail) {
           if (globalSlot - e.slot <= TAIL_FLOWERS) continue;
@@ -195,11 +208,12 @@ export function GardenCanvas() {
           painted++;
         }
         trail = trail.filter((e) => e.fade < TAIL_FADE_FRAMES);
+        return painted > 0;
       }
 
-      function advanceBloom(dt: number, loud: number, onset: boolean, simT: number) {
+      function advanceBloom(dt: number, loud: number, onset: boolean, simT: number): boolean {
         if (!active && bloomQueue.length) active = bloomQueue.shift()!;
-        if (!active) return;
+        if (!active) return false;
 
         if (loud > GATE) {
           const rate = PETAL_RATE_MIN + (PETAL_RATE_MAX - PETAL_RATE_MIN) * Math.pow(loud, 1.3);
@@ -228,12 +242,20 @@ export function GardenCanvas() {
           active.strandRef.completedSlots++;
           active = null;
           petalAcc = 0;
+          return true;
         }
+        return painted > 0;
       }
 
       let last = performance.now();
       let fadeAcc = 0;
       let simT = 0;
+      // When something last drew on the garden, washes aside. The washes
+      // fade the garden toward paper; once they've had time to fade it all
+      // the way, they change nothing, so they stop, and with nothing drawn
+      // the canvas is left alone entirely until the garland grows again.
+      let lastInk = 0;
+      const SETTLE_S = 110;
 
       function frame(nowMs: number) {
         const dt = Math.min((nowMs - last) / 1000, 0.05);
@@ -242,30 +264,36 @@ export function GardenCanvas() {
         fadeAcc += dt;
 
         const onset = A.analyze(dt, simT);
-        if (statusRef.current) {
-          statusRef.current.textContent = A.state.active ? `listening — ${Math.round(A.state.loud * 100)}%` : "silent";
-        }
 
         brush.push();
         brush.translate(-W / 2, -H / 2);
 
-        if (fadeAcc >= FADE_EVERY) {
+        let dirty = false;
+        if (fadeAcc >= FADE_EVERY && simT - lastInk < SETTLE_S) {
           fadeAcc = 0;
+          dirty = true;
           brush.noFill();
           brush.wash(PAPER, FADE_ALPHA);
           brush.rect(0, 0, W, H, "corner");
           brush.noWash();
         }
 
-        const voiced = A.state.active && A.state.loud > GATE;
+        if (writeTail && !A.state.active && writeBudget <= 0 && !active && !bloomQueue.length) writeTail = false;
+        const writing = writeTail && !A.state.active;
+        const loud = writing ? WRITE_LOUD : A.state.loud;
+        const voiced = (A.state.active || writing) && loud > GATE;
         if (voiced) {
           if (!strand || strandDone(strand)) strand = buildStrand(W, H, R0);
 
-          let delta = (GROWTH_MIN + (GROWTH_MAX - GROWTH_MIN) * Math.pow(A.state.loud, 1.3)) * dt;
-          if (onset) delta += ONSET_BURST;
+          let delta = (GROWTH_MIN + (GROWTH_MAX - GROWTH_MIN) * Math.pow(loud, 1.3)) * dt;
+          if (onset && !writing) delta += ONSET_BURST;
+          if (writing) delta = Math.min(delta, writeBudget);
           delta = Math.max(0, Math.min(delta, growthCap(strand) - strand.grownDist));
+          if (writing) writeBudget -= delta;
           const crossed = growStrand(strand, delta);
           drawStrandGrowth(brush, strand, THREAD, Math.max(1.5, R0 * 0.045));
+          dirty = true;
+          lastInk = simT;
 
           for (const i of crossed) {
             const spec = queueFlower(strand, i, simT);
@@ -277,33 +305,82 @@ export function GardenCanvas() {
           }
         }
 
-        advanceBloom(dt, A.state.loud, onset, simT);
-        fadeTail();
-
+        const bloomed = advanceBloom(dt, loud, onset && !writing, simT);
+        const tailed = fadeTail();
+        let fell = false;
         if (pending.length) {
           const due = pending.filter((p) => p.t <= simT);
           if (due.length) {
             pending = pending.filter((p) => p.t > simT);
             for (const p of due) paintFallen(p);
+            fell = true;
           }
+        }
+        if (bloomed || tailed || fell) {
+          dirty = true;
+          lastInk = simT;
         }
 
         brush.pop();
-        brush.render();
+        if (dirty) brush.render();
         rafId = requestAnimationFrame(frame);
       }
       rafId = requestAnimationFrame(frame);
 
-      const playBtn = buttonRef.current;
-      const onPlay = () => {
-        A.playFromUrl(TEST_VOICE_URL).catch((err) => console.error("garden canvas: audio failed", err));
+      // While huvu talks, a real mic listener runs alongside — the moment
+      // it hears actual speech, huvu's reply cuts off immediately. This is
+      // the one piece a real voice library (Pipecat/LiveKit) would give
+      // for free; done by hand here since there's no such backend yet.
+      let stopBargeIn: (() => void) | undefined;
+
+      const onSpeak = () => {
+        stopBargeIn?.();
+        stopBargeIn = undefined;
+        // A cut-off clip still fires onended later, so each utterance
+        // announces its end once.
+        let spoke = false;
+        const announceSpoke = () => {
+          if (spoke) return;
+          spoke = true;
+          window.dispatchEvent(new CustomEvent(HUVU_SPOKE_EVENT));
+        };
+        A.playFromUrl(TEST_VOICE_URL, {
+          onEnded: () => {
+            stopBargeIn?.();
+            stopBargeIn = undefined;
+            announceSpoke();
+          },
+        })
+          .then(() =>
+            listenForBargeIn(() => {
+              A.disconnectSource();
+              stopBargeIn = undefined;
+              announceSpoke();
+            }),
+          )
+          .then((stop) => {
+            stopBargeIn = stop;
+          })
+          .catch((err) => {
+            console.error("garden canvas: audio failed", err);
+            announceSpoke();
+          });
       };
-      playBtn?.addEventListener("click", onPlay);
+      window.addEventListener(HUVU_SPEAK_EVENT, onSpeak);
+
+      const onWrote = (e: Event) => {
+        const words = (e as CustomEvent<{ words: number }>).detail?.words ?? 0;
+        writeBudget += words * WRITE_PER_WORD;
+        writeTail = writeBudget > 0 || writeTail;
+      };
+      window.addEventListener(HUVU_WROTE_EVENT, onWrote);
 
       const canvasEl = container.querySelector("canvas");
       cleanup = () => {
         cancelAnimationFrame(rafId);
-        playBtn?.removeEventListener("click", onPlay);
+        window.removeEventListener(HUVU_SPEAK_EVENT, onSpeak);
+        window.removeEventListener(HUVU_WROTE_EVENT, onWrote);
+        stopBargeIn?.();
         A.disconnectSource();
         canvasEl?.remove();
       };
@@ -317,28 +394,14 @@ export function GardenCanvas() {
   }, []);
 
   return (
-    <>
-      {/* Behind the chat, at the lowest explicit z-index. A negative
-          z-index looked like the "right" way to force this under normal
-          content, but #root is a flex container and flex ITEMS respect
-          z-index even without `position` set (a real CSS quirk) — so
-          Chat's thread div was an implicit stacking participant too, and
-          the negative value ended up hidden behind body's own background
-          instead of under it. Explicit, non-negative z-index on every
-          layer (this one lowest, the chat/UI layers higher) avoids relying
-          on that quirk at all. */}
-      <div ref={containerRef} className="fixed inset-0 z-0 [&>canvas]:block" />
-      {/* A sibling, not a child of the div above: nesting it there would
-          confine it to that div's stacking context and it'd render behind
-          the chat too, no matter what z-index it's given. Dev-only
-          scaffolding for testing without real Hermes/TTS audio — kept
-          quiet so it doesn't compete with the actual product chrome. */}
-      <div className="fixed bottom-3.5 left-4 z-10 flex items-center gap-2 font-mono text-[11px] text-muted-foreground opacity-45 transition-opacity hover:opacity-100">
-        <Button ref={buttonRef} variant="outline" size="sm" className="rounded-full border-border bg-card/40 backdrop-blur-md">
-          hear huvu
-        </Button>
-        <span ref={statusRef}>silent</span>
-      </div>
-    </>
+    // Behind the chat, at the lowest explicit z-index. A negative z-index
+    // looked like the "right" way to force this under normal content, but
+    // #root is a flex container and flex ITEMS respect z-index even
+    // without `position` set (a real CSS quirk) — so Chat's thread div was
+    // an implicit stacking participant too, and the negative value ended
+    // up hidden behind body's own background instead of under it.
+    // Explicit, non-negative z-index on every layer (this one lowest, the
+    // chat/UI layers higher) avoids relying on that quirk at all.
+    <div ref={containerRef} className="fixed inset-0 z-0 [&>canvas]:block" />
   );
 }

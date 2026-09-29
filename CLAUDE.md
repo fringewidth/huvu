@@ -14,7 +14,7 @@ Talks to an agent called Hermes on the backend. Single user (the repo owner). Ho
 ## Stack decisions and why
 
 1. **Frontend shell: Capacitor, not React Native.** p5.brush only exists as a browser Canvas2D library, and the flower visuals must look identical across web, phone, and Fire TV. Porting p5.brush's stroke/noise rendering to a native engine (react-native-skia) was priced out as a multi-month job with ongoing visual-drift risk, worse than the cost of any Capacitor limitation. Capacitor wraps the same web app for every target, so there's one implementation of the canvas, not several that have to be kept in sync.
-1. **Chat UI: assistant-ui** (`@assistant-ui/react`). Headless primitives (`ThreadPrimitive`, `MessagePrimitive`, `ComposerPrimitive`), ships through a shadcn-style CLI so the component source lands in the repo rather than staying a black-box dependency. Current UI is intentionally generic and unstyled, real styling waits for the canvas palette.
+1. **Chat runtime: assistant-ui** (`@assistant-ui/react`), used for its thread runtime only (`useLocalRuntime`, message editing/branching, content parts). The UI on top is hand-built (`components/Stage.tsx`), since the stage is not a chat log and assistant-ui's thread primitives assume one. Keep `AssistantRuntimeProvider` in `App.tsx` even though nothing reads its context: it is what mounts the runtime's thread, and without it the thread never loads (the dev seed silently disappears).
 1. **Backend gateway: Node or Bun, not FastAPI.** FastAPI was floated early as an option; the owner picked JS/TS everywhere specifically to avoid a language context-switch when reviewing code. Leaning Bun for native TypeScript execution, not fixed yet. The gateway's job: hold chat/session state, forward messages to Hermes, stream responses back, and (once built) handle auth and location pings.
 1. **Auth: JWT, planned, not built.** This is a single-user app. The explicit goal is to lock the backend down to the owner's own email, not to support sign-ups. No free API usage for anyone else.
 1. **Background location: coarse, low priority, native plugin required.** Browser `geolocation.watchPosition` gets suspended when the app backgrounds, so this needs a native background-location plugin, not JS. Given the "don't really care, keep it coarse" requirement, use the platform's native significant-location-change mode (large distance filter, low accuracy) rather than Transistorsoft's full paid engine. `@capgo/background-geolocation` is the free option that covers this.
@@ -35,7 +35,13 @@ Worth knowing if a native rewrite ever gets reconsidered for speed: Chromium's C
 
 1. One persistent chat session per conversation (`useLocalRuntime` from assistant-ui), not recreated when switching between text and voice.
 1. Mode (`text` | `voice`) is app state, not a route. Switching mode must never remount the thread or drop the connection, that's what makes it feel seamless.
-1. The canvas is meant to stay mounted underneath both modes at all times (not yet built).
+1. The garden canvas (`GardenCanvas`) stays mounted underneath both modes and every view at all times.
+1. The UI over the canvas is a stage, not a chat log (`components/Stage.tsx`). It shows one turn (an ask and what huvu did with it) at a time, large. Scrolling up (D-pad up on Fire TV) folds it into a history of every turn at one size, with chips standing in for images, browser views and other parts. Picking a row makes it the stage again, and any scroll folds it back. Turns are derived from the assistant-ui thread on every change (`stage/turns.ts`), the runtime stays the source of truth.
+1. The user's words are always sans serif (Syne), huvu's are Bodoni italic. A sent ask flies from the field up into its YOU cue, and an edited ask flies back down (`stage/flight.ts`). No element is swapped with a hard cut, everything tweens.
+1. Edit on a turn is also rewind: the stage hides that turn and everything after it, and sending goes through that message's edit composer, which replaces them.
+1. Rich parts (images, tool calls) render through a registry in `stage/parts.ts`: each tool name maps to a chip and a hero view. Unknown tools still get a chip and a one-line note.
+1. Voice mode moves the flower (`components/VoiceFlower.tsx`) to the middle of the screen and hides the text field. The flower grows with the user's mic level; huvu's voice drives the garland. Hands-free from the flower, push-to-talk by holding space (web) or select (Fire TV). Enter sends on web, phone sends only with its send button. These per-target input rules live in `interaction.ts` next to the mode maps.
+1. Speech to text uses the browser's Web Speech API where it exists (desktop Chrome) and a mock of fixed phrases elsewhere (`voice/transcriber.ts`), until a real STT service sits behind the gateway.
 1. Platform/UI-shape config lives in one file, `frontend/src/config/interaction.ts`: a `Target` (`web` | `phone` | `firetv`) read from a build-time `VITE_TARGET` env var, with `defaultMode` and `modeSwitchable` maps per target. Web and phone default to text and allow switching; Fire TV is voice-only, no toggle rendered at all.
 1. `Target` is intentionally not the same thing as OS platform (`Capacitor.getPlatform()`, `ios` | `android` | `web`). `Target` answers "what does this screen look like" (phone collapses iOS and Android together, since they need the same UI default). OS platform answers "what can this device actually do" (wake word being Android-only is gated on platform, not on `Target`). Keep these two checks separate, don't fold one into the other.
 1. `VITE_TARGET` has no default and no fallback. Missing or invalid values throw at runtime (`resolveTarget()` in `interaction.ts`). Every dev/build script names its target explicitly: `dev:web`, `dev:phone`, `dev:firetv`, `build:web`, `build:phone`, `build:firetv`.
@@ -48,8 +54,12 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
   frontend/                 Vite + React + TypeScript, wrapped by Capacitor
     src/config/interaction.ts       target/mode config, see above
     src/chatRuntime.ts              ChatModelAdapter, currently points at the mock backend
-    src/components/                 Chat, Message, VoiceOrb (placeholder), ModeToggle
-    src/styles/                     one CSS file per component, co-located here not next to the component
+    src/components/                 Stage, TurnView, Composer, VoiceFlower, GardenCanvas
+    src/stage/                      turn derivation, rich-part registry, text flight
+    src/voice/                      mic meter, transcriber, voice session hook
+    src/canvas/                     p5.brush garden: flowers, garland, audio analysis
+    src/devSeed.ts                  seeded rich turns for dev, opt in with ?seed
+    src/index.css                   palette tokens, fonts, the few keyframes Tailwind can't express
     android/                        generated Capacitor native project
     .env.web / .env.phone / .env.firetv   gitignored, each sets VITE_TARGET
     .env.sample                     tracked, lists all three VITE_TARGET values as a reference
@@ -59,9 +69,10 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
 
 ## Known gaps / not yet done
 
-1. The canvas and flower-growth visuals, deliberately last.
-1. Real backend gateway (Node/Bun), Hermes connection, auth, streaming protocol. Only the throwaway mock server exists today.
+1. Real backend gateway (Node/Bun), Hermes connection, auth, streaming protocol. Only the throwaway mock server exists today. Whatever protocol it uses must carry tool calls with the tool names in `frontend/src/stage/parts.ts` (unknown names fall back to a generic note), and images as https, blob, or base64 data URLs: assistant-ui silently drops any other image in an assistant message.
+1. Real speech: STT is Web Speech or a mock (`voice/transcriber.ts`), and huvu's voice is one bundled test clip (`public/audio/test-voice.m4a`).
 1. Wake word, background location, push notifications, widgets: all scoped and libraries picked, none implemented.
-1. Android Studio and a JDK aren't installed on the dev laptop yet, needed before `npx cap open android` or any on-device Android testing works.
-1. Fire TV: `LEANBACK_LAUNCHER` manifest entry and D-pad focus handling not added yet. Mic access (`getUserMedia`) inside a Fire TV WebView hasn't been verified on real hardware, this is a real unknown, not an assumption to build on.
+1. Android Studio and a JDK aren't installed on the dev laptop yet, needed before `npx cap open android` or any on-device Android testing works. `@capacitor/app` (hardware back button) is installed but needs `npx cap sync android` before it exists in the native project.
+1. Phone and Fire TV builds have only been exercised in a desktop browser (`dev:phone`, `dev:firetv`), never on hardware. Unverified: the keyboard resizing the phone WebView, Fire TV's select button arriving as Enter, D-pad focus rings at TV distance.
+1. Fire TV: `LEANBACK_LAUNCHER` manifest entry not added yet. Mic access (`getUserMedia`) inside a Fire TV WebView hasn't been verified on real hardware, this is a real unknown, not an assumption to build on.
 1. iOS build not attempted yet.

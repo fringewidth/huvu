@@ -1,179 +1,110 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/syne";
+@import "@fontsource-variable/bodoni-moda/opsz.css";
+@import "@fontsource-variable/bodoni-moda/opsz-italic.css";
 
 :root {
   /* 0d0e17 is the canvas's night-garden paper color, picked once for the
-     flower/garland palette — the whole site uses it, not a light/dark
-     toggle, so there's one consistent look across canvas and chat. */
-  --text: #b9b6c6;
-  --text-h: #f0eef5;
-  --bg: #0d0e17;
-  --border: #2a2b3a;
-  --code-bg: #171825;
-  --accent: #c084fc;
-  --accent-bg: rgba(192, 132, 252, 0.15);
-  --accent-border: rgba(192, 132, 252, 0.5);
-  --social-bg: rgba(23, 24, 37, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+     flower/garland palette. The rest comes from the garland too: ivory
+     text like moonlit paper, sindoor red from the thread for the user's
+     words, marigold from the flower cores. */
+  --paper: #0d0e17;
+  --ivory: #efe7d8;
+  --sindoor: #e0715a;
+  --thread: #9c3a2e;
+  --marigold: #e9a23b;
 
-  --sans: 'Geist Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: var(--sans);
-  --serif: Georgia, 'Times New Roman', serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
   color-scheme: dark;
-  color: var(--text);
-  background: var(--bg);
+  color: var(--ivory);
+  background: var(--paper);
+  font-family: 'Syne Variable', system-ui, sans-serif;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
-
-  /* shadcn/ui component tokens — mapped onto the palette above so
-     Button/Textarea/etc. primitives match the rest of the site instead of
-     carrying their own separate light-mode default palette. */
-  --background: var(--bg);
-  --foreground: var(--text-h);
-  --card: var(--code-bg);
-  --card-foreground: var(--text-h);
-  --popover: var(--code-bg);
-  --popover-foreground: var(--text-h);
-  --primary: var(--accent);
-  --primary-foreground: var(--bg);
-  --secondary: var(--code-bg);
-  --secondary-foreground: var(--text-h);
-  --muted: var(--code-bg);
-  --muted-foreground: var(--text);
-  --accent-foreground: var(--bg);
-  --destructive: #f87171;
-  --input: var(--border);
-  --ring: var(--accent);
-  --radius: 0.625rem;
-}
-
-#social .button-icon {
-  filter: invert(1) brightness(2);
-}
-
-#root {
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  background: var(--paper);
 }
 
 @theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-paper: var(--paper);
+  --color-ivory: var(--ivory);
+  --color-sindoor: var(--sindoor);
+  --color-thread: var(--thread);
+  --color-marigold: var(--marigold);
+  --font-display: 'Syne Variable', system-ui, sans-serif;
+  --font-bodoni: 'Bodoni Moda Variable', 'Didot', Georgia, serif;
 }
 
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-  html {
-    @apply font-sans;
-  }
-}
-
-/* huvu's replies have no bubble background, so they need to stay legible
-   over whatever's blooming on the canvas behind them. A halo the same
-   color as the page background does that without ever looking like a
-   box: invisible against the flat background, but reads as a soft dark
-   glow wherever a flower (or anything lighter/colored) sits behind the
-   text. No stroke here — a hard-edged outline reads as a cartoon ring;
-   layering several blur radii of the same color instead fades outward
-   gradually, closer to a real drop shadow than a cutout line. */
-.huvu-text {
+/* Text sits straight on the garden with no box behind it, so it needs to
+   stay legible over whatever is blooming. A halo the same color as the
+   page background does that without ever looking like a box: invisible
+   against the flat background, but a soft dark glow wherever a flower sits
+   behind the text. Two layers, a tight one for the letter edges and a wide
+   one for the glow: text shadows repaint whenever text moves, and every
+   extra blurred layer costs on every such frame. */
+.halo {
   text-shadow:
-    0 0 4px var(--bg),
-    0 0 8px var(--bg),
-    0 0 14px var(--bg),
-    0 0 22px var(--bg),
-    0 0 32px var(--bg);
+    0 0 3px var(--paper),
+    0 0 16px var(--paper);
+}
+
+/* Placeholder texture for panels whose content hasn't arrived. */
+.hatch {
+  background-image: repeating-linear-gradient(135deg, rgba(239, 231, 216, 0.05) 0 1px, transparent 1px 11px);
+}
+
+/* The list's text fades out at its top and bottom edges. A mask, not a
+   paper-colored strip painted on top: the garden sits behind the list, and
+   a strip would dim the garden too, leaving a hard edge where it ends. */
+.list-fade {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12dvh, #000 calc(100% - 3rem), transparent 100%);
+}
+
+.fade-bottom {
+  mask-image: linear-gradient(to bottom, #000 50%, transparent 100%);
+}
+
+/* huvu's words arrive one by one while it answers. */
+.word-in {
+  animation: word-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Opacity only: a blur per word is a filter layer per word. */
+@keyframes word-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* While huvu thinks, a length of the garland's thread draws itself. */
+.thinking-thread {
+  display: block;
+  height: 1px;
+  margin-top: 0.8em;
+  background: var(--thread);
+  animation: thread-draw 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes thread-draw {
+  from {
+    width: 16px;
+    opacity: 0.4;
+  }
+  to {
+    width: 180px;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .word-in,
+  .thinking-thread {
+    animation: none;
+  }
 }

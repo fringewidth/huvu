@@ -1,12 +1,10 @@
 // Audio analysis: rms/onset/centroid/bass, ported from the recovered
-// prototype. `state` is read by the render loop every frame; the play*/use*
-// methods are wired to UI triggers.
+// prototype. `state` is read by the render loop every frame; playFromUrl
+// is wired to huvu speaking.
 export interface AudioState {
   ctx: AudioContext | null;
   analyser: AnalyserNode | null;
   source: AudioNode | null;
-  element: HTMLAudioElement | null;
-  stream: MediaStream | null;
   td: Uint8Array<ArrayBuffer> | null;
   fd: Uint8Array<ArrayBuffer> | null;
   rms: number;
@@ -20,11 +18,16 @@ export interface AudioState {
   active: boolean;
 }
 
+export interface PlayOptions {
+  loop?: boolean;
+  // Fires when a non-looping clip finishes on its own — lets the caller
+  // know huvu is done talking without polling.
+  onEnded?: () => void;
+}
+
 export interface AudioEngine {
   state: AudioState;
-  playFromUrl(url: string): Promise<void>;
-  useMic(): Promise<void>;
-  useFile(file: File): Promise<void>;
+  playFromUrl(url: string, opts?: PlayOptions): Promise<void>;
   disconnectSource(): void;
   analyze(dt: number, now: number): boolean;
 }
@@ -34,8 +37,6 @@ export function createAudioEngine(): AudioEngine {
     ctx: null,
     analyser: null,
     source: null,
-    element: null,
-    stream: null,
     td: null,
     fd: null,
     rms: 0,
@@ -70,21 +71,15 @@ export function createAudioEngine(): AudioEngine {
       }
       state.source = null;
     }
-    if (state.element) {
-      state.element.pause();
-      state.element = null;
-    }
-    if (state.stream) {
-      for (const t of state.stream.getTracks()) t.stop();
-      state.stream = null;
-    }
     state.active = false;
   }
 
   // Plays a bundled audio clip (e.g. the `say`-generated test voice) and
   // routes it through the analyser, same path a real Hermes/TTS clip would
-  // eventually take.
-  async function playFromUrl(url: string): Promise<void> {
+  // eventually take. Single-shot by default — a spoken reply ends, it
+  // doesn't loop — with `onEnded` so the caller knows when huvu stops
+  // talking without polling.
+  async function playFromUrl(url: string, { loop = false, onEnded }: PlayOptions = {}): Promise<void> {
     const ctx = ensureContext();
     disconnectSource();
     await ctx.resume();
@@ -92,36 +87,11 @@ export function createAudioEngine(): AudioEngine {
     const buffer = await ctx.decodeAudioData(await res.arrayBuffer());
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.loop = true;
+    src.loop = loop;
+    if (!loop && onEnded) src.onended = () => onEnded();
     src.connect(state.analyser!);
     state.analyser!.connect(ctx.destination);
     src.start();
-    state.source = src;
-    state.active = true;
-  }
-
-  async function useMic(): Promise<void> {
-    const ctx = ensureContext();
-    disconnectSource();
-    await ctx.resume();
-    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const src = ctx.createMediaStreamSource(state.stream);
-    src.connect(state.analyser!);
-    state.source = src;
-    state.active = true;
-  }
-
-  async function useFile(file: File): Promise<void> {
-    const ctx = ensureContext();
-    disconnectSource();
-    await ctx.resume();
-    const el = new Audio(URL.createObjectURL(file));
-    el.loop = true;
-    const src = ctx.createMediaElementSource(el);
-    src.connect(state.analyser!);
-    state.analyser!.connect(ctx.destination);
-    await el.play();
-    state.element = el;
     state.source = src;
     state.active = true;
   }
@@ -168,5 +138,54 @@ export function createAudioEngine(): AudioEngine {
     return onset;
   }
 
-  return { state, playFromUrl, useMic, useFile, disconnectSource, analyze };
+  return { state, playFromUrl, disconnectSource, analyze };
+}
+
+// Listens on the mic for real speech while huvu is talking, so a real
+// interruption can cut the reply off the instant it happens — the actual
+// mechanic a voice-mode library (Pipecat/LiveKit) gives for free, done by
+// hand here with its own AudioContext/analyser so it doesn't fight over
+// the single source/analyser the engine above uses for huvu's own
+// playback (which is what drives the garden's growth). Resolves once
+// mic access is granted; call the returned function to stop listening
+// early (huvu finished talking on its own, or got interrupted already).
+export async function listenForBargeIn(onInterrupt: () => void, threshold = 0.15): Promise<() => void> {
+  const ctx = new AudioContext();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const src = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  const td = new Uint8Array(analyser.fftSize);
+
+  let stopped = false;
+  let rafId = 0;
+
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    cancelAnimationFrame(rafId);
+    for (const t of stream.getTracks()) t.stop();
+    ctx.close();
+  }
+
+  function tick() {
+    if (stopped) return;
+    analyser.getByteTimeDomainData(td);
+    let sum = 0;
+    for (let i = 0; i < td.length; i++) {
+      const v = (td[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / td.length);
+    if (rms > threshold) {
+      stop();
+      onInterrupt();
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  rafId = requestAnimationFrame(tick);
+  return stop;
 }

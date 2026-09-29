@@ -34,3 +34,26 @@ export function initialMode(): Mode {
   }
   return defaultMode[TARGET];
 }
+
+// Enter sends on web. Phone keyboards put Enter where a new line belongs,
+// so phone sends only through the send button. Fire TV has no text input.
+export const enterSends: Record<Target, boolean> = {
+  web: true,
+  phone: false,
+  firetv: false,
+};
+
+export const showSendButton: Record<Target, boolean> = {
+  web: false,
+  phone: true,
+  firetv: false,
+};
+
+// The key held down to talk. Release sends. Phone has no hardware key for
+// this, the flower is the only way into voice there. Fire TV's select
+// button arrives in the WebView as Enter.
+export const pushToTalkKey: Record<Target, string | null> = {
+  web: " ",
+  phone: null,
+  firetv: "Enter",
+};
