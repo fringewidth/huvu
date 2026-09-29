@@ -1,6 +1,7 @@
 import { memo, useId } from "react";
 import * as m from "motion/react-m";
 import { useSpring, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "motion/react";
+import { BLUSH, IVORY, MARIGOLD, THREAD } from "../config/palette";
 import { EASE } from "../stage/style";
 
 // The flower is voice mode's stand-in for huvu. Closed to a bud while you
@@ -114,9 +115,9 @@ const PetalArt = memo(function PetalArt({ inner }: { inner: boolean }) {
           <feGaussianBlur in="d" stdDeviation={0.5} />
         </filter>
         <radialGradient id={`petal-${uid}`} cx="0.5" cy="1" r="1.05">
-          <stop offset="0" stopColor="#e9a23b" stopOpacity={0.95} />
-          <stop offset="0.38" stopColor="#f4dccb" stopOpacity={0.8} />
-          <stop offset="1" stopColor="#efe7d8" stopOpacity={0.3} />
+          <stop offset="0" stopColor={MARIGOLD} stopOpacity={0.95} />
+          <stop offset="0.38" stopColor={BLUSH} stopOpacity={0.8} />
+          <stop offset="1" stopColor={IVORY} stopOpacity={0.3} />
         </radialGradient>
       </defs>
       <g filter={`url(#wc-${uid})`}>
@@ -124,8 +125,8 @@ const PetalArt = memo(function PetalArt({ inner }: { inner: boolean }) {
         {inner && (
           <>
             <g transform="rotate(36) scale(0.58)">{petals}</g>
-            <circle r="5" fill="#e9a23b" />
-            <circle r="2" fill="#9c3a2e" />
+            <circle r="5" fill={MARIGOLD} />
+            <circle r="2" fill={THREAD} />
           </>
         )}
       </g>

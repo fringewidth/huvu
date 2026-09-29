@@ -1,7 +1,8 @@
 import type { Reply } from "./thread";
 
 // !todo our frontend is gonna need auth lol
-const CHAT_ENDPOINT = "http://localhost:3001/api/chat";
+export const BACKEND = "http://localhost:3001";
+const CHAT_ENDPOINT = `${BACKEND}/api/chat`;
 
 export interface HistoryMessage {
   role: "user" | "assistant";

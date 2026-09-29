@@ -32,6 +32,10 @@ interface TurnViewProps {
   turn: Turn;
   variant: TurnVariant;
   wide: boolean;
+  // Off on the phone's voice stage (see voiceAnswerText): the answer and
+  // the thinking thread fade out, and the ask, the parts and how the
+  // answer ended stay.
+  answerShown: boolean;
   actions: TurnActions;
 }
 
@@ -64,7 +68,7 @@ const fade = {
   exit: { opacity: 0, transition: { duration: 0.25, ease: EASE } },
 };
 
-export const TurnView = memo(function TurnView({ ref, turn, variant, wide, actions }: TurnViewProps) {
+export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answerShown, actions }: TurnViewProps) {
   const cueRef = useRef<HTMLSpanElement>(null);
   const hero = variant === "hero";
   const chips = chipsFor(turn.parts);
@@ -135,25 +139,27 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, actio
       {fold("note")}
 
       <div className={`relative z-0 ${hero ? "" : "pointer-events-none"}`}>
-        {turn.running && !turn.answer && <span className="thinking-thread" aria-label="huvu is thinking" />}
+        {answerShown && turn.running && !turn.answer && <span className="thinking-thread" aria-label="huvu is thinking" />}
         {turn.answer && (
           <AnimatePresence initial={false} mode="popLayout" custom={shape.ratio}>
-            <m.p
-              key={size.key}
-              custom={shape.ratio}
-              variants={crossfade}
-              initial="enter"
-              animate="shown"
-              exit="leave"
-              style={{ fontSize: size.fontSize, lineHeight: size.lineHeight, transformOrigin: "0 0" }}
-              className={`halo m-0 whitespace-pre-wrap font-bodoni italic [text-wrap:pretty] ${
-                hero ? "text-ivory" : "fade-bottom max-h-[2.7em] overflow-hidden text-ivory/75"
-              }`}
-            >
-              {/* Words fade in one by one only on the answer's first
-                  appearance, not again on every size change. */}
-              <AnswerText text={turn.answer} streaming={turn.running && shape.ratio === 1} />
-            </m.p>
+            {answerShown && (
+              <m.p
+                key={size.key}
+                custom={shape.ratio}
+                variants={crossfade}
+                initial="enter"
+                animate="shown"
+                exit="leave"
+                style={{ fontSize: size.fontSize, lineHeight: size.lineHeight, transformOrigin: "0 0" }}
+                className={`halo m-0 whitespace-pre-wrap font-bodoni italic [text-wrap:pretty] ${
+                  hero ? "text-ivory" : "fade-bottom max-h-[2.7em] overflow-hidden text-ivory/75"
+                }`}
+              >
+                {/* Words fade in one by one only on the answer's first
+                    appearance, not again on every size change. */}
+                <AnswerText text={turn.answer} streaming={turn.running && shape.ratio === 1} />
+              </m.p>
+            )}
           </AnimatePresence>
         )}
         {turn.ending && !turn.running && (

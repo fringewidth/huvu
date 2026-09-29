@@ -1,6 +1,7 @@
 // Turns a flower spec (whorls, petal shape, palette) into a flat list of
 // petal poses, and paints them. The species in flowers/ only describe
 // specs; this is the one place that knows how to resolve and draw one.
+import { CALYX, CORE_DARK, CORE_TINY, CORE_YELLOW, LOTUS_POD, LOTUS_SEED, PETAL_SHADOW, POLLEN, STAMEN_BASE } from "../config/palette";
 import { floretDisc, floretRing } from "./cluster";
 import type { Brush, CoreType, FanWhorl, Flower, FlowerSpec, Palette, PaletteSpec, PetalShape, Point, Pose, RingWhorl, Whorl } from "./types";
 import { hsl, rand, TAU } from "./util";
@@ -123,7 +124,7 @@ export function paintPetal(
     fillPetal(
       brush,
       petalOutline(cx + s * 0.03, cy + s * 0.04, pose.theta, pose.base * s, len, wid, curl, shape),
-      hsl(280, 0.15, 0.78),
+      PETAL_SHADOW,
       45,
       0.3,
       0.3,
@@ -174,27 +175,27 @@ export function paintCore(brush: Brush, flower: Flower, cx: number, cy: number, 
   const c: CoreType = flower.core;
   if (!c || c === "none") return;
   if (c === "dot-dark") {
-    fillPetal(brush, circlePts(cx, cy, s * 0.12), hsl(20, 0.7, 0.32), 80, 0.2, 0.5);
+    fillPetal(brush, circlePts(cx, cy, s * 0.12), CORE_DARK, 80, 0.2, 0.5);
   } else if (c === "dot-yellow") {
-    fillPetal(brush, circlePts(cx, cy, s * 0.16), hsl(45, 0.9, 0.6), 90, 0.25, 0.5);
+    fillPetal(brush, circlePts(cx, cy, s * 0.16), CORE_YELLOW, 90, 0.25, 0.5);
   } else if (c === "dot-tiny") {
-    fillPetal(brush, circlePts(cx, cy, s * 0.06), hsl(60, 0.6, 0.7), 90, 0.2, 0.3);
+    fillPetal(brush, circlePts(cx, cy, s * 0.06), CORE_TINY, 90, 0.2, 0.3);
   } else if (c === "lotus") {
-    fillPetal(brush, circlePts(cx, cy - s * 0.25, s * 0.28), hsl(48, 0.9, 0.62), 85, 0.3, 0.5);
+    fillPetal(brush, circlePts(cx, cy - s * 0.25, s * 0.28), LOTUS_POD, 85, 0.3, 0.5);
     for (let k = 0; k < 7; k++) {
       const a = rand(0, TAU), d = rand(0, s * 0.22);
-      fillPetal(brush, circlePts(cx + Math.cos(a) * d, cy - s * 0.25 + Math.sin(a) * d, s * 0.035), hsl(35, 0.9, 0.45), 90, 0.1, 0.2);
+      fillPetal(brush, circlePts(cx + Math.cos(a) * d, cy - s * 0.25 + Math.sin(a) * d, s * 0.035), LOTUS_SEED, 90, 0.1, 0.2);
     }
   } else if (c === "stamen") {
     const a = -Math.PI / 2 + rand(-0.5, 0.5);
     const L = s * 1.25;
     const x1 = cx + Math.cos(a) * L, y1 = cy + Math.sin(a) * L;
     fillPetal(brush, [[cx - 2, cy], [x1 - 1.5, y1], [x1 + 1.5, y1], [cx + 2, cy]], flower.pal(1), 120, 0.1, 0.2);
-    fillPetal(brush, circlePts(cx, cy, s * 0.14), hsl(350, 0.7, 0.3), 80, 0.2, 0.5);
+    fillPetal(brush, circlePts(cx, cy, s * 0.14), STAMEN_BASE, 80, 0.2, 0.5);
     for (let k = 0; k < 6; k++) {
-      fillPetal(brush, circlePts(x1 + rand(-0.12, 0.12) * s, y1 + rand(-0.12, 0.12) * s, s * 0.04), hsl(48, 0.95, 0.6), 100, 0.1, 0.2);
+      fillPetal(brush, circlePts(x1 + rand(-0.12, 0.12) * s, y1 + rand(-0.12, 0.12) * s, s * 0.04), POLLEN, 100, 0.1, 0.2);
     }
   } else if (c === "calyx") {
-    fillPetal(brush, circlePts(cx, cy + s * 0.15, s * 0.16), hsl(30, 0.2, 0.35), 85, 0.2, 0.5);
+    fillPetal(brush, circlePts(cx, cy + s * 0.15, s * 0.16), CALYX, 85, 0.2, 0.5);
   }
 }

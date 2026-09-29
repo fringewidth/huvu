@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-50 -50 100 100">
   <defs>
     <radialGradient id="p" cx="0.5" cy="1" r="1.05">
-      <stop offset="0" stop-color="#e9a23b"/>
-      <stop offset="0.4" stop-color="#f4dccb"/>
-      <stop offset="1" stop-color="#efe7d8" stop-opacity="0.75"/>
+      <stop offset="0" stop-color="%MARIGOLD%"/>
+      <stop offset="0.4" stop-color="%BLUSH%"/>
+      <stop offset="1" stop-color="%IVORY%" stop-opacity="0.75"/>
     </radialGradient>
   </defs>
   <g fill="url(#p)">
@@ -13,6 +13,6 @@
     <path d="M0,0 C-20,-6 -19,-36 -3,-45 C13,-41 12,-11 0,0Z" transform="rotate(216)"/>
     <path d="M0,0 C-20,-6 -19,-36 -3,-45 C13,-41 12,-11 0,0Z" transform="rotate(288)"/>
   </g>
-  <circle r="6" fill="#e9a23b"/>
-  <circle r="2.5" fill="#9c3a2e"/>
+  <circle r="6" fill="%MARIGOLD%"/>
+  <circle r="2.5" fill="%THREAD%"/>
 </svg>

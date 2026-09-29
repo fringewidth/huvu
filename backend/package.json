@@ -5,5 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node server.js"
+  },
+  "dependencies": {
+    "@roamhq/wrtc": "^0.10.0"
   }
 }

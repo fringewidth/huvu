@@ -1,11 +1,12 @@
 import { ui } from "../config/interaction";
+import { PAPER, THREAD } from "../config/palette";
 import { onSpeakingStart, sampleVoice } from "../voice/speaker";
 import { createFlower, fillPetal, paintCore, paintPetal, petalOutline } from "./flowerGenerator";
 import { nextSpecies } from "./flowers";
 import { buildStrand, drawStrandGrowth, growStrand, growthCap, strandDone, type Strand } from "./garland";
 import { paintLeaf } from "./leaves";
 import type { Brush, Flower, PetalShape, Point } from "./types";
-import { hsl, pick, rand, randInt, TAU } from "./util";
+import { pick, rand, randInt, TAU } from "./util";
 
 // The garden: a garland that grows while huvu talks (or writes), flowers
 // opening along its thread, and the whole page slowly washing back toward
@@ -14,8 +15,6 @@ import { hsl, pick, rand, randInt, TAU } from "./util";
 // Starts loading at boot, alongside React's first render.
 const brushModule = import("p5.brush/standalone") as unknown as Promise<Brush>;
 
-const PAPER = "#0d0e17";
-const THREAD = hsl(2, 0.55, 0.36);
 // A wash over the whole page every FADE_EVERY seconds, until SETTLE_S
 // after the last stroke, by when the washes no longer change anything.
 const FADE_EVERY = 0.3;

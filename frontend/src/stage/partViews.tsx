@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import { capsClass } from "./style";
+import { useWhepFeed } from "./useWhepFeed";
 import type { ToolPart } from "../chat/thread";
 
 // The hero views of the tool parts listed in parts.ts.
@@ -19,22 +21,38 @@ export function WebSearchNote({ part }: { part: ToolPart }) {
   );
 }
 
-export function BrowserPanel({ part }: { part: ToolPart }) {
-  const url = str(part.args.url);
-  const shot = str((part.result as { screenshot?: unknown } | undefined)?.screenshot);
+// A live video feed from huvu's side: its browser, a camera, a screen.
+// `src` is a WHEP endpoint (see useWhepFeed). `label` names the source,
+// `caption` says what it shows right now. Only the stage's turn shows its
+// feed, so a turn that folds away hangs up. When the feed ends, its last
+// frame stays.
+export function VideoFeed({ part }: { part: ToolPart }) {
+  const src = str(part.args.src);
+  const label = str(part.args.label) || "live feed";
+  const caption = str(part.args.caption);
+  const { stream, state } = useWhepFeed(src);
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (video.current) video.current.srcObject = stream;
+  }, [stream]);
+  const waiting = !src ? "the feed streams here" : state === "lost" ? "the feed stopped" : "the feed is connecting";
   return (
     <figure className="m-0 flex max-w-[36rem] flex-col gap-2">
       <figcaption className={`${capsClass} flex min-w-0 items-center gap-3 text-ivory/60`}>
-        <span className="size-1.5 shrink-0 rounded-full bg-sindoor" />
-        <span className="shrink-0">live / huvu's browser</span>
-        {url && <span className="truncate normal-case tracking-[0.08em] text-ivory/40">{url}</span>}
+        <span className={`size-1.5 shrink-0 rounded-full transition-colors duration-700 ${state === "live" ? "bg-sindoor" : "bg-ivory/30"}`} />
+        <span className="shrink-0">{state === "lost" ? "ended" : "live"} / {label}</span>
+        {caption && <span className="truncate normal-case tracking-[0.08em] text-ivory/40">{caption}</span>}
       </figcaption>
-      <div className="hatch flex aspect-video w-full items-center justify-center border border-ivory/20 bg-paper/80">
-        {shot ? (
-          <img src={shot} alt={`huvu's browser at ${url}`} className="size-full object-cover" />
-        ) : (
-          <span className="font-bodoni italic text-ivory/45">the live view streams here</span>
-        )}
+      <div className="hatch relative flex aspect-video w-full items-center justify-center border border-ivory/20 bg-paper/80">
+        <span className={`font-bodoni italic text-ivory/45 transition-opacity duration-700 ${stream ? "opacity-0" : "opacity-100"}`}>{waiting}</span>
+        <video
+          ref={video}
+          autoPlay
+          muted
+          playsInline
+          aria-label={caption ? `${label}: ${caption}` : label}
+          className={`absolute inset-0 size-full object-cover transition-opacity duration-700 ${stream ? "opacity-100" : "opacity-0"}`}
+        />
       </div>
     </figure>
   );

@@ -1,0 +1,5 @@
+{
+  // Always show the built-in color swatches and picker, so the hex and hsl
+  // strings in frontend/src/config/palette.ts get them too.
+  "editor.defaultColorDecorators": "always"
+}

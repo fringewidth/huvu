@@ -1,6 +1,8 @@
 import type { RichPart, Turn } from "./thread";
+import { BACKEND } from "./backend";
+import { PLATE } from "../config/palette";
 
-// A few past turns with images, a web search, a live browser and choices,
+// A few past turns with images, a web search, a live feed and choices,
 // so the stage's rich parts and the history's chips can be seen before the
 // real gateway sends any. Dev builds only, and only with ?seed in the URL.
 export function devSeed(): Turn[] {
@@ -37,7 +39,12 @@ const SEED: (Pick<Turn, "ask" | "answer"> & { parts?: RichPart[] })[] = [
     answer: "Smile Studio on 12th Main. Kindest reviews, two Saturday slots left.",
     parts: [
       tool("seed-search", "web_search", { query: "dentist indiranagar saturday" }, { sources: [1, 2, 3, 4, 5, 6] }),
-      tool("seed-browser", "browser", { url: "smilestudio.example/book/saturday" }),
+      // The mock backend streams a test pattern here.
+      tool("seed-feed", "video_feed", {
+        src: `${BACKEND}/api/feed/demo`,
+        label: "huvu's browser",
+        caption: "smilestudio.example/book/saturday",
+      }),
       tool("seed-choices", "choices", { options: ["book 10:30", "book 12:00", "the other two"] }),
     ],
   },
@@ -50,7 +57,7 @@ function plate(hueA: number, hueB: number): string {
       <radialGradient id="a" cx="30%" cy="40%" r="60%"><stop offset="0" stop-color="hsl(${hueA} 70% 62%)"/><stop offset="1" stop-color="hsl(${hueA} 70% 62%)" stop-opacity="0"/></radialGradient>
       <radialGradient id="b" cx="70%" cy="65%" r="55%"><stop offset="0" stop-color="hsl(${hueB} 45% 48%)"/><stop offset="1" stop-color="hsl(${hueB} 45% 48%)" stop-opacity="0"/></radialGradient>
     </defs>
-    <rect width="400" height="300" fill="#141522"/>
+    <rect width="400" height="300" fill="${PLATE}"/>
     <rect width="400" height="300" fill="url(#b)"/>
     <rect width="400" height="300" fill="url(#a)"/>
   </svg>`;

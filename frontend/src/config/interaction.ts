@@ -22,6 +22,10 @@ interface Profile {
   editLabel: string;
   // The voice flower's full size, in px.
   flowerSize: number;
+  // Whether huvu's answer streams in as text above the flower in voice
+  // mode. A phone screen has no room for it next to the flower and the
+  // transcript, and huvu says the answer anyway.
+  voiceAnswerText: boolean;
   // Phone screens are dense enough that 1.5x looks like 2x, at almost half
   // the pixels for the garden to wash every frame.
   maxPixelDensity: number;
@@ -38,6 +42,7 @@ const PROFILES: Record<Target, Profile> = {
     idleHint: "hold space to speak, or click the flower",
     editLabel: "edit",
     flowerSize: 168,
+    voiceAnswerText: true,
     maxPixelDensity: 2,
   },
   phone: {
@@ -50,6 +55,7 @@ const PROFILES: Record<Target, Profile> = {
     idleHint: "tap the flower to listen",
     editLabel: "edit",
     flowerSize: 168,
+    voiceAnswerText: false,
     maxPixelDensity: 1.5,
   },
   firetv: {
@@ -62,6 +68,7 @@ const PROFILES: Record<Target, Profile> = {
     idleHint: "hold select to speak",
     editLabel: "rewind",
     flowerSize: 200,
+    voiceAnswerText: true,
     maxPixelDensity: 2,
   },
 };

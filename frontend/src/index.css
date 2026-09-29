@@ -4,16 +4,9 @@
 @import "@fontsource-variable/bodoni-moda/opsz-italic.css";
 
 :root {
-  /* 0d0e17 is the canvas's night-garden paper color, picked once for the
-     flower/garland palette. The rest comes from the garland too: ivory
-     text like moonlit paper, sindoor red from the thread for the user's
-     words, marigold from the flower cores. */
-  --paper: #0d0e17;
-  --ivory: #efe7d8;
-  --sindoor: #e0715a;
-  --thread: #9c3a2e;
-  --marigold: #e9a23b;
-
+  /* The color tokens (--paper, --ivory, --sindoor, --thread, --marigold)
+     are defined in index.html from config/palette.ts, since the canvas
+     and the native shell need the same colors. */
   color-scheme: dark;
   color: var(--ivory);
   background: var(--paper);
@@ -53,7 +46,7 @@ body {
 
 /* Placeholder texture for panels whose content hasn't arrived. */
 .hatch {
-  background-image: repeating-linear-gradient(135deg, rgba(239, 231, 216, 0.05) 0 1px, transparent 1px 11px);
+  background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ivory) 5%, transparent) 0 1px, transparent 1px 11px);
 }
 
 /* The list's text fades out at its top and bottom edges. A mask, not a

@@ -378,7 +378,14 @@ export function Stage() {
           <li aria-hidden="true" className={view.kind === "history" ? "mt-auto" : ""} />
           <AnimatePresence mode="popLayout" initial={false}>
             {shown.map((turn) => (
-              <TurnView key={turn.id} turn={turn} variant={view.kind === "history" ? "row" : "hero"} wide={wide} actions={turnActions} />
+              <TurnView
+                key={turn.id}
+                turn={turn}
+                variant={view.kind === "history" ? "row" : "hero"}
+                wide={wide}
+                answerShown={ui.voiceAnswerText || !voiceStage}
+                actions={turnActions}
+              />
             ))}
             {turns.length === 0 && (
               <m.li
