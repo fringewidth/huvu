@@ -165,7 +165,11 @@ export function Stage() {
   const turnActions = useStable({
     open: (id: string) => toStage(id),
     edit: onEdit,
-    choose: (text: string) => submit(text),
+    // Text mode sends nothing new while a reply is still coming in.
+    choose: (text: string) => {
+      if (mode === "text" && running) return;
+      submit(text);
+    },
     retry: (turn: thread.Turn) => thread.retry(turn.id),
     registerFocus: (id: string, which: "open" | "edit", el: HTMLButtonElement | null) => {
       const entry = focusables.current.get(id) ?? {};
@@ -181,17 +185,19 @@ export function Stage() {
     cancelRewind,
     stop,
   });
+  // The flower always listens, and cuts huvu off to do it. The "write"
+  // button is the way back to text. Tapping the docked flower only brings
+  // it back to the middle.
   const { onFlower } = useStable({
     onFlower: () => {
       if (docked) {
         setDocked(false);
-      } else if (mode === "voice") {
-        leaveVoice();
-      } else {
-        textareaRef.current?.blur();
-        setMode("voice");
-        voice.begin(true);
+        return;
       }
+      if (voice.phase === "listening") return;
+      textareaRef.current?.blur();
+      setMode("voice");
+      voice.begin();
     },
   });
 
@@ -260,13 +266,19 @@ export function Stage() {
       const eligible = !e.repeat && t?.tagName !== "BUTTON" && (TV ? view.kind === "stage" : !inField || draft === "");
       if (eligible) {
         e.preventDefault();
+        // In text mode a reply still coming in has to be stopped first.
+        // Voice mode talks over it.
+        if (mode === "text" && running) return;
         setDocked(false);
-        if (!voice.hold()) return;
+        voice.hold();
+        // Held in history, the latest turn comes back to the stage, so
+        // what is heard and what huvu answers have somewhere to show.
         const timer = window.setTimeout(() => {
           if (!ptt.current) return;
           ptt.current.holding = true;
           textareaRef.current?.blur();
           setMode("voice");
+          if (view.kind === "history") toStage(null);
         }, HOLD_MS);
         ptt.current = { timer, holding: false };
         return;
@@ -356,7 +368,7 @@ export function Stage() {
 
   // A deep link with ?mode=voice starts listening at once.
   const startInitialVoice = useEffectEvent(() => {
-    if (mode === "voice" && !TV) voice.begin(true);
+    if (mode === "voice" && !TV) voice.begin();
   });
   useEffect(() => startInitialVoice(), []);
 
@@ -525,7 +537,7 @@ export function Stage() {
             state={inVoice ? PHASE_FLOWER[voice.phase] : "bud"}
             size={FLOWER_BIG}
             level={voice.level}
-            label={!inVoice ? "speak to huvu" : docked ? "bring the flower back" : "back to writing"}
+            label={docked ? "bring the flower back" : voice.phase === "thinking" || voice.phase === "speaking" ? "interrupt huvu" : "speak to huvu"}
             onClick={TV ? undefined : onFlower}
             focusable={!TV}
           />

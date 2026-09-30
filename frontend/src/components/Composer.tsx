@@ -18,7 +18,8 @@ interface ComposerProps {
   onSubmit: (text: string, from: Snapshot) => void;
   rewinding: boolean;
   onCancelRewind: () => void;
-  // A reply is still coming in; the composer offers to stop it.
+  // A reply is still coming in. The composer offers to stop it, and sends
+  // nothing new until it is stopped or done.
   running: boolean;
   onStop: () => void;
 }
@@ -40,7 +41,7 @@ export const Composer = memo(function Composer({
   running,
   onStop,
 }: ComposerProps) {
-  const canSend = draft.trim().length > 0;
+  const canSend = draft.trim().length > 0 && !running;
 
   // An edit flies the old ask back down into the field.
   useLayoutEffect(() => {

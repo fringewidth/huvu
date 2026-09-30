@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { useMotionValue } from "motion/react";
-import { getThread, subscribe } from "../chat/thread";
+import { getThread, stop as stopThread, subscribe } from "../chat/thread";
 import { resumeAudio } from "./audio";
 import { acquireMic, closeMic, type Mic } from "./mic";
 import { speak, stopSpeaking, warmSpeaker } from "./speaker";
@@ -10,7 +10,7 @@ import { createTranscriber } from "./transcriber";
 // is sent, then speaking once huvu's reply starts, then back. Hands-free
 // (entered from the flower) listens again by itself after huvu speaks.
 // Push-to-talk (space on web, select on Fire TV) waits in idle for the
-// next hold.
+// next hold. Either way in cuts huvu off first, voice and text both.
 export type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
 
 // Silent rounds hands-free tolerates before it stops listening, so a quiet
@@ -74,22 +74,31 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     void warmSpeaker().catch((err) => console.error("voice: clip failed to load", err));
   }
 
-  function begin(free: boolean): void {
-    warm();
-    handsFree.current = free;
-    silentRounds.current = 0;
-    if (free) listen(false);
-    else setPhase("idle");
+  // Drops the reply in flight: its words stop streaming and its voice goes
+  // quiet. The utterance count moves on, so the cut-off clip's end can't
+  // move the session on again.
+  function interrupt(): void {
+    awaiting.current = "none";
+    utterance.current++;
+    stopThread();
+    stopSpeaking();
   }
 
-  // Push-to-talk. Returns whether listening started: not while huvu is
-  // still working on the last utterance.
-  function hold(): boolean {
-    if (awaiting.current !== "none") return false;
+  // Hands-free, from the flower.
+  function begin(): void {
     warm();
+    interrupt();
+    handsFree.current = true;
+    silentRounds.current = 0;
+    listen(false);
+  }
+
+  // Push-to-talk.
+  function hold(): void {
+    warm();
+    interrupt();
     handsFree.current = false;
     listen(true);
-    return true;
   }
 
   // A push-to-talk tap too short to mean anything: drop what was heard.
