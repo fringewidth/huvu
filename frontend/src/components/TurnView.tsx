@@ -23,8 +23,8 @@ export interface TurnActions {
   edit(turn: Turn, from: Snapshot): void;
   choose(text: string): void;
   retry(turn: Turn): void;
-  // Fire TV moves focus between rows and their rewind buttons by hand.
-  registerFocus(id: string, which: "open" | "edit", el: HTMLButtonElement | null): void;
+  // Fire TV moves focus between history rows by hand.
+  registerFocus(id: string, el: HTMLButtonElement | null): void;
 }
 
 interface TurnViewProps {
@@ -109,32 +109,37 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
     >
       {!hero && (
         <button
-          ref={(el) => actions.registerFocus(turn.id, "open", el)}
+          ref={(el) => actions.registerFocus(turn.id, el)}
           type="button"
-          aria-label={`open: ${turn.ask}`}
+          aria-label={`open: ${turn.ask || turn.answer}`}
           onClick={() => actions.open(turn.id)}
           className="absolute -inset-x-3 -inset-y-2 z-0 cursor-pointer rounded-sm outline-none transition-colors duration-500 hover:bg-ivory/[0.03] focus-visible:bg-ivory/[0.05] focus-visible:ring-1 focus-visible:ring-sindoor/50 in-data-[target=firetv]:focus-visible:ring-2"
         />
       )}
-      <div className={`relative z-10 flex items-baseline gap-3 ${hero ? "" : "pointer-events-none"}`}>
-        <span className={`${capsClass} shrink-0 text-sindoor`}>you</span>
-        <span
-          ref={cueRef}
-          className={`halo min-w-0 font-display font-medium leading-[1.4] text-ivory/80 ${
-            hero ? "whitespace-pre-wrap text-[14px] sm:text-[15px]" : "truncate text-[13px] sm:text-[14px]"
-          }`}
-        >
-          {turn.ask}
-        </span>
-        <button
-          ref={(el) => actions.registerFocus(turn.id, "edit", el)}
-          type="button"
-          onClick={() => cueRef.current && actions.edit(turn, snapshot(cueRef.current))}
-          className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/45 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60 in-data-[target=firetv]:focus-visible:ring-2`}
-        >
-          {ui.editLabel}
-        </button>
-      </div>
+      {/* A watched feed asked nothing, so it has no YOU cue: just its name
+          and the feed. */}
+      {turn.ask && (
+        <div className={`relative z-10 flex items-baseline gap-3 ${hero ? "" : "pointer-events-none"}`}>
+          <span className={`${capsClass} shrink-0 text-sindoor`}>you</span>
+          <span
+            ref={cueRef}
+            className={`halo min-w-0 font-display font-medium leading-[1.4] text-ivory/80 ${
+              hero ? "whitespace-pre-wrap text-[14px] sm:text-[15px]" : "truncate text-[13px] sm:text-[14px]"
+            }`}
+          >
+            {turn.ask}
+          </span>
+          {ui.hasInput && (
+            <button
+              type="button"
+              onClick={() => cueRef.current && actions.edit(turn, snapshot(cueRef.current))}
+              className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/45 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+            >
+              edit
+            </button>
+          )}
+        </div>
+      )}
 
       {fold("note")}
 
@@ -165,7 +170,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
         {turn.ending && !turn.running && (
           <div className="mt-3 flex items-center gap-4">
             <span className={`${capsClass} text-sindoor`}>{turn.ending === "failed" ? "huvu couldn't answer" : "stopped"}</span>
-            {turn.ending === "failed" && hero && (
+            {turn.ending === "failed" && hero && ui.hasInput && (
               <button
                 type="button"
                 onClick={() => actions.retry(turn)}

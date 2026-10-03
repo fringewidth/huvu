@@ -9,7 +9,7 @@ import { createTranscriber } from "./transcriber";
 // One turn of voice mode goes listening, then thinking once the utterance
 // is sent, then speaking once huvu's reply starts, then back. Hands-free
 // (entered from the flower) listens again by itself after huvu speaks.
-// Push-to-talk (space on web, select on Fire TV) waits in idle for the
+// Push-to-talk (space on web) waits in idle for the
 // next hold. Either way in cuts huvu off first, voice and text both.
 export type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
 
@@ -130,7 +130,8 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     const { turns, running } = getThread();
     if (running) awaiting.current = "running";
     if (awaiting.current !== "running") return;
-    if (turns.at(-1)?.answer) {
+    // A feed opened meanwhile sits on top, and is no answer.
+    if (turns.findLast((t) => !t.feed)?.answer) {
       awaiting.current = "none";
       setPhase("speaking");
       const id = ++utterance.current;

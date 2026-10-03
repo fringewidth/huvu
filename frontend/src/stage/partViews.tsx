@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { capsClass } from "./style";
+import { capsClass, NUMERALS } from "./style";
 import { useWhepFeed } from "./useWhepFeed";
 import type { ToolPart } from "../chat/thread";
 
@@ -58,8 +58,6 @@ export function VideoFeed({ part }: { part: ToolPart }) {
   );
 }
 
-const NUMERALS = ["i.", "ii.", "iii.", "iv.", "v.", "vi.", "vii.", "viii."];
-
 export function Choices({ part, onChoose }: { part: ToolPart; onChoose: (text: string) => void }) {
   const raw = part.args.options;
   const options = Array.isArray(raw) ? raw.filter((o): o is string => typeof o === "string") : [];
@@ -69,8 +67,9 @@ export function Choices({ part, onChoose }: { part: ToolPart; onChoose: (text: s
         <button
           key={option}
           type="button"
+          data-choice=""
           onClick={() => onChoose(option)}
-          className="flex min-h-11 items-baseline gap-2 font-bodoni text-[19px] text-ivory transition-colors duration-500 hover:text-sindoor focus-visible:text-sindoor focus-visible:outline-none sm:text-[21px]"
+          className="flex min-h-11 items-baseline gap-2 font-bodoni text-[19px] text-ivory transition-colors duration-500 hover:text-sindoor focus-visible:text-sindoor focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sindoor/50 in-data-[target=firetv]:focus-visible:ring-2 sm:text-[21px]"
         >
           <span className={`${capsClass} text-sindoor`}>{NUMERALS[i] ?? `${i + 1}.`}</span>
           {option}

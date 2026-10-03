@@ -10,7 +10,7 @@ export function devSeed(): Turn[] {
   // Dated yesterday, like real history would be, so the stage treats them
   // as old turns: they don't grow the garland or get announced.
   const at = Date.now() - 86_400_000;
-  return SEED.map((t, i) => ({ id: `seed-${i}`, at, parts: [], running: false, ending: null, ...t }));
+  return SEED.map((t, i) => ({ id: `seed-${i}`, at, feed: null, parts: [], running: false, ending: null, ...t }));
 }
 
 const tool = (id: string, toolName: string, args: Record<string, unknown>, result: unknown = {}): RichPart => ({
@@ -41,7 +41,7 @@ const SEED: (Pick<Turn, "ask" | "answer"> & { parts?: RichPart[] })[] = [
       tool("seed-search", "web_search", { query: "dentist indiranagar saturday" }, { sources: [1, 2, 3, 4, 5, 6] }),
       // The mock backend streams a test pattern here.
       tool("seed-feed", "video_feed", {
-        src: `${BACKEND}/api/feed/demo`,
+        src: `${BACKEND}/api/feed/browser`,
         label: "huvu's browser",
         caption: "smilestudio.example/book/saturday",
       }),

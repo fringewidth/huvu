@@ -4,6 +4,7 @@ import { Capacitor } from "@capacitor/core";
 import * as m from "motion/react-m";
 import { AnimatePresence, LayoutGroup } from "motion/react";
 import { growForWords } from "../canvas/garden";
+import { refreshFeeds, type Feed } from "../chat/feeds";
 import * as thread from "../chat/thread";
 import { initialMode, TARGET, TV, ui, type Mode } from "../config/interaction";
 import { launch, snapshot, type Snapshot } from "../stage/flight";
@@ -14,6 +15,7 @@ import { useStable } from "../stage/useStable";
 import { useWide } from "../stage/useWide";
 import { useVoiceSession, type VoicePhase } from "../voice/useVoiceSession";
 import { Composer } from "./Composer";
+import { Feeds } from "./Feeds";
 import { TurnView } from "./TurnView";
 import { VoiceFlower, type FlowerState } from "./VoiceFlower";
 
@@ -30,7 +32,8 @@ type View = { kind: "stage"; focus: string | null } | { kind: "history"; cursor:
 const HOLD_MS = 220;
 // The flower is drawn once, at its voice-mode size, and scaled down to sit
 // in the composer, so it stays crisp in the middle of the screen.
-const FLOWER_BIG = ui.flowerSize;
+// Fire TV has no flower, and its layout never reads this.
+const FLOWER_BIG = ui.flowerSize ?? 0;
 const FLOWER_SMALL = 56;
 // Words of one written reply that may grow the garland: about one flower.
 const WRITE_WORDS_MAX = 85;
@@ -70,16 +73,20 @@ export function Stage() {
   // speaking while it listens brings it back.
   const [docked, setDocked] = useState(false);
   const [draft, setDraft] = useState("");
+  const [feedsOpen, setFeedsOpen] = useState(false);
   // Turns asked before this moment (seeded or restored) never grow the
   // garland and are never announced.
   const [sessionStart] = useState(() => Date.now());
+  const [greeting] = useState(() => ui.greetings[Math.floor(Math.random() * ui.greetings.length)]);
   const rootRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLOListElement>(null);
+  const feedsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLParagraphElement>(null);
-  const focusables = useRef(new Map<string, { open?: HTMLButtonElement | null; edit?: HTMLButtonElement | null }>());
+  // Each history row's open button, for Fire TV's D-pad.
+  const rowButtons = useRef(new Map<string, HTMLButtonElement | null>());
   const ptt = useRef<{ timer: number; holding: boolean } | null>(null);
   const wrote = useRef({ id: "", words: 0, sent: 0 });
   const geo = useSlotGeometry(rootRef, slotRef, composerRef);
@@ -123,9 +130,6 @@ export function Stage() {
   const onEdit = (turn: thread.Turn, from: Snapshot) => {
     setRewindId(turn.id);
     setView({ kind: "stage", focus: null });
-    // Fire TV has no text to edit. Rewinding there means the next thing
-    // said replaces this turn.
-    if (TV) return;
     if (mode === "voice") leaveVoice();
     launch("edit", turn.ask, from);
     setDraft(turn.ask);
@@ -151,7 +155,8 @@ export function Stage() {
   // or an opened turn, then voice mode. Returns false when there is
   // nothing left to undo (the hardware back button then leaves the app).
   const goBack = (): boolean => {
-    if (running && mode === "text") stop();
+    if (feedsOpen) setFeedsOpen(false);
+    else if (running && mode === "text") stop();
     else if (rewindId) cancelRewind();
     else if (view.kind === "history" || view.focus) toStage(null);
     else if (mode === "voice" && ui.modeSwitchable) leaveVoice();
@@ -171,10 +176,20 @@ export function Stage() {
       submit(text);
     },
     retry: (turn: thread.Turn) => thread.retry(turn.id),
-    registerFocus: (id: string, which: "open" | "edit", el: HTMLButtonElement | null) => {
-      const entry = focusables.current.get(id) ?? {};
-      entry[which] = el;
-      focusables.current.set(id, entry);
+    registerFocus: (id: string, el: HTMLButtonElement | null) => {
+      rowButtons.current.set(id, el);
+    },
+  });
+  const feedsActions = useStable({
+    toggle: () => setFeedsOpen((open) => !open),
+    // Watching asks huvu nothing, so it works even while a reply is
+    // still coming in. A rewind in progress is dropped, since the feed's
+    // turn lands after the turns it hides.
+    pick: (feed: Feed) => {
+      setFeedsOpen(false);
+      setRewindId(null);
+      thread.watch(feed);
+      setView({ kind: "stage", focus: null });
     },
   });
   const composerActions = useStable({
@@ -233,18 +248,50 @@ export function Stage() {
     return true;
   };
 
-  // Fire TV: up and down walk the history, right reaches the rewind
-  // button of the turn in focus, left comes back.
+  // Fire TV, with the feeds list open: up and down walk its rows that can
+  // be watched, and select picks one.
+  const onTvFeedsArrow = (e: KeyboardEvent) => {
+    if (!e.key.startsWith("Arrow")) return;
+    e.preventDefault();
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    const rows = [...(feedsRef.current?.querySelectorAll<HTMLButtonElement>("button:enabled") ?? [])];
+    const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+    rows[Math.max(0, Math.min(rows.length - 1, at + (e.key === "ArrowUp" ? -1 : 1)))]?.focus();
+  };
+
+  // Fire TV: the choices under the turn on the stage. Down reaches them
+  // once the turn has scrolled to its end, left and right walk them, up
+  // leaves them, and select sends the one in focus.
+  const choiceButtons = () => [...(rootRef.current?.querySelectorAll<HTMLButtonElement>("[data-choice]") ?? [])];
+  const reachChoices = () => {
+    const buttons = choiceButtons();
+    if (buttons.length === 0) return false;
+    if (!buttons.includes(document.activeElement as HTMLButtonElement)) buttons[0].focus();
+    return true;
+  };
+  const stepChoice = (by: number) => {
+    const buttons = choiceButtons();
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0) return false;
+    buttons[Math.max(0, Math.min(buttons.length - 1, at + by))].focus();
+    return true;
+  };
+  const leaveChoices = () => {
+    if (!choiceButtons().includes(document.activeElement as HTMLButtonElement)) return false;
+    (document.activeElement as HTMLElement).blur();
+    return true;
+  };
+
+  // Fire TV: up and down walk the history, and select opens the row in
+  // focus.
   const onTvArrow = (e: KeyboardEvent) => {
-    const current = view.kind === "history" ? view.cursor : heroId;
+    if (feedsOpen) return onTvFeedsArrow(e);
+    const stage = view.kind === "stage";
     const moves: Record<string, () => void> = {
-      ArrowUp: () => (view.kind === "stage" ? scrollList(true) || toHistory(heroId) : moveCursor(-1)),
-      ArrowDown: () => (view.kind === "stage" ? scrollList(false) || (heroId !== latest?.id && toHistory(heroId)) : moveCursor(1)),
-      ArrowRight: () => current && focusables.current.get(current)?.edit?.focus(),
-      ArrowLeft: () =>
-        view.kind === "history" && current
-          ? focusables.current.get(current)?.open?.focus()
-          : (document.activeElement as HTMLElement | null)?.blur(),
+      ArrowUp: () => (stage ? leaveChoices() || scrollList(true) || toHistory(heroId) : moveCursor(-1)),
+      ArrowDown: () => (stage ? scrollList(false) || reachChoices() || (heroId !== latest?.id && toHistory(heroId)) : moveCursor(1)),
+      ArrowLeft: () => stage && stepChoice(-1),
+      ArrowRight: () => stage && stepChoice(1),
     };
     const move = moves[e.key];
     if (!move) return;
@@ -261,9 +308,8 @@ export function Stage() {
         e.preventDefault();
         return;
       }
-      // Web: space talks unless it would type into a draft. Fire TV:
-      // select talks on the stage; in history it picks the focused row.
-      const eligible = !e.repeat && t?.tagName !== "BUTTON" && (TV ? view.kind === "stage" : !inField || draft === "");
+      // Space talks unless it would type into a draft.
+      const eligible = !e.repeat && t?.tagName !== "BUTTON" && (!inField || draft === "");
       if (eligible) {
         e.preventDefault();
         // In text mode a reply still coming in has to be stopped first.
@@ -287,6 +333,12 @@ export function Stage() {
 
     if (e.key === "Escape" || e.key === "GoBack" || e.key === "BrowserBack") {
       goBack();
+      return;
+    }
+
+    if (ui.feedsKey && e.key === ui.feedsKey) {
+      e.preventDefault();
+      setFeedsOpen((open) => !open);
       return;
     }
 
@@ -348,9 +400,10 @@ export function Stage() {
   }, []);
 
   // A written reply grows the garland a little per new word. In voice mode
-  // huvu's voice grows it instead.
+  // huvu's voice grows it instead. A watched feed says nothing, so the
+  // reply under it keeps growing it.
   useEffect(() => {
-    const turn = allTurns.at(-1);
+    const turn = allTurns.findLast((t) => !t.feed);
     if (!turn || turn.at < sessionStart || mode !== "text") return;
     const w = wrote.current.id === turn.id ? wrote.current : { id: turn.id, words: 0, sent: 0 };
     const words = turn.answer.split(/\s+/).filter(Boolean).length;
@@ -366,9 +419,13 @@ export function Stage() {
     if (TARGET === "web" && mode === "text") textareaRef.current?.focus({ preventScroll: true });
   }, [mode, view]);
 
+  useEffect(() => {
+    void refreshFeeds();
+  }, []);
+
   // A deep link with ?mode=voice starts listening at once.
   const startInitialVoice = useEffectEvent(() => {
-    if (mode === "voice" && !TV) voice.begin();
+    if (mode === "voice") voice.begin();
   });
   useEffect(() => startInitialVoice(), []);
 
@@ -380,13 +437,13 @@ export function Stage() {
 
   useEffect(() => {
     if (!TV || view.kind !== "history" || !view.cursor) return;
-    const el = focusables.current.get(view.cursor)?.open;
+    const el = rowButtons.current.get(view.cursor);
     el?.focus({ preventScroll: true });
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [view]);
 
   const inVoice = mode === "voice";
-  const hint = voice.phase === "idle" ? (rewindId && TV ? "rewound. hold select to ask again" : ui.idleHint) : PHASE_HINT[voice.phase];
+  const hint = voice.phase === "idle" ? ui.idleHint : PHASE_HINT[voice.phase];
   // Browsing history in voice mode puts the flower away: it shrinks and
   // fades where it is, and the list takes the whole height. Opening a turn
   // (or scrolling back down) brings it back.
@@ -444,9 +501,19 @@ export function Stage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0, transition: { duration: 0.35, ease: EASE } }}
                 transition={{ duration: 0.8, ease: EASE }}
-                className="halo font-bodoni text-[34px] italic leading-[1.1] text-ivory/40 sm:text-[46px]"
+                className="flex flex-col gap-[22px] in-data-[target=firetv]:mt-[12dvh]"
               >
-                what do you need?
+                {/* The TV's screen is big enough to set the greeting huge,
+                    in full ivory. */}
+                <span className="halo font-bodoni text-[34px] italic leading-[1.1] text-ivory/40 [text-wrap:balance] sm:text-[46px] in-data-[target=firetv]:text-[60px] in-data-[target=firetv]:leading-[1.02] in-data-[target=firetv]:tracking-[-0.02em] in-data-[target=firetv]:text-ivory">
+                  {greeting.line}
+                </span>
+                {greeting.example && (
+                  <span className="flex items-baseline gap-3">
+                    <span className={`${capsClass} text-sindoor`}>say</span>
+                    <span className="halo font-display text-[15px] font-medium text-ivory/85">{greeting.example}</span>
+                  </span>
+                )}
               </m.li>
             )}
           </AnimatePresence>
@@ -460,6 +527,8 @@ export function Stage() {
       <span className={`${capsClass} halo pointer-events-none absolute left-6 top-7 z-20 text-[11px] tracking-[0.42em] text-ivory/75 sm:left-12 sm:top-10`}>
         huvu
       </span>
+
+      <Feeds open={feedsOpen} onToggle={feedsActions.toggle} onPick={feedsActions.pick} listRef={feedsRef} />
 
       <m.div
         aria-live="polite"
@@ -505,7 +574,7 @@ export function Stage() {
         </m.button>
       )}
 
-      {!TV && (
+      {ui.hasInput && (
         <Composer
           ref={composerRef}
           slotRef={slotRef}
@@ -524,7 +593,7 @@ export function Stage() {
       {/* One flower for the whole app, above everything. Switching modes
           glides it between the composer and the middle of the screen with
           a transform; it never unmounts, so it never blinks. */}
-      {flowerAt && (
+      {ui.hasInput && flowerAt && (
         <m.div
           initial={false}
           animate={flowerAt}
@@ -538,8 +607,7 @@ export function Stage() {
             size={FLOWER_BIG}
             level={voice.level}
             label={docked ? "bring the flower back" : voice.phase === "thinking" || voice.phase === "speaking" ? "interrupt huvu" : "speak to huvu"}
-            onClick={TV ? undefined : onFlower}
-            focusable={!TV}
+            onClick={onFlower}
           />
         </m.div>
       )}

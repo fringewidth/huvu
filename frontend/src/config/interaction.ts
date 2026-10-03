@@ -1,31 +1,49 @@
 export type Target = "web" | "phone" | "firetv";
-export type Mode = "text" | "voice";
+export type Mode = "text" | "voice" | "none";
+
+// What the stage says before there is any turn. `example` is an ask to
+// try, in your words.
+export interface Greeting {
+  line: string;
+  example?: string;
+}
 
 // Everything about how the UI behaves on one build target. This answers
 // "what does this screen look like". What the device can do (wake word is
 // Android only) is a platform check, kept apart from this on purpose.
 interface Profile {
+  // Whether this screen has input of its own: a composer, the flower, edit
+  // and retry. Fire TV has none. It shows the turns sent to it and the
+  // live feeds picked on it, and still sends a choice picked with the
+  // remote.
+  hasInput: boolean;
+  // "none" for a screen that asks nothing. initialMode() shows it as text.
   defaultMode: Mode;
-  // Fire TV is voice only, with no toggle rendered at all.
   modeSwitchable: boolean;
   // Enter sends on web. Phone keyboards put Enter where a new line
   // belongs, so phone sends only with its send button.
   enterSends: boolean;
   sendButton: boolean;
   // The key held down to talk. Release sends. Phone has no hardware key
-  // for this, so the flower is the only way into voice there. Fire TV's
-  // select button arrives in the WebView as Enter.
-  pushToTalkKey: string | null;
-  placeholder: string;
-  idleHint: string;
-  // Fire TV has no text, so editing a turn there means asking it again.
-  editLabel: string;
+  // for this, so the flower is the only way into voice there. Left out
+  // where there is no such key.
+  pushToTalkKey?: string;
+  // The key that opens the list of live feeds. Fire TV has no pointer
+  // for the LIVE control, so its Menu button opens the list. Chromium
+  // reports that button as ContextMenu, unverified on a real Fire TV.
+  feedsKey?: string;
+  // The voice and text fields below are left out where the screen asks
+  // nothing.
+  placeholder?: string;
+  idleHint?: string;
+  // One is picked at random at launch.
+  greetings: Greeting[];
   // The voice flower's full size, in px.
-  flowerSize: number;
+  flowerSize?: number;
   // Whether huvu's answer streams in as text above the flower in voice
   // mode. A phone screen has no room for it next to the flower and the
   // transcript, and huvu says the answer anyway.
-  voiceAnswerText: boolean;
+  voiceAnswerText?: boolean;
   // Phone screens are dense enough that 1.5x looks like 2x, at almost half
   // the pixels for the garden to wash every frame.
   maxPixelDensity: number;
@@ -33,6 +51,7 @@ interface Profile {
 
 const PROFILES: Record<Target, Profile> = {
   web: {
+    hasInput: true,
     defaultMode: "text",
     modeSwitchable: true,
     enterSends: true,
@@ -40,35 +59,84 @@ const PROFILES: Record<Target, Profile> = {
     pushToTalkKey: " ",
     placeholder: "write, or hold space to speak",
     idleHint: "hold space to speak, or click the flower",
-    editLabel: "edit",
+    greetings: [
+      { line: "Back at it." },
+      { line: "Look who's back." },
+      { line: "Let's get going." },
+      { line: "Ready when you are." },
+      { line: "Ready?" },
+      { line: "What's on your mind?" },
+    ],
     flowerSize: 168,
     voiceAnswerText: true,
     maxPixelDensity: 2,
   },
   phone: {
+    hasInput: true,
     defaultMode: "text",
     modeSwitchable: true,
     enterSends: false,
     sendButton: true,
-    pushToTalkKey: null,
     placeholder: "write, or tap the flower",
     idleHint: "tap the flower to listen",
-    editLabel: "edit",
+    greetings: [
+      { line: "Back at it." },
+      { line: "Look who's back." },
+      { line: "Let's get going." },
+      { line: "Ready when you are." },
+      { line: "Ready?" },
+      { line: "What's on your mind?" },
+    ],
     flowerSize: 168,
     voiceAnswerText: false,
     maxPixelDensity: 1.5,
   },
+  // Display only. It asks nothing, so the voice and text fields are left
+  // out.
   firetv: {
-    defaultMode: "voice",
+    hasInput: false,
+    defaultMode: "none",
     modeSwitchable: false,
     enterSends: false,
     sendButton: false,
-    pushToTalkKey: "Enter",
-    placeholder: "",
-    idleHint: "hold select to speak",
-    editLabel: "rewind",
-    flowerSize: 200,
-    voiceAnswerText: true,
+    feedsKey: "ContextMenu",
+    // Asks reach the TV through Alexa, so each greeting shows one.
+    greetings: [
+      { line: "Feeling a classic, or something new?", example: "alexa, ask huvu for a film like blade runner" },
+      { line: "One more episode?", example: "alexa, ask huvu how long is the first season of Invincible" },
+      {
+        line: "Sit back and relax.",
+        example: (() => {
+          const languages = ["Telugu", "Kannada", "Hindi", "Tamil", "Malayalam"];
+          return `alexa, ask huvu what's some cool ${languages[Math.floor(Math.random() * languages.length)]} movies`;
+        })(),
+      },
+      { line: "Got your popcorn?", example: "alexa, ask huvu what's a good movie under two hours" },
+      // Two more for the show the clock is in, read once at launch in the
+      // device's local time, the way a cinema runs its day.
+      ...(() => {
+        const hour = new Date().getHours();
+        return hour >= 21 || hour < 5
+          ? [
+              { line: "The late-night screening is on.", example: "alexa, ask huvu for something to watch before bed" },
+              { line: "Something short tonight?", example: "alexa, ask huvu for a series with episodes under 30 minutes" },
+            ]
+          : hour < 12
+            ? [
+                { line: "The morning show is open.", example: "alexa, ask huvu for something light to start the day" },
+                { line: "Slow start? Pick something easy.", example: "alexa, ask huvu for a feel-good comedy" },
+              ]
+            : hour < 17
+              ? [
+                  { line: "Matinee time.", example: "alexa, ask huvu what to watch this afternoon" },
+                  { line: "An afternoon off deserves a good film.", example: "alexa, ask huvu for a movie under two hours" },
+                ]
+              : [
+                  { line: "The evening show is about to begin.", example: "alexa, ask huvu what's worth watching tonight" },
+                  { line: "What are we watching tonight?", example: "alexa, ask huvu what's good on netflix" },
+                ];
+      })(),
+    ],
     maxPixelDensity: 2,
   },
 };
@@ -89,5 +157,7 @@ export const TV = TARGET === "firetv";
 // The phone widget's quick-voice button deep-links with ?mode=voice.
 export function initialMode(): Mode {
   const requested = new URLSearchParams(window.location.search).get("mode");
-  return ui.modeSwitchable && (requested === "text" || requested === "voice") ? requested : ui.defaultMode;
+  if (ui.modeSwitchable && (requested === "text" || requested === "voice")) return requested;
+  // A screen with no mode shows replies the way text mode does.
+  return ui.defaultMode === "none" ? "text" : ui.defaultMode;
 }

@@ -16,10 +16,7 @@ interface VoiceFlowerProps {
   size: number;
   level: MotionValue<number>;
   label: string;
-  onClick?: () => void;
-  // Fire TV drives the flower with the remote's select button, so the
-  // flower itself must never take focus there.
-  focusable?: boolean;
+  onClick: () => void;
 }
 
 const PETAL = "M0,0 C-20,-6 -19,-36 -3,-45 C13,-41 12,-11 0,0Z";
@@ -39,7 +36,7 @@ const MOTION: Record<FlowerState, { animate: TargetAndTransition; transition: Tr
   thinking: { animate: { rotate: 360, scale: 1 }, transition: { duration: 9, repeat: Infinity, ease: "linear" } },
 };
 
-export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label, onClick, focusable = true }: VoiceFlowerProps) {
+export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label, onClick }: VoiceFlowerProps) {
   // A loud voice swells the flower by at most a sixth, on a slow, heavy
   // spring, so it breathes with you instead of jumping at every syllable.
   const grow = useSpring(
@@ -60,7 +57,6 @@ export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label
       // A click must not pull focus out of the text field, or the next
       // space would press the flower instead of talking.
       onMouseDown={(e) => e.preventDefault()}
-      tabIndex={focusable ? 0 : -1}
       className="relative flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-1 focus-visible:ring-sindoor/70 focus-visible:ring-offset-8 focus-visible:ring-offset-transparent"
       style={{ width: size, height: size }}
     >
