@@ -94,6 +94,17 @@ class EventLog:
         )
         return cursor.rowcount
 
+    def count(self, *, type: str, since: datetime, entity: str | None = None, user: str | None = None) -> int:
+        """How many events of a type since a time, for one entity or user."""
+        where, args = ["type = ?", "ts >= ?"], [type, since.timestamp()]
+        if entity is not None:
+            where.append("entity = ?")
+            args.append(entity)
+        if user is not None:
+            where.append("user_id = ?")
+            args.append(user)
+        return self._conn.execute(f"SELECT COUNT(*) AS n FROM events WHERE {' AND '.join(where)}", args).fetchone()["n"]
+
     def get(self, event_id: str, viewer: Viewer = EVERYONE) -> Event | None:
         clause, args = _visible(viewer)
         where = f" AND {clause}" if clause else ""

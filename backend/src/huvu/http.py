@@ -30,6 +30,7 @@ from .source import SourceError
 from .spec import Caller
 from .times import for_model
 from .tools import ToolError
+from .triggers import TriggerError
 
 log = logging.getLogger("huvu.http")
 
@@ -269,6 +270,29 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         except SourceError as err:
             raise HTTPException(409, str(err)) from err
         return JSONResponse(api_json(approval.public()))
+
+    # Triggers
+
+    @app.get("/api/triggers")
+    async def triggers(me: Device = device) -> JSONResponse:
+        """The triggers of this device's user, or of whoever is recognized at
+        a shared device."""
+        caller = Caller(kind="frontend", user=me.user or kernel.attendance.holder(me.id), device=me.id, group=me.group)
+        return JSONResponse(api_json([t.public() for t in kernel.triggers.list(caller)]))
+
+    @app.post("/api/triggers/{trigger_id}/{verb}")
+    async def trigger_control(trigger_id: str, verb: str, me: Device = device) -> JSONResponse:
+        """Pause or resume one of them. Resuming one the wake limit paused
+        takes this: a person's tap."""
+        caller = Caller(kind="frontend", user=me.user or kernel.attendance.holder(me.id), device=me.id, group=me.group)
+        controls = {"pause": kernel.triggers.pause, "resume": kernel.triggers.resume}
+        if verb not in controls:
+            raise HTTPException(404, f"no trigger control {verb!r}")
+        try:
+            trigger = await controls[verb](trigger_id, caller)
+        except TriggerError as err:
+            raise HTTPException(409, str(err)) from err
+        return JSONResponse(api_json(trigger.public()))
 
     @app.post("/api/actions/{source}/{action}")
     async def act(source: str, action: str, request: Request, me: Device = device) -> JSONResponse:

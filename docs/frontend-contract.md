@@ -105,6 +105,10 @@ Approvals are answered from phones only. An approval belongs to the user it was 
 
 `POST /api/actions/{source}/{action}` with the action's args is a tap in the app. On a member's personal device (phone, web) the tap is the approval, so it runs at once. On a shared device, or from a guest, it goes through the policy like a model's request, so a `requires_human` action waits for a member's phone.
 
+### Triggers
+
+`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `when`, `repeat`, `status` (`active`, `unconfirmed`, `paused`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one. A trigger the wake limit paused (`paused_by: "limit"`) resumes only this way, by a person's tap; the model can't.
+
 ### Triggers on a shared device
 
 A trigger belongs to a person. One set up on a shared device with nobody recognized waits, and everyone in the device's group, members and guests, gets an `identify` question with `asked_by: "trigger"` and the trigger in `reason`. The first yes recognizes that person at the device (see below) and makes the device's waiting triggers theirs. The other questions are `withdrawn`. If everyone says no, or nobody answers within 5 minutes, the waiting triggers are dropped.

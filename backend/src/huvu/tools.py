@@ -173,6 +173,21 @@ class ToolBox:
             Tool("triggers_list", "Every live trigger of the person you're helping, or the household's.", _schema({}), self._triggers_list),
             Tool("triggers_remove", "Removes a trigger.", _schema({"id": {"type": "string"}}, ["id"]), self._triggers_remove, writes=True),
             Tool(
+                "triggers_pause",
+                "Pauses a trigger: it stops firing, and keeps everything else. Use it when a trigger fires too often or misbehaves, "
+                "until the person says what they want. `reason` is one line for them.",
+                _schema({"id": {"type": "string"}, "reason": {"type": "string"}}, ["id"]),
+                self._triggers_pause,
+                writes=True,
+            ),
+            Tool(
+                "triggers_resume",
+                "Resumes a paused trigger. One the wake limit paused can only be resumed by its person, from the app.",
+                _schema({"id": {"type": "string"}}, ["id"]),
+                self._triggers_resume,
+                writes=True,
+            ),
+            Tool(
                 "people_identify",
                 "Asks someone who uses this shared device, on their phone, whether they're the one at it. "
                 "Use it when someone says who they are, or you think you know. `user` is their username or name. "
@@ -270,6 +285,14 @@ class ToolBox:
 
     async def _triggers_list(self, args: dict[str, Any], caller: Caller) -> Result:
         return Result(data=[t.public() for t in self._kernel.triggers.list(caller)], labels=["house"])
+
+    async def _triggers_pause(self, args: dict[str, Any], caller: Caller) -> Result:
+        trigger = await self._kernel.triggers.pause(args["id"], caller, args.get("reason"))
+        return Result(data=trigger.public(), labels=["house"])
+
+    async def _triggers_resume(self, args: dict[str, Any], caller: Caller) -> Result:
+        trigger = await self._kernel.triggers.resume(args["id"], caller)
+        return Result(data=trigger.public(), labels=["house"])
 
     async def _triggers_remove(self, args: dict[str, Any], caller: Caller) -> Result:
         trigger = await self._kernel.triggers.remove(args["id"], caller)

@@ -45,6 +45,10 @@ Today the frontend calls only `POST /api/chat`, `POST /api/turns/{id}/stop` and 
 1. **A group's approval** (`user: null`, with `group`) shows on every member's phone. The first answer wins, so the others should drop it when the resolved `approval` push arrives.
 1. **On a non-phone device**, an action that comes back `pending_approval` (a tap on the TV, a chat on the laptop) should say it is waiting on a phone.
 
+## Triggers
+
+1. **A triggers screen**: `GET /api/triggers`, with pause and resume on each. Make a trigger the wake limit paused (`paused_by: "limit"`) stand out: only this tap can bring it back, and the `notify` push that said so should open this screen.
+
 ## Triggers set up on a shared device
 
 No screen of their own. A trigger set up on a shared device with nobody recognized asks everyone in the group "is this you?", through the same phone prompt as below (`identify`, with `asked_by: "trigger"` and a `reason` such as "setting up: Turn on the porch light."). Show the `reason` in the prompt. A `withdrawn` status in `identify.done` means someone else said yes first.

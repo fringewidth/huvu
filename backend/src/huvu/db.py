@@ -106,6 +106,11 @@ CREATE TABLE IF NOT EXISTS triggers (
     -- The group and shared device it was set up through, if any.
     group_id TEXT,
     device_id TEXT,
+    -- model, user or limit, while paused. One the limit paused resumes only
+    -- by its user's tap.
+    paused_by TEXT,
+    -- When it was last resumed; the wake limit counts from here.
+    resumed_at TEXT,
     last_fired_at TEXT,
     fire_count INTEGER NOT NULL DEFAULT 0
 );

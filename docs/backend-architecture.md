@@ -215,6 +215,14 @@ Unknown value names are rejected with an error that names the nearest real one, 
 1. An input older than its source's `max_age` counts as unknown, and unknown counts as false for firing. It doesn't count as the condition turning false, though: a `repeat: "yes"` trigger rearms only when every input is known and the condition is false.
 1. A fire wakes Hermes with the note, the matched values and the `include` values. Every fire is a `trigger.run` event, and every failure a `trigger.error` event.
 
+### Runaway triggers
+
+1. **One run at a time.** A trigger is running from the look that decides to fire until its wake or script ends. A fire that comes meanwhile is dropped. A value that changed meanwhile gets one more look when the run ends, so a condition that went false in between still rearms it. A trigger whose own action causes the event it watches finds itself running, so it can't feed itself. Each trigger has its own claim; one slow trigger doesn't hold up the others.
+1. **Pausing.** Any session acting for a trigger's user can pause and resume it (`triggers_pause`, `triggers_resume`), and so can the user from the app. A paused trigger keeps everything but stops watching.
+1. **The wake limit.** A trigger may wake the model at most 20 times in two hours, counted from the event log (`wake.started`), since its last resume if that is later. From the 10th wake on, the wake tells the model and asks it to handle the repeats in a script or pause the trigger until the person approves. The 21st doesn't happen: the trigger pauses itself, and its user is notified. A trigger the limit paused resumes only by the user's own tap.
+1. **The busy notice.** A user whose triggers fired more than 10 times in the last hour, together, is notified, once an hour at most. It also catches a script-only trigger that never wakes the model.
+1. Scripts never call the model themselves: `ctx.wake` asks the backend to, through the same waker and the same limit.
+
 ### Whose a trigger is
 
 Every trigger belongs to a user. Its wakes run in that user's Hermes profile, its scripts act as that user, and its approvals and notifications go to that user's phones. `triggers_list` and `triggers_remove` see only the calling profile's triggers.
@@ -282,7 +290,7 @@ Hermes names each one `mcp__huvu__<name>`.
 | `events_search`, `events_get` | Full-text search over the event log, and one event |
 | `events_digest` | A day's or an hour's digest |
 | `sources_list` | Every source with its values, events, queries and actions |
-| `triggers_register`, `triggers_test`, `triggers_list`, `triggers_remove` | Trigger management |
+| `triggers_register`, `triggers_test`, `triggers_list`, `triggers_remove`, `triggers_pause`, `triggers_resume` | Trigger management |
 | `<source>_<query>`, `<source>_<action>` | Built from each source's `describe`. Every action takes an optional `reason` |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
 | `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |

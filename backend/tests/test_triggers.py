@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 
 from huvu.spec import Caller
+from huvu.tools import ToolError
 from huvu.triggers import TriggerError, TriggerSpec, compare
 
 OWNER = Caller(kind="hermes", session="s1", user="me")
@@ -128,6 +129,7 @@ async def test_event_triggers_filter_on_data(kernel, hermes):
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     await home.emit("unlock", "unlocked by Mom", data={"method": "face", "person": "Mom"})
     await home.emit("unlock", "unlocked by Hrishik", data={"method": "fingerprint", "person": "Hrishik"})
+    await settle(kernel)
     await home.emit("unlock", "unlocked by Hrishik", data={"method": "fingerprint", "person": "Hrishik"})
     await settle(kernel)
     assert len(wakes(hermes)) == 2
@@ -343,3 +345,81 @@ async def test_an_input_going_unknown_doesnt_rearm(kernel, clock, hermes):
     await home.update("eta_min", 6)
     await settle(kernel)
     assert len(wakes(hermes)) == 2
+
+
+async def test_a_fire_while_the_trigger_runs_is_dropped(kernel, hermes):
+    gate = asyncio.Event()
+
+    async def slow(session_id: str) -> None:
+        await gate.wait()
+
+    hermes.script = [("run.started", {"run_id": "r"}), slow, ("run.completed", {})]
+    home = kernel.registry.get("home").ctx
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}), OWNER)
+    await home.emit("doorbell", "ding")
+    await asyncio.sleep(0.01)
+    # The first wake is still running: these are dropped.
+    await home.emit("doorbell", "ding")
+    await home.emit("doorbell", "ding")
+    gate.set()
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1
+    # Once it's done, the next one fires.
+    await home.emit("doorbell", "ding")
+    await settle(kernel)
+    assert len(wakes(hermes)) == 2
+
+
+async def test_wakes_past_ten_are_told_and_past_twenty_pause_it(kernel, family, hermes, clock):
+
+    mine, mine_task = await push_events(kernel, family.me_phone.id)
+    home = kernel.registry.get("home").ctx
+    trigger = await kernel.triggers.register(
+        TriggerSpec.model_validate({"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}), OWNER
+    )
+    for _ in range(21):
+        await home.emit("doorbell", "ding")
+        await settle(kernel)
+    sent = wakes(hermes)
+    assert len(sent) == 20
+    assert "woken you" not in sent[8] and "has woken you 10 times" in sent[9] and "triggers_pause" in sent[9]
+    assert trigger.status == "paused" and trigger.paused_by == "limit"
+    assert any(n == "notify" and "Paused a trigger" in d["text"] for n, d in mine)
+    # Only its person can resume it, from the app.
+    with pytest.raises(TriggerError, match="only its person"):
+        await kernel.triggers.resume(trigger.id, OWNER)
+    clock.advance(seconds=1)
+    await kernel.triggers.resume(trigger.id, Caller(kind="frontend", user="me", device=family.me_phone.id))
+    await home.emit("doorbell", "ding")
+    await settle(kernel)
+    assert len(wakes(hermes)) == 21
+    mine_task.cancel()
+
+
+async def test_the_model_can_pause_and_resume_its_users_triggers(kernel, family, hermes):
+    home = kernel.registry.get("home").ctx
+    created = await kernel.tools.call("triggers_register", {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}, OWNER)
+    paused = await kernel.tools.call("triggers_pause", {"id": created.data["id"], "reason": "too chatty"}, OWNER)
+    assert paused.data["status"] == "paused" and paused.data["paused_by"] == "model"
+    await home.emit("doorbell", "ding")
+    await settle(kernel)
+    assert wakes(hermes) == []
+    with pytest.raises(ToolError, match="no live trigger"):
+        await kernel.tools.call("triggers_pause", {"id": created.data["id"]}, Caller(kind="hermes", user="mom"))
+    await kernel.tools.call("triggers_resume", {"id": created.data["id"]}, OWNER)
+    await home.emit("doorbell", "ding")
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1
+
+
+async def test_busy_triggers_tell_their_user_once_an_hour(kernel, family, clock):
+
+    mine, mine_task = await push_events(kernel, family.me_phone.id)
+    home = kernel.registry.get("home").ctx
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Bell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": "def run(ctx):\n    pass\n"}), OWNER)
+    for _ in range(14):
+        await home.emit("doorbell", "ding")
+        await settle(kernel)
+    told = [d for n, d in mine if n == "notify" and "fired" in d["text"]]
+    assert len(told) == 1 and "11 times" in told[0]["text"]
+    mine_task.cancel()

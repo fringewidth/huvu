@@ -23,6 +23,20 @@ this you on the living room TV?" on their phone. The first yes makes that
 person the device's attendee (see attendance.py), and the device's waiting
 triggers become theirs and go live. If everyone says no, or nobody answers
 in time, they are dropped.
+
+A trigger runs once at a time: from deciding to fire to the end of its wake
+or script. A fire that comes while it runs is dropped. A value that changed
+meanwhile is looked at once more when the run ends, so a condition that went
+false in between still rearms it. A trigger whose own action causes the
+event it watches finds itself running, so it can't feed itself.
+
+A runaway trigger is held back by counting its model wakes (see wake.py):
+from the 10th in two hours the wake tells the model so, and asks it to
+handle the repeats in a script or pause the trigger; a 21st doesn't happen,
+and the trigger pauses itself and tells its user. A user with more than 10
+fires an hour across their triggers is told once an hour. Any session acting
+for a trigger's user can pause and resume it; one the limit paused resumes
+only by the user's own tap.
 """
 
 from __future__ import annotations
@@ -42,6 +56,7 @@ from .names import UnknownName, ValueRef
 from .spec import Caller, Event, Reading, Strict, ValueSpec, merge_labels
 from .state import is_fresh
 from .times import parse_clock, parse_when
+from .wake import WAKE_WINDOW
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -50,11 +65,16 @@ log = logging.getLogger("huvu.triggers")
 
 Op = Literal["==", "!=", "<", "<=", ">", ">=", "between", "in", "contains"]
 Repeat = Literal["no", "yes", "daily"]
-Status = Literal["active", "unconfirmed", "done", "expired", "removed"]
+Status = Literal["active", "unconfirmed", "paused", "done", "expired", "removed"]
+# Who paused a trigger. One the wake limit paused resumes only by its user.
+PausedBy = Literal["model", "user", "limit"]
 
 # A trigger that fires once and names no expiry gets this one, so a
 # condition that never comes true doesn't stay forever.
 DEFAULT_EXPIRY = timedelta(days=7)
+# A user with more fires than this across their triggers in an hour is told.
+BUSY_FIRES = 10
+BUSY_WINDOW = timedelta(hours=1)
 # How long a trigger from a shared device waits for its person, should the
 # questions on their phones somehow outlive it.
 UNCONFIRMED_TTL = timedelta(minutes=15)
@@ -121,6 +141,9 @@ class Trigger:
     # The group and shared device it was set up through, if any.
     group: str | None = None
     device: str | None = None
+    paused_by: PausedBy | None = None
+    # When it was last resumed. The wake limit counts from here.
+    resumed_at: datetime | None = None
     last_fired_at: datetime | None = None
     fire_count: int = 0
     # Filled in by the engine when the trigger is active.
@@ -134,6 +157,7 @@ class Trigger:
             "user": self.user,
             "group": self.group,
             "device": self.device,
+            "paused_by": self.paused_by,
             "note": self.spec.note,
             "when": [c.model_dump(exclude_none=True) for c in self.spec.when],
             "repeat": self.spec.repeat,
@@ -194,7 +218,10 @@ class TriggerEngine:
         self._triggers: dict[str, Trigger] = {}
         self._by_ref: dict[ValueRef, set[str]] = {}
         self._by_event: dict[str, set[str]] = {}
-        self._lock = asyncio.Lock()
+        # Triggers in the middle of a run, and value triggers whose inputs
+        # changed during one.
+        self._running: set[str] = set()
+        self._dirty: set[str] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
 
     @property
@@ -203,7 +230,7 @@ class TriggerEngine:
 
     async def load(self) -> None:
         """Reloads stored triggers and activates the live ones."""
-        rows = self._db.execute("SELECT * FROM triggers WHERE status IN ('active', 'unconfirmed')").fetchall()
+        rows = self._db.execute("SELECT * FROM triggers WHERE status IN ('active', 'unconfirmed', 'paused')").fetchall()
         for row in rows:
             trigger = Trigger(
                 id=row["id"],
@@ -216,6 +243,8 @@ class TriggerEngine:
                 group=row["group_id"],
                 expires_at=from_iso(loads(row["spec"]).get("expires")),
                 device=row["device_id"],
+                paused_by=row["paused_by"],
+                resumed_at=from_iso(row["resumed_at"]),
                 last_fired_at=from_iso(row["last_fired_at"]),
                 fire_count=row["fire_count"],
             )
@@ -361,7 +390,49 @@ class TriggerEngine:
         def mine(t: Trigger) -> bool:
             return t.user == caller.user if caller.user is not None else (t.user is None and t.device == caller.device)
 
-        return [t for t in self._triggers.values() if t.status in ("active", "unconfirmed") and mine(t)]
+        return [t for t in self._triggers.values() if t.status in ("active", "unconfirmed", "paused") and mine(t)]
+
+    async def pause(self, trigger_id: str, caller: Caller, reason: str | None = None) -> Trigger:
+        """Pauses one of the caller's live triggers: it stops watching, and
+        keeps everything else. Any session acting for its user may."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None or trigger not in self.list(caller) or trigger.status != "active":
+            raise TriggerError(f"no live trigger {trigger_id!r} to pause")
+        await self._pause(trigger, "user" if caller.kind == "frontend" else "model", reason or "asked to")
+        return trigger
+
+    async def pause_for_limit(self, trigger_id: str, wakes: int) -> None:
+        """The wake limit: the trigger pauses itself and tells its user."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None or trigger.status != "active":
+            return
+        reason = f"it woke the model {wakes} times in {int(WAKE_WINDOW.total_seconds() // 3600)} hours"
+        await self._pause(trigger, "limit", reason)
+        await self._kernel.notify(trigger.user, None, f"Paused a trigger, since {reason}: {trigger.spec.note}", urgency="high")
+
+    async def _pause(self, trigger: Trigger, by: PausedBy, reason: str) -> None:
+        trigger.status = "paused"
+        trigger.paused_by = by
+        self._deactivate(trigger)
+        self._save(trigger)
+        await self._kernel.kernel_event("trigger.paused", f"trigger {trigger.id} paused by {by}, {reason}: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
+
+    async def resume(self, trigger_id: str, caller: Caller) -> Trigger:
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None or trigger not in self.list(caller) or trigger.status != "paused":
+            raise TriggerError(f"no paused trigger {trigger_id!r}")
+        if trigger.paused_by == "limit" and caller.kind != "frontend":
+            raise TriggerError("the wake limit paused this trigger, so only its person can resume it, from the app; tell them, or change the trigger first")
+        trigger.status = "active"
+        trigger.paused_by = None
+        trigger.resumed_at = self._kernel.now()
+        self._save(trigger)
+        await self._kernel.kernel_event("trigger.resumed", f"trigger {trigger.id} resumed: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
+        await self._activate(trigger)
+        return trigger
+
+    def live(self, trigger_id: str) -> Trigger | None:
+        return self._triggers.get(trigger_id)
 
     def _get(self, trigger_id: str) -> Trigger:
         trigger = self._triggers.get(trigger_id)
@@ -380,7 +451,7 @@ class TriggerEngine:
         else:
             # A condition that already holds fires now: the state before
             # registration counts as false.
-            await self._evaluate(trigger)
+            await self._look(trigger, None)
 
     def _deactivate(self, trigger: Trigger) -> None:
         for check in [*trigger.checks, *trigger.resets]:
@@ -401,15 +472,15 @@ class TriggerEngine:
 
     def _save(self, trigger: Trigger) -> None:
         self._db.execute(
-            "UPDATE triggers SET status = ?, armed = ?, last_fired_at = ?, fire_count = ? WHERE id = ?",
-            (trigger.status, int(trigger.armed), iso(trigger.last_fired_at), trigger.fire_count, trigger.id),
+            "UPDATE triggers SET status = ?, armed = ?, last_fired_at = ?, fire_count = ?, paused_by = ?, resumed_at = ? WHERE id = ?",
+            (trigger.status, int(trigger.armed), iso(trigger.last_fired_at), trigger.fire_count, trigger.paused_by, iso(trigger.resumed_at), trigger.id),
         )
 
     async def _on_value(self, ref: ValueRef, reading: Reading) -> None:
         for trigger_id in list(self._by_ref.get(ref, ())):
             trigger = self._triggers.get(trigger_id)
             if trigger and trigger.status == "active" and trigger.event is None:
-                await self._evaluate(trigger)
+                await self._look(trigger, None)
             elif trigger and trigger.status == "active":
                 self._rearm(trigger, holds=None)
 
@@ -418,25 +489,59 @@ class TriggerEngine:
             trigger = self._triggers.get(trigger_id)
             if trigger is None or trigger.status != "active" or trigger.event is None:
                 continue
-            async with self._lock:
-                where = trigger.event.where or {}
-                matches = all(event.data.get(k) == v for k, v in where.items())
-                self._rearm(trigger, holds=None)
-                holds, _, _ = await self._holds(trigger.checks)
-                if matches and trigger.armed and holds:
-                    await self._fire(trigger, event)
+            where = trigger.event.where or {}
+            if all(event.data.get(k) == v for k, v in where.items()):
+                await self._look(trigger, event)
 
-    async def _evaluate(self, trigger: Trigger) -> None:
-        async with self._lock:
-            holds, readings, _ = await self._holds(trigger.checks)
-            # Unknown counts as false for firing, but not for rearming: an
-            # input nobody has reported (after a driver restarts, say) hasn't
-            # turned the condition false.
-            now = self._kernel.now()
-            known = all(is_fresh(readings[c.ref.key], c.spec, now) for c in trigger.checks)
-            self._rearm(trigger, holds if (holds or known) else None)
-            if holds and trigger.armed:
-                await self._fire(trigger, None)
+    async def _look(self, trigger: Trigger, event: Event | None) -> None:
+        """Looks at a trigger now, in order with what changed, and fires it
+        if it should. From the look to the end of its wake or script, the
+        trigger is running: an event for it meanwhile is dropped, and a value
+        change is looked at again when the run ends."""
+        if trigger.id in self._running:
+            if event is None:
+                self._dirty.add(trigger.id)
+            else:
+                log.info("trigger %s is still running; dropped %s", trigger.id, event.type)
+            return
+        self._running.add(trigger.id)
+        payload = None
+        try:
+            payload = await (self._decide_event(trigger, event) if event else self._decide_value(trigger))
+        finally:
+            if payload is None:
+                await self._release(trigger)
+        if payload is not None:
+            self._spawn(self._deliver_and_release(trigger, payload))
+
+    async def _decide_event(self, trigger: Trigger, event: Event) -> dict[str, Any] | None:
+        self._rearm(trigger, holds=None)
+        holds, _, _ = await self._holds(trigger.checks)
+        return await self._fire(trigger, event) if trigger.armed and holds else None
+
+    async def _decide_value(self, trigger: Trigger) -> dict[str, Any] | None:
+        holds, readings, _ = await self._holds(trigger.checks)
+        # Unknown counts as false for firing, but not for rearming: an input
+        # nobody has reported (after a driver restarts, say) hasn't turned
+        # the condition false.
+        now = self._kernel.now()
+        known = all(is_fresh(readings[c.ref.key], c.spec, now) for c in trigger.checks)
+        self._rearm(trigger, holds if (holds or known) else None)
+        return await self._fire(trigger, None) if holds and trigger.armed else None
+
+    async def _deliver_and_release(self, trigger: Trigger, payload: dict[str, Any]) -> None:
+        try:
+            await self._deliver(trigger, payload)
+        finally:
+            await self._release(trigger)
+
+    async def _release(self, trigger: Trigger) -> None:
+        """Ends a run. A value that changed during it gets its look now."""
+        self._running.discard(trigger.id)
+        if trigger.id in self._dirty:
+            self._dirty.discard(trigger.id)
+            if trigger.status == "active":
+                await self._look(trigger, None)
 
     def _rearm(self, trigger: Trigger, holds: bool | None) -> None:
         """Sets `armed` from the repeat mode. `holds` is the condition now,
@@ -477,7 +582,9 @@ class TriggerEngine:
             results[check.ref.key] = is_fresh(reading, check.spec, now) and _safe_compare(check, reading.value)
         return all(results.values()), readings, results
 
-    async def _fire(self, trigger: Trigger, event: Event | None) -> None:
+    async def _fire(self, trigger: Trigger, event: Event | None) -> dict[str, Any]:
+        """Marks the trigger fired and logs it, and returns the payload to
+        deliver."""
         now = self._kernel.now()
         _, matched, _ = await self._holds(trigger.checks)
         included = await self._kernel.state.get(trigger.spec.include)
@@ -502,9 +609,23 @@ class TriggerEngine:
             refs={"event": event.id} if event else {},
             labels=labels,
         )
+        await self._tell_if_busy(trigger)
         if trigger.spec.repeat == "no":
             await self._end(trigger, "done", f"trigger {trigger.id} fired once and is done")
-        self._spawn(self._deliver(trigger, payload))
+        return payload
+
+    async def _tell_if_busy(self, trigger: Trigger) -> None:
+        """Tells a user, once an hour at most, when their triggers fired more
+        than BUSY_FIRES times in the last hour."""
+        if trigger.user is None:
+            return
+        since = self._kernel.now() - BUSY_WINDOW
+        fires = self._kernel.events.count(type="trigger.run", user=trigger.user, since=since)
+        told = self._kernel.events.count(type="triggers.busy", user=trigger.user, since=since)
+        if fires > BUSY_FIRES and not told:
+            text = f"Your triggers fired {fires} times in the last hour. Check them, or ask huvu to pause one."
+            await self._kernel.kernel_event("triggers.busy", text, user=trigger.user)
+            await self._kernel.notify(trigger.user, None, text)
 
     async def _deliver(self, trigger: Trigger, payload: dict[str, Any]) -> None:
         try:
