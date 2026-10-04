@@ -2,10 +2,10 @@
 
 Some things reach a device that didn't ask for them right then: a turn in
 its conversation that it didn't start, a notification, a pending approval,
-a trigger waiting to be claimed. Every open client keeps `GET /api/push`
-open, and gets only what is addressed to its device. Notifications,
-approvals and claims go to phones, which are taken to be on their user's
-person. A device that isn't connected misses them; native push
+a question asking whether it's them at a shared device. Every open client
+keeps `GET /api/push` open, and gets only what is addressed to its device.
+Notifications, approvals and those questions go to phones, which are taken
+to be on their user's person. A device that isn't connected misses them; native push
 notifications are not built yet.
 """
 

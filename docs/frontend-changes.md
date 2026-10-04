@@ -11,7 +11,9 @@ Today the frontend calls only `POST /api/chat`, `POST /api/turns/{id}/stop` and 
 1. **A `401` sends the user back to login (or pairing)**, since it means the device was logged out.
 1. **Pairing screen** for Fire TV and later the speaker hardware. On first launch, call `POST /api/pair`, show the code large, and poll `GET /api/pair/{pairing}` every 2 s. On `410`, start again.
 1. **Pair-a-device screen** on the phone: enter the code a TV shows (`POST /api/pair/confirm`). Only phones may do this.
-1. **Devices screen**: the user's devices and the household's (`GET /api/devices`), each with a log-out (`DELETE /api/devices/{id}`).
+1. **Pairing picks a group** when the member confirming is in more than one (`groups` from `GET /api/me`, sent as `group` to `POST /api/pair/confirm`).
+1. **Devices screen**: the user's devices and their groups' shared devices (`GET /api/devices`), each with a log-out (`DELETE /api/devices/{id}`).
+1. **Guests** (`role: "guest"` in `GET /api/me`'s `groups`) get no approvals and no pairing. Hide those screens for a user who is a guest everywhere, and say a tap on something that needs approval went to the group's members.
 1. `VITE_TARGET` decides the device kind it reports: `phone` for phone, `web` for web, `tv` for firetv.
 
 ## Conversation
@@ -25,27 +27,24 @@ Today the frontend calls only `POST /api/chat`, `POST /api/turns/{id}/stop` and 
 1. **Open `GET /api/push?token=...`** on launch and keep it open, with reconnect and backoff. Nothing opens it today.
 1. **Turn events** arrive for this device's own conversation. Keep one copy by turn id, since a turn the device started also comes back over its own chat stream. A turn the device didn't start (a future Alexa ask on the TV) arrives only here, so the store needs a way to take in a turn it didn't mint.
 1. **`notify`**: show it in the app. Phones only.
-1. **`approval`** and **`claim`** / **`claim.done`**: see below.
+1. **`approval`** and **`identify`** / **`identify.done`**: see below.
 
 ## Notifications (not built at all)
 
 1. **In-app**: a banner or toast for `notify`, with its image (`/api/media/...`) and urgency.
-1. **Native push** so a phone hears about approvals, claims and notifications while the app is closed. Wire up the official Capacitor Push Notifications plugin plus `@capacitor-firebase/messaging` (FCM on Android, APNs on iOS). This also needs backend work that doesn't exist yet: an endpoint to register a phone's push token, and a sender that uses it when the phone has no open push stream.
-1. A tap on a notification should open the app on the right screen: the approval, the claim, or the stage.
+1. **Native push** so a phone hears about approvals, "is it you?" questions and notifications while the app is closed. Wire up the official Capacitor Push Notifications plugin plus `@capacitor-firebase/messaging` (FCM on Android, APNs on iOS). This also needs backend work that doesn't exist yet: an endpoint to register a phone's push token, and a sender that uses it when the phone has no open push stream.
+1. A tap on a notification should open the app on the right screen: the approval, the question, or the stage.
 
 ## Approvals (phones only)
 
 1. **An approvals screen or sheet**: `GET /api/approvals`, and live updates from `approval` pushes. Show the action, `reason`, who asked (`asked_by`: the user, the device, or the trigger), and a countdown to `deadline`.
 1. **Approve or deny** with `POST /api/approvals/{id}`. `403` means another user's approval, or not a phone.
-1. **A household approval** (`user: null`) shows on every user's phone. The first answer wins, so the others should drop it when the resolved `approval` push arrives.
+1. **A group's approval** (`user: null`, with `group`) shows on every member's phone. The first answer wins, so the others should drop it when the resolved `approval` push arrives.
 1. **On a non-phone device**, an action that comes back `pending_approval` (a tap on the TV, a chat on the laptop) should say it is waiting on a phone.
 
-## Trigger claims (phones only)
+## Triggers set up on a shared device
 
-1. **A claim prompt** on `claim` push: the trigger's note and three big numbers. Tapping one calls `POST /api/claims/{trigger}` with `{"number"}`. A `409` means the number was wrong and the trigger was dropped.
-1. **Dismiss it** on `claim.done`, since another person may have claimed it, or it expired.
-1. `GET /api/claims` on launch, for claims that arrived while the app was closed.
-1. The household device shows or says the number through the model's answer. No frontend work is needed on the TV for that.
+No screen of their own. A trigger set up on a shared device with nobody recognized asks everyone in the group "is this you?", through the same phone prompt as below (`identify`, with `asked_by: "trigger"` and a `reason` such as "setting up: Turn on the porch light."). Show the `reason` in the prompt. A `withdrawn` status in `identify.done` means someone else said yes first.
 
 ## Who is at a shared device
 
@@ -60,6 +59,6 @@ A device without a user (the TV, a speaker) can recognize the person at it. The 
 
 ## Fire TV
 
-1. Pairing replaces login (see above). The TV never answers approvals or claims, and it can still send a choice as an ask.
+1. Pairing replaces login (see above). The TV never answers approvals or "is it you?" questions, and it can still send a choice as an ask.
 1. While someone is recognized, its taps still go through the policy, and approvals go to that person's phone.
 1. Its taps on actions go through the policy, so expect `pending_approval` back for anything that needs a human.

@@ -1,19 +1,29 @@
-"""Users and devices.
+"""Users, groups and devices.
 
-A user is a family member with a username and a password. A device is one
-install of the app. A personal device (a phone, a browser) belongs to the
-user who logged in on it. A household device (the TV, a speaker) belongs to
-nobody: it pairs with a code that a user confirms on their phone.
+A user is a person with a username and a password. A group is a set of
+people who share devices and trust each other: the household is one, and a
+second house would be another. A device is one install of the app. A
+personal device (a phone, a browser) belongs to the user who logged in on
+it. A shared device (the TV, a speaker) belongs to a group: it pairs with a
+code that a member confirms on their phone.
+
+A user is in a group as a member or a guest. Members trust each other
+implicitly: they see the group's events, answer its approvals, and pair
+its devices. A guest (a babysitter, a visitor) can use the
+group's shared devices and be recognized at them, but trusts nothing
+implicitly: they don't see the group's events, and they never approve
+anything. Every approval a guest causes goes to the group's members.
 
 Every device has its own token, stored hashed, so a lost phone can be cut
 off without logging anyone else out. Phones are taken to be on their user's
-person, so approvals, trigger claims and notifications go to phones.
+person, so approvals, "is it you?" questions and notifications go to
+phones.
 
-Every user has a Hermes profile with the same name, with its own API key
-and its own token for huvu's MCP server, which is how the backend knows
-whose Hermes is calling. Household devices use Hermes's default profile,
-whose key (HERMES_API_KEY) and MCP token (HUVU_MCP_TOKEN) come from the
-environment.
+Every user, and every group but the default one, has a Hermes profile of the
+same name, with its own API key and its own token for huvu's MCP server,
+which is how the backend knows whose Hermes is calling. The default group
+(`home`) uses Hermes's default profile, whose key (HERMES_API_KEY) and MCP
+token (HUVU_MCP_TOKEN) come from the environment.
 """
 
 from __future__ import annotations
@@ -30,19 +40,23 @@ from typing import Any, Literal, cast
 
 from .db import from_iso, iso
 from .hermes import Profile
+from .spec import Scope
 
 DeviceKind = Literal["phone", "web", "tv", "speaker"]
+Role = Literal["member", "guest"]
 PERSONAL: set[str] = {"phone", "web"}
 HOUSEHOLD: set[str] = {"tv", "speaker"}
 
+# The group that always exists, on Hermes's default profile.
+DEFAULT_GROUP = "home"
 # The device every request is from when auth is off, for development.
 DEV_DEVICE = "dev"
-# How long a household device's pairing code stays good.
+# How long a shared device's pairing code stays good.
 PAIRING_TTL = timedelta(minutes=10)
 # No 0/O or 1/I, so a code read off a TV can't be mistyped.
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-# The same rule as a Hermes profile name, since each user gets a profile.
-USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# The same rule as a Hermes profile name, since users and groups get one.
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # scrypt cost: about 50 ms and 16 MB a check.
 SCRYPT_N = 2**14
@@ -69,12 +83,28 @@ class User:
 
 
 @dataclass(frozen=True)
+class Group:
+    id: str
+    name: str
+    is_default: bool
+    created_at: datetime
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+        }
+
+
+@dataclass(frozen=True)
 class Device:
     id: str
     name: str
     kind: DeviceKind
-    # None on a household device.
+    # None on a shared device.
     user: str | None
+    # The group a shared device belongs to. None on a personal device.
+    group: str | None
     created_at: datetime
 
     @property
@@ -87,6 +117,7 @@ class Device:
             "name": self.name,
             "kind": self.kind,
             "user": self.user,
+            "group": self.group,
             "created_at": self.created_at,
         }
 
@@ -98,7 +129,7 @@ class Pairing:
     name: str
     kind: DeviceKind
     expires_at: datetime
-    # Set once a user confirms the code. The token is handed over once.
+    # Set once a member confirms the code. The token is handed over once.
     device: Device | None = None
     token: str | None = None
 
@@ -110,16 +141,18 @@ class Accounts:
         self._household_key = household_key
         self._household_mcp_token = household_mcp_token
         self._pairings: dict[str, Pairing] = {}
+        if self._conn.execute("SELECT 1 FROM groups WHERE is_default = 1").fetchone() is None:
+            self._conn.execute(
+                "INSERT INTO groups (id, name, is_default, created_at) VALUES (?, ?, 1, ?)",
+                (DEFAULT_GROUP, "Home", iso(self._now())),
+            )
 
     # Users
 
     def add_user(self, user_id: str, name: str, password: str, hermes_key: str) -> str:
         """Adds a user and returns their profile's MCP token. Only its hash
         is kept, so this is the one chance to copy it."""
-        if not USERNAME_RE.match(user_id) or user_id == "default":
-            raise AuthError("a username is lowercase letters, digits, _ and -, starts with a letter or digit, and can't be 'default'")
-        if self.user(user_id) is not None:
-            raise AuthError(f"user {user_id!r} already exists")
+        self._check_new_name(user_id)
         mcp_token = secrets.token_urlsafe(32)
         self._conn.execute(
             "INSERT INTO users (id, name, password, hermes_key, mcp_token, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -136,9 +169,11 @@ class Accounts:
         self._conn.execute("UPDATE users SET hermes_key = ? WHERE id = ?", (hermes_key, user_id))
 
     def remove_user(self, user_id: str) -> None:
-        """Removes a user and every device they're logged in on."""
+        """Removes a user, their memberships and every device they're
+        logged in on."""
         self._require_user(user_id)
         self._conn.execute("DELETE FROM devices WHERE user_id = ?", (user_id,))
+        self._conn.execute("DELETE FROM memberships WHERE user_id = ?", (user_id,))
         self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     def user(self, user_id: str) -> User | None:
@@ -152,43 +187,179 @@ class Accounts:
         if self.user(user_id) is None:
             raise AuthError(f"no user {user_id!r}")
 
+    def _check_new_name(self, name: str) -> None:
+        """Users and groups share one namespace, since both name Hermes
+        profiles."""
+        if not NAME_RE.match(name) or name == "default":
+            raise AuthError("a name is lowercase letters, digits, _ and -, starts with a letter or digit, and can't be 'default'")
+        if self.user(name) is not None or self.group(name) is not None:
+            raise AuthError(f"{name!r} is already a user or a group")
+
+    # Groups
+
+    def add_group(self, group_id: str, name: str, hermes_key: str) -> str:
+        """Adds a group with its own Hermes profile, and returns the
+        profile's MCP token, shown this once."""
+        self._check_new_name(group_id)
+        mcp_token = secrets.token_urlsafe(32)
+        self._conn.execute(
+            "INSERT INTO groups (id, name, hermes_key, mcp_token, is_default, created_at) VALUES (?, ?, ?, ?, 0, ?)",
+            (group_id, name, hermes_key, _digest(mcp_token), iso(self._now())),
+        )
+        return mcp_token
+
+    def group(self, group_id: str | None) -> Group | None:
+        row = self._conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone() if group_id else None
+        return None if row is None else _group(row)
+
+    def groups(self) -> list[Group]:
+        return [_group(r) for r in self._conn.execute("SELECT * FROM groups ORDER BY is_default DESC, id").fetchall()]
+
+    def default_group(self) -> str:
+        return self._conn.execute("SELECT id FROM groups WHERE is_default = 1").fetchone()["id"]
+
+    def join(self, group_id: str, user_id: str, role: Role) -> None:
+        """Puts a user in a group, or changes their role there."""
+        self._require_user(user_id)
+        if self.group(group_id) is None:
+            raise AuthError(f"no group {group_id!r}")
+        self._conn.execute(
+            "INSERT INTO memberships (group_id, user_id, role) VALUES (?, ?, ?) ON CONFLICT (group_id, user_id) DO UPDATE SET role = excluded.role",
+            (group_id, user_id, role),
+        )
+
+    def leave(self, group_id: str, user_id: str) -> None:
+        self._conn.execute("DELETE FROM memberships WHERE group_id = ? AND user_id = ?", (group_id, user_id))
+
+    def role(self, group_id: str | None, user_id: str | None) -> Role | None:
+        row = self._conn.execute("SELECT role FROM memberships WHERE group_id = ? AND user_id = ?", (group_id, user_id)).fetchone()
+        return row["role"] if row else None
+
+    def memberships(self, user_id: str) -> dict[str, Role]:
+        rows = self._conn.execute("SELECT group_id, role FROM memberships WHERE user_id = ? ORDER BY group_id", (user_id,)).fetchall()
+        return {r["group_id"]: r["role"] for r in rows}
+
+    def member_groups(self, user_id: str | None) -> list[str]:
+        return [g for g, role in self.memberships(user_id).items() if role == "member"] if user_id else []
+
+    def people(self, group_id: str) -> list[User]:
+        """Everyone in a group, members and guests."""
+        rows = self._conn.execute(
+            "SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.group_id = ? ORDER BY u.id", (group_id,)
+        ).fetchall()
+        return [_user(r) for r in rows]
+
+    def is_member(self, group_id: str | None, user_id: str | None) -> bool:
+        return self.role(group_id, user_id) == "member"
+
+    # Trust
+
+    def scope(self, user_id: str | None, group_id: str | None) -> Scope:
+        """What a caller may read. A user reads their own things and their
+        member groups'. A group profile or an unrecognized shared device
+        reads its group's."""
+        if user_id is not None:
+            groups = tuple(self.member_groups(user_id))
+            scope = Scope(user=user_id, groups=groups, house=bool(groups))
+        else:
+            scope = Scope(user=None, groups=(group_id or self.default_group(),), house=True)
+        return scope
+
+    def approvers(self, user_id: str | None, group_id: str | None) -> tuple[str | None, str | None]:
+        """Who answers an approval a caller causes: (user, group). A user
+        answers their own, unless they're a guest where it happened; then,
+        like a request with no user, the group's members answer."""
+        guest_group = self._guest_group(user_id, group_id)
+        approvers: tuple[str | None, str | None] = (user_id, group_id)
+        if user_id is None:
+            approvers = (None, group_id or self.default_group())
+        elif guest_group is not None:
+            approvers = (None, guest_group)
+        return approvers
+
+    def _guest_group(self, user_id: str | None, group_id: str | None) -> str | None:
+        """The group where a user is only a guest, for this request. On a
+        group's shared device, that group. Elsewhere (their own phone), the
+        group they're a guest in, if they're a member nowhere."""
+        memberships = self.memberships(user_id) if user_id else {}
+        found = None
+        if group_id is not None and memberships.get(group_id) == "guest":
+            found = group_id
+        elif group_id is None and memberships and "member" not in memberships.values():
+            found = next(iter(memberships))
+        return found
+
+    def answers(self, device: Device, user_id: str | None, group_id: str | None) -> bool:
+        """Whether a device may answer what is waiting on (user, group): the
+        user's own phone, or a member's phone for the group's."""
+        if not device.is_phone or device.user is None:
+            return False
+        return device.user == user_id if user_id is not None else self.is_member(group_id, device.user)
+
+    def phones(self, user_id: str | None, group_id: str | None = None) -> list[str]:
+        """The phones that reach a user, or a group's members when there is
+        no user (a shared device or a group trigger)."""
+        if user_id is not None:
+            rows = self._conn.execute("SELECT id FROM devices WHERE kind = 'phone' AND user_id = ?", (user_id,)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT d.id FROM devices d JOIN memberships m ON m.user_id = d.user_id "
+                "WHERE d.kind = 'phone' AND m.group_id = ? AND m.role = 'member'",
+                (group_id or self.default_group(),),
+            ).fetchall()
+        return [r["id"] for r in rows]
+
     # Hermes profiles
 
-    def profile(self, user_id: str | None) -> Profile:
-        """The Hermes profile that answers for a user, or the default profile
-        for the household."""
-        key = self._household_key
+    def profile(self, user_id: str | None, group_id: str | None = None) -> Profile:
+        """The Hermes profile that answers for a user, or for a group's
+        shared devices. The default group uses the default profile."""
         if user_id is not None:
             row = self._conn.execute("SELECT hermes_key FROM users WHERE id = ?", (user_id,)).fetchone()
             if row is None:
                 raise AuthError(f"no user {user_id!r}")
-            key = row["hermes_key"]
-        return Profile(name=user_id, key=key)
+            profile = Profile(name=user_id, key=row["hermes_key"])
+        else:
+            group = self.group(group_id or self.default_group())
+            if group is None:
+                raise AuthError(f"no group {group_id!r}")
+            profile = Profile(name=None, key=self._household_key) if group.is_default else Profile(name=group.id, key=self._group_key(group.id))
+        return profile
 
-    def mcp_caller(self, token: str) -> tuple[bool, str | None]:
-        """Whose Hermes profile sent this MCP token: (known, user). The
-        household's token gives (True, None)."""
+    def _group_key(self, group_id: str) -> str | None:
+        return self._conn.execute("SELECT hermes_key FROM groups WHERE id = ?", (group_id,)).fetchone()["hermes_key"]
+
+    def mcp_caller(self, token: str) -> tuple[bool, str | None, str | None]:
+        """Whose Hermes profile sent this MCP token: (known, user, group).
+        The default profile's token gives the default group."""
+        digest = _digest(token)
+        user = self._conn.execute("SELECT id FROM users WHERE mcp_token = ?", (digest,)).fetchone()
+        group = self._conn.execute("SELECT id FROM groups WHERE mcp_token = ?", (digest,)).fetchone()
+        caller: tuple[bool, str | None, str | None] = (False, None, None)
         if self._household_mcp_token and hmac.compare_digest(token, self._household_mcp_token):
-            return True, None
-        row = self._conn.execute("SELECT id FROM users WHERE mcp_token = ?", (_digest(token),)).fetchone()
-        return (True, row["id"]) if row else (False, None)
+            caller = (True, None, self.default_group())
+        elif user is not None:
+            caller = (True, user["id"], None)
+        elif group is not None:
+            caller = (True, None, group["id"])
+        return caller
 
     # Devices
 
     def login(self, username: str, password: str, name: str, kind: str) -> tuple[Device, str]:
         """A personal device logs in. Returns the new device and its token."""
         if kind not in PERSONAL:
-            raise AuthError(f"a {kind} is a household device; it pairs with a code instead")
+            raise AuthError(f"a {kind} is a shared device; it pairs with a code instead")
         row = self._conn.execute("SELECT password FROM users WHERE id = ?", (username,)).fetchone()
         # A missing user costs as much time as a wrong password.
         ok = verify_password(password, row["password"] if row else _DUMMY_HASH)
         if row is None or not ok:
             raise AuthError("wrong username or password")
-        return self._add_device(name, cast(DeviceKind, kind), username)
+        return self._add_device(name, cast(DeviceKind, kind), username, None)
 
     def start_pairing(self, name: str, kind: str) -> Pairing:
-        """A household device asks to pair. It shows the code, and polls
-        `pairing` until a user confirms it."""
+        """A shared device asks to pair. It shows the code, and polls
+        `pairing` until a member confirms it."""
         if kind not in HOUSEHOLD:
             raise AuthError(f"a {kind} is a personal device; it logs in instead")
         self._drop_expired_pairings()
@@ -202,22 +373,27 @@ class Accounts:
         self._pairings[pairing.id] = pairing
         return pairing
 
-    def confirm_pairing(self, code: str, by: Device) -> Device:
-        """A user confirms, on their phone, the code a household device shows."""
-        if not by.is_phone:
+    def confirm_pairing(self, code: str, by: Device, group_id: str | None = None) -> Device:
+        """A member confirms, on their phone, the code a shared device
+        shows. The device joins `group_id`, or the member's only group."""
+        if not by.is_phone or by.user is None:
             raise AuthError("pair a device from your phone")
+        groups = self.member_groups(by.user)
+        if group_id is None and len(groups) == 1:
+            group_id = groups[0]
+        if group_id is None or group_id not in groups:
+            raise AuthError(f"say which of your groups the device joins: {', '.join(groups) or 'you are a member of none'}")
         self._drop_expired_pairings()
         wanted = code.strip().upper().replace("-", "").replace(" ", "")
         pairing = next((p for p in self._pairings.values() if p.device is None and hmac.compare_digest(p.code, wanted)), None)
         if pairing is None:
             raise AuthError("no device is showing that code")
-        pairing.device, pairing.token = self._add_device(pairing.name, pairing.kind, None)
+        pairing.device, pairing.token = self._add_device(pairing.name, pairing.kind, None, group_id)
         return pairing.device
 
     def collect_pairing(self, pairing_id: str) -> tuple[Device, str] | None:
-        """What the household device gets when it polls: its device and
-        token once confirmed, None while it waits. Raises once the pairing
-        is gone."""
+        """What the shared device gets when it polls: its device and token
+        once confirmed, None while it waits. Raises once the pairing is gone."""
         self._drop_expired_pairings()
         pairing = self._pairings.get(pairing_id)
         if pairing is None:
@@ -237,30 +413,27 @@ class Accounts:
         row = self._conn.execute("SELECT * FROM devices WHERE token = ?", (_digest(token),)).fetchone() if token else None
         return None if row is None else _device(row)
 
-    def device(self, device_id: str) -> Device | None:
-        row = self._conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+    def device(self, device_id: str | None) -> Device | None:
+        row = self._conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone() if device_id else None
         return None if row is None else _device(row)
 
-    def devices(self, user_id: str | None = None, *, household: bool = False) -> list[Device]:
-        """Every device, or a user's devices and, with `household`, the
-        household's too."""
-        rows = self._conn.execute("SELECT * FROM devices ORDER BY created_at").fetchall()
-        devices = [_device(r) for r in rows]
-        if user_id is not None:
-            devices = [d for d in devices if d.user == user_id or (household and d.user is None)]
-        return devices
+    def devices(self) -> list[Device]:
+        return [_device(r) for r in self._conn.execute("SELECT * FROM devices ORDER BY created_at").fetchall()]
+
+    def devices_for(self, user_id: str) -> list[Device]:
+        """A user's own devices, and the shared devices of their member
+        groups."""
+        groups = set(self.member_groups(user_id))
+        return [d for d in self.devices() if d.user == user_id or (d.group is not None and d.group in groups)]
+
+    def manages(self, by: Device, target: Device) -> bool:
+        """Whether `by` may log `target` out: itself, its user's own device,
+        or a shared device of a group its user is a member of."""
+        own = target.id == by.id or (by.user is not None and target.user == by.user)
+        return own or (target.group is not None and self.is_member(target.group, by.user))
 
     def revoke(self, device_id: str) -> None:
         self._conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
-
-    def phones(self, user_id: str | None) -> list[str]:
-        """The phones that reach a user, or every user's phones when there
-        is no user (a household device or trigger)."""
-        if user_id is None:
-            rows = self._conn.execute("SELECT id FROM devices WHERE kind = 'phone'").fetchall()
-        else:
-            rows = self._conn.execute("SELECT id FROM devices WHERE kind = 'phone' AND user_id = ?", (user_id,)).fetchall()
-        return [r["id"] for r in rows]
 
     def dev_device(self, user_id: str | None) -> Device:
         """The device behind every request when auth is off: a phone, so it
@@ -276,18 +449,19 @@ class Accounts:
         assert device is not None
         return device
 
-    def _add_device(self, name: str, kind: DeviceKind, user_id: str | None) -> tuple[Device, str]:
+    def _add_device(self, name: str, kind: DeviceKind, user_id: str | None, group_id: str | None) -> tuple[Device, str]:
         token = secrets.token_urlsafe(32)
         device = Device(
             id=f"d_{secrets.token_hex(5)}",
             name=name.strip()[:60] or kind,
             kind=kind,
             user=user_id,
+            group=group_id,
             created_at=self._now(),
         )
         self._conn.execute(
-            "INSERT INTO devices (id, name, kind, user_id, token, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (device.id, device.name, device.kind, device.user, _digest(token), iso(device.created_at)),
+            "INSERT INTO devices (id, name, kind, user_id, group_id, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (device.id, device.name, device.kind, device.user, device.group, _digest(token), iso(device.created_at)),
         )
         return device, token
 
@@ -320,11 +494,21 @@ def _user(row) -> User:
     )
 
 
+def _group(row) -> Group:
+    return Group(
+        id=row["id"],
+        name=row["name"],
+        is_default=bool(row["is_default"]),
+        created_at=from_iso(row["created_at"]),
+    )
+
+
 def _device(row) -> Device:
     return Device(
         id=row["id"],
         name=row["name"],
         kind=row["kind"],
         user=row["user_id"],
+        group=row["group_id"],
         created_at=from_iso(row["created_at"]),
     )

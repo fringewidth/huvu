@@ -61,7 +61,7 @@ async def test_the_model_can_ask_by_name(kernel, family):
 
 
 async def test_the_session_acts_and_logs_as_the_person(kernel, family, home, hermes, clock):
-    first = await kernel.conversations.ask(family.tv.id, "who's at the door?", user=None)
+    first = await kernel.conversations.ask(family.tv.id, "who's at the door?", user=None, group="home")
     await collect(kernel, first)
     session = first.turn.hermes_session
     clock.advance(minutes=1)
@@ -71,15 +71,15 @@ async def test_the_session_acts_and_logs_as_the_person(kernel, family, home, her
     await kernel.attendance.answer(check.id, True, family.mom_phone)
 
     # Over MCP the household's profile now acts for her.
-    caller = caller_from(kernel, {"_session": session}, None)
-    assert (caller.user, caller.device) == ("mom", family.tv.id)
+    caller = caller_from(kernel, {"_session": session}, None, "home")
+    assert (caller.user, caller.group, caller.device) == ("mom", "home", family.tv.id)
     trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), caller)
     assert trigger.status == "active" and trigger.user == "mom"
     held = await kernel.policy.request("home", "unlock", {}, caller)
     assert kernel.policy.get(held.data["approval"]).user == "mom"
 
     # The model hears it on the next ask, in the same Hermes session.
-    second = await kernel.conversations.ask(family.tv.id, "thanks", user=None)
+    second = await kernel.conversations.ask(family.tv.id, "thanks", user=None, group="home")
     await collect(kernel, second)
     message = hermes.messages[-1][1]
     assert hermes.messages[-1][0] == session
@@ -92,9 +92,11 @@ async def test_the_session_acts_and_logs_as_the_person(kernel, family, home, her
     assert "who's at the door?" in turns[-1].summary
     announced = kernel.events.search(type="action.ran")[-1]
     assert announced.user == "mom"
-    assert kernel.events.search(type="conversation.turn", viewer="me")[0].user is None
-    assert {e.user for e in kernel.events.search(viewer="mom")} <= {None, "mom"}
-    assert all(e.user is None for e in kernel.events.search(viewer=None))
+    scope = kernel.accounts.scope
+    [seen_by_me] = kernel.events.search(type="conversation.turn", viewer=scope("me", None))
+    assert seen_by_me.entity == first.turn.id and seen_by_me.group == "home"
+    assert {e.user for e in kernel.events.search(viewer=scope("mom", None))} <= {None, "mom"}
+    assert all(e.user is None for e in kernel.events.search(viewer=scope(None, "home")))
 
 
 async def test_a_tap_on_the_tv_still_needs_a_phone(kernel, family, home):

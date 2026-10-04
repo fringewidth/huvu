@@ -81,7 +81,7 @@ class HuvuSource(Source):
                 ),
                 ActionSpec(
                     name="notify",
-                    description="Sends a notification to the phones of the person you're helping, or to everyone's phones when you serve the household. `image` is a ref from a source, such as a doorbell snapshot.",
+                    description="Sends a notification to the phones of the person you're helping, or to the members' phones when you serve a shared device. `image` is a ref from a source, such as a doorbell snapshot.",
                     input_schema=_object(
                         {
                             "text": {"type": "string"},
@@ -129,7 +129,7 @@ class HuvuSource(Source):
         if name == "aliases":
             data: Any = self._aliases()
         elif name == "pending_approvals":
-            data = [a.public() for a in self._kernel.policy.pending_for(caller.user)]
+            data = [a.public() for a in self._kernel.policy.pending_for(self._kernel.accounts.scope(caller.user, caller.group))]
         else:
             raise SourceError(f"huvu has no query {name!r}")
         return Result(data=data, labels=["owner"])
@@ -173,9 +173,9 @@ class HuvuSource(Source):
 
     async def _notify(self, args: dict[str, Any], caller: Caller) -> Result:
         image = self._kernel.media.url_for(args["image"]) if args.get("image") else None
-        await self._kernel.notify(caller.user, args["text"], image=image, urgency=args.get("urgency", "normal"))
-        whom = caller.user or "everyone"
-        await self.ctx.emit("notified", f"told {whom}: {args['text']}", refs={"image": args["image"]} if image else {}, labels=["owner"], user=caller.user)
+        await self._kernel.notify(caller.user, caller.group, args["text"], image=image, urgency=args.get("urgency", "normal"))
+        whom = caller.user or f"the members of {caller.group or 'the default group'}"
+        await self.ctx.emit("notified", f"told {whom}: {args['text']}", refs={"image": args["image"]} if image else {}, labels=["owner"], user=caller.user, group=None if caller.user else caller.group)
         return Result(data={"sent": True}, labels=["owner"])
 
 

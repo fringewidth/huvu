@@ -7,8 +7,10 @@ refused, goes into the event log with who asked and why.
 
 An approval belongs to the user it was asked for: the user of the chat, or
 the trigger's user. It goes to that user's phones, and only one of them can
-answer it. One asked for no user (from a household device) goes to every
-user's phones, and the first answer wins.
+answer it. One asked for no user (a shared device nobody is recognized at)
+goes to the phones of its group's members, and the first answer wins. So
+does one a guest causes: a guest never approves anything, not even by
+tapping on their own phone.
 
 An action marked `requires_human` always asks, and config can't lower it.
 A tap on a personal device runs at once, since the tap is the approval. A
@@ -27,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from .accounts import AuthError, Device
 from .db import dumps, from_iso, iso, loads
 from .source import SourceError
-from .spec import ActionSpec, Autonomy, Caller, Result
+from .spec import ActionSpec, Autonomy, Caller, Result, Scope
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -45,16 +47,15 @@ class Approval:
     args: dict[str, Any]
     reason: str | None
     caller: dict[str, Any]
-    # Whose phones answer it. None sends it to every user's phones.
+    # Whose phones answer it: the user's, or with no user, the group's
+    # members'.
     user: str | None
+    group: str | None
     status: ApprovalStatus
     created_at: datetime
     deadline: datetime
     resolved_at: datetime | None = None
     result: Any = field(default=None)
-
-    def answerable_by(self, device: Device) -> bool:
-        return device.is_phone and (self.user is None or self.user == device.user)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -64,6 +65,7 @@ class Approval:
             "reason": self.reason,
             "asked_by": self.caller,
             "user": self.user,
+            "group": self.group,
             "status": self.status,
             "created_at": self.created_at,
             "deadline": self.deadline,
@@ -93,6 +95,7 @@ class Policy:
             f"{caller.describe()} asked for {source}.{action} ({level})" + (f": {reason}" if reason else ""),
             data={"action": f"{source}.{action}", "level": level, "caller": caller.as_dict()},
             user=caller.user,
+            group=caller.group,
             device=caller.device,
         )
         if level == "ask":
@@ -104,22 +107,33 @@ class Policy:
         else:
             result = await self.run(source, action, args, caller)
             if level == "notify":
-                await self._kernel.notify(caller.user, f"huvu ran {source}.{action}" + (f": {reason}" if reason else ""), urgency="low")
+                await self._kernel.notify(caller.user, caller.group, f"huvu ran {source}.{action}" + (f": {reason}" if reason else ""), urgency="low")
         return result
 
     def _own_tap(self, caller: Caller) -> bool:
-        """A tap on a personal device: the person is holding the device they
-        logged in on, so the tap is their approval. Being recognized at a
-        household device is not enough."""
-        device = self._kernel.accounts.device(caller.device) if caller.kind == "frontend" and caller.device else None
-        return device is not None and device.user is not None
+        """A tap on a personal device by someone who approves for
+        themselves: the person is holding the device they logged in on, so
+        the tap is their approval. Being recognized at a shared device is
+        not enough, and a guest's tap never is."""
+        accounts = self._kernel.accounts
+        device = accounts.device(caller.device) if caller.kind == "frontend" else None
+        personal = device is not None and device.user is not None
+        return personal and accounts.approvers(caller.user, caller.group)[0] == caller.user
+
+    def answerable(self, approval: Approval, device: Device) -> bool:
+        return self._kernel.accounts.answers(device, approval.user, approval.group)
 
     async def run(self, source: str, action: str, args: dict[str, Any], caller: Caller) -> Result:
         try:
             result = await self._kernel.registry.get(source).act(action, args, caller)
         except SourceError as err:
             await self._kernel.kernel_event(
-                "action.failed", f"{source}.{action} failed: {err}", data={"action": f"{source}.{action}"}, user=caller.user, device=caller.device
+                    "action.failed",
+                f"{source}.{action} failed: {err}",
+                data={"action": f"{source}.{action}"},
+                user=caller.user,
+                group=caller.group,
+                device=caller.device,
             )
             raise
         await self._kernel.kernel_event(
@@ -127,12 +141,14 @@ class Policy:
             f"ran {source}.{action} for {caller.describe()}",
             data={"action": f"{source}.{action}", "caller": caller.as_dict()},
             user=caller.user,
+            group=caller.group,
             device=caller.device,
         )
         return result
 
     async def _hold(self, source: str, action: str, args: dict[str, Any], caller: Caller, reason: str | None, spec: ActionSpec) -> Approval:
         now = self._kernel.now()
+        user, group = self._kernel.accounts.approvers(caller.user, caller.group)
         approval = Approval(
             id=f"ap_{secrets.token_hex(4)}",
             source=source,
@@ -140,27 +156,29 @@ class Policy:
             args=args,
             reason=reason,
             caller=caller.as_dict(),
-            user=caller.user,
+            user=user,
+            group=group,
             status="pending",
             created_at=now,
             deadline=now + spec.approval_ttl,
         )
         self._kernel.db.execute(
-            "INSERT INTO approvals (id, source, action, args, reason, caller, user_id, status, created_at, deadline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (approval.id, source, action, dumps(args), reason, dumps(approval.caller), approval.user, "pending", iso(now), iso(approval.deadline)),
+            "INSERT INTO approvals (id, source, action, args, reason, caller, user_id, group_id, status, created_at, deadline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (approval.id, source, action, dumps(args), reason, dumps(approval.caller), approval.user, approval.group, "pending", iso(now), iso(approval.deadline)),
         )
         await self._kernel.kernel_event(
             "approval.created",
-            f"waiting for {approval.user or 'anyone'} on {source}.{action}" + (f": {reason}" if reason else ""),
+            f"waiting for {approval.user or f'the members of {approval.group}'} on {source}.{action}" + (f": {reason}" if reason else ""),
             data={"approval": approval.id, "action": f"{source}.{action}", "user": approval.user},
             user=approval.user,
+            group=approval.group,
             device=caller.device,
         )
         self._push(approval)
         return approval
 
     def _push(self, approval: Approval) -> None:
-        self._kernel.push.send("approval", approval.public(), self._kernel.accounts.phones(approval.user))
+        self._kernel.push.send("approval", approval.public(), self._kernel.accounts.phones(approval.user, approval.group))
 
     def get(self, approval_id: str) -> Approval | None:
         row = self._kernel.db.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
@@ -170,10 +188,10 @@ class Policy:
         rows = self._kernel.db.execute("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at").fetchall()
         return [_approval(r) for r in rows]
 
-    def pending_for(self, user: str | None) -> list[Approval]:
-        """What waits on a user: their own approvals and the household's.
-        For the household, only the household's."""
-        return [a for a in self.pending() if a.user is None or a.user == user]
+    def pending_for(self, scope: Scope) -> list[Approval]:
+        """What a caller may see waiting: their own approvals, and those of
+        the groups they're a member of."""
+        return [a for a in self.pending() if (a.user is not None and a.user == scope.user) or (a.user is None and a.group in scope.groups)]
 
     async def resolve(self, approval_id: str, approve: bool, by: Device) -> Approval:
         """A user's answer, from their phone. Nothing else calls this, so no
@@ -181,8 +199,8 @@ class Policy:
         approval = self.get(approval_id)
         if approval is None or approval.status != "pending":
             raise SourceError(f"no pending approval {approval_id!r}")
-        if not approval.answerable_by(by):
-            raise AuthError("this approval is answered from its user's phone")
+        if not self.answerable(approval, by):
+            raise AuthError("this approval is answered from its user's phone, or a member's for a group")
         now = self._kernel.now()
         if now > approval.deadline:
             await self._finish(approval, "expired", now)
@@ -216,6 +234,7 @@ class Policy:
             data={"approval": approval.id, "status": status, "device": by.id if by else None},
             labels=["owner"],
             user=approval.user,
+            group=approval.group,
         )
         self._push(approval)
 
@@ -235,6 +254,7 @@ def _approval(row) -> Approval:
         reason=row["reason"],
         caller=loads(row["caller"]),
         user=row["user_id"],
+        group=row["group_id"],
         status=row["status"],
         created_at=from_iso(row["created_at"]),
         deadline=from_iso(row["deadline"]),

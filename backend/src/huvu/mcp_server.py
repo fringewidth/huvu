@@ -1,10 +1,11 @@
 """The MCP server Hermes connects to. Every tool comes from the tool box.
 
 Whose Hermes is calling comes from the profile's token (see auth.py): one
-profile per user, the default one for the household. The huvu Hermes plugin
+profile per user, and one per group for its shared devices (the default
+group's is Hermes's default profile). The huvu Hermes plugin
 adds `_session` (the Hermes session making the call) to every huvu tool
 call, which names the device whose conversation it is. Both become the
-call's Caller. A household device's session acts for whoever is recognized
+call's Caller. A shared device's session acts for whoever is recognized
 there (see attendance.py). Without the plugin, calls still work; they just
 carry no session and no device.
 
@@ -23,7 +24,7 @@ import mcp_types as types
 from mcp.server.lowlevel.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
-from .auth import mcp_user
+from .auth import mcp_profile
 from .spec import Caller
 from .times import for_model
 from .tools import ToolError
@@ -52,7 +53,8 @@ def build(kernel: Kernel) -> StreamableHTTPSessionManager:
 
     async def call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         args = dict(params.arguments or {})
-        caller = caller_from(kernel, args, mcp_user.get())
+        user, group = mcp_profile.get()
+        caller = caller_from(kernel, args, user, group)
         try:
             result = await kernel.tools.call(params.name, args, caller)
             body: Any = for_model(result.data, kernel.now())
@@ -76,16 +78,17 @@ def build(kernel: Kernel) -> StreamableHTTPSessionManager:
     return StreamableHTTPSessionManager(app=server, stateless=True)
 
 
-def caller_from(kernel: Kernel, args: dict[str, Any], user: str | None) -> Caller:
-    """Takes the plugin's arguments out of `args`, in place. A session that
-    belongs to someone other than the calling profile's user is ignored, so
-    one profile can't reach into another's conversation."""
+def caller_from(kernel: Kernel, args: dict[str, Any], user: str | None, group: str | None) -> Caller:
+    """Takes the plugin's arguments out of `args`, in place. `user` and
+    `group` are the calling profile's. A session that belongs to another
+    profile is ignored, so one profile can't reach into another's
+    conversation."""
     session = args.pop("_session", None)
     owner = kernel.sessions.owner(session)
-    if owner is not None and owner.user != user:
-        log.warning("profile of %s sent session %s, which is %s's; ignored", user or "the household", session, owner.user or "the household's")
+    if owner is not None and (owner.user, owner.group) != (user, group):
+        log.warning("profile of %s sent session %s, which isn't its own; ignored", user or group, session)
         session, owner = None, None
     device = owner.device if owner else None
     if user is None:
         user = kernel.attendance.holder(device)
-    return Caller(kind="hermes", session=session, user=user, device=device)
+    return Caller(kind="hermes", session=session, user=user, device=device, group=group)

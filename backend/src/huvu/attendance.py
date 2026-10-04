@@ -1,11 +1,15 @@
 """Who is at a household device right now.
 
-A device without a user (the TV, a speaker) serves the household, but a
-person is often standing in front of it. When someone asks (the device's
+A shared device (the TV, a speaker) serves its group, but a person is often
+standing in front of it. Anyone in the group, member or guest, can be
+recognized there; a guest still approves nothing. When someone asks (the device's
 "who's this?" picker, the model, later voice recognition), huvu asks that
-person on their phone: "is it you on the living room TV?". A yes makes them
-the device's attendee until someone else is confirmed, the attendance is
-released, or the device sits idle for IDLE.
+person on their phone: "is it you on the living room TV?". When a trigger is
+set up there with nobody recognized, huvu asks everyone in the group, and
+the first yes wins. A yes makes them the device's attendee until someone
+else is confirmed, the attendance is released, or the device sits idle for
+IDLE, and the device's waiting triggers become theirs. If every question
+for the device ends without a yes, its waiting triggers are dropped.
 
 The Hermes session doesn't change profile, so its prompt cache holds. What
 changes is everything huvu controls:
@@ -30,8 +34,9 @@ from .db import from_iso, iso
 if TYPE_CHECKING:
     from .kernel import Kernel
 
-AskedBy = Literal["device", "model", "voice"]
-Status = Literal["pending", "confirmed", "denied", "expired", "ended"]
+AskedBy = Literal["device", "model", "voice", "trigger"]
+# withdrawn: someone else said yes first.
+Status = Literal["pending", "confirmed", "denied", "expired", "withdrawn", "ended"]
 
 # How long a phone has to answer "is it you?".
 ASK_TTL = timedelta(minutes=5)
@@ -47,6 +52,7 @@ class Check:
     asked_by: AskedBy
     status: Status
     asked_at: datetime
+    reason: str | None = None
     confirmed_at: datetime | None = None
     ended_at: datetime | None = None
     last_active_at: datetime | None = None
@@ -57,6 +63,7 @@ class Check:
             "device": {"id": self.device, "name": device_name},
             "user": self.user,
             "asked_by": self.asked_by,
+            "reason": self.reason,
             "status": self.status,
             "asked_at": self.asked_at,
             "expires_at": self.asked_at + ASK_TTL,
@@ -71,14 +78,12 @@ class Attendance:
     def _db(self):
         return self._kernel.db
 
-    async def ask(self, device_id: str, user_id: str, asked_by: AskedBy) -> Check:
+    async def ask(self, device_id: str, user_id: str, asked_by: AskedBy, reason: str | None = None) -> Check:
         """Asks a user, on their phones, whether they're at this device."""
         accounts = self._kernel.accounts
-        device = accounts.device(device_id)
-        if device is None or device.user is not None:
-            raise AuthError("only a device without a user can be attended")
-        if accounts.user(user_id) is None:
-            raise AuthError(f"no user {user_id!r}")
+        device = self._shared(device_id)
+        if accounts.role(device.group, user_id) is None:
+            raise AuthError(f"{user_id!r} isn't in the group {device.name} belongs to")
         now = self._kernel.now()
         check = Check(
             id=f"at_{secrets.token_hex(4)}",
@@ -87,16 +92,31 @@ class Attendance:
             asked_by=asked_by,
             status="pending",
             asked_at=now,
+            reason=reason,
         )
         self._db.execute(
-            "INSERT INTO attendance (id, device_id, user_id, asked_by, status, asked_at) VALUES (?, ?, ?, ?, 'pending', ?)",
-            (check.id, device_id, user_id, asked_by, iso(now)),
+            "INSERT INTO attendance (id, device_id, user_id, asked_by, reason, status, asked_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (check.id, device_id, user_id, asked_by, reason, iso(now)),
         )
         await self._kernel.kernel_event(
             "attendance.asked", f"asked {user_id} whether they're at {device.name} ({asked_by})", user=user_id, device=device_id
         )
         self._kernel.push.send("identify", check.public(device.name), accounts.phones(user_id))
         return check
+
+    async def ask_everyone(self, device_id: str, asked_by: AskedBy, reason: str) -> list[Check]:
+        """Asks everyone in the device's group, members and guests, whether
+        it's them. Someone already asked about this device isn't asked
+        twice."""
+        device = self._shared(device_id)
+        waiting = {r["user_id"] for r in self._db.execute("SELECT user_id FROM attendance WHERE device_id = ? AND status = 'pending'", (device_id,))}
+        return [await self.ask(device_id, u.id, asked_by, reason) for u in self._kernel.accounts.people(device.group or "") if u.id not in waiting]
+
+    def _shared(self, device_id: str) -> Device:
+        device = self._kernel.accounts.device(device_id)
+        if device is None or device.user is not None or device.group is None:
+            raise AuthError("only a shared device can be attended")
+        return device
 
     async def answer(self, check_id: str, yes: bool, by: Device) -> Check:
         """A user's answer from their phone."""
@@ -107,15 +127,27 @@ class Attendance:
             raise AuthError("answer this from your own phone")
         now = self._kernel.now()
         if now - check.asked_at > ASK_TTL:
-            self._set(check, "expired", now)
+            await self._close(check, "expired", now)
             raise AuthError("this question expired")
         if yes:
             await self._confirm(check, now)
+            self._done(check)
         else:
-            self._set(check, "denied", now)
             await self._kernel.kernel_event("attendance.denied", f"{check.user} said they're not at {self._name(check.device)}", user=check.user, device=check.device)
-        self._kernel.push.send("identify.done", {"id": check.id, "status": check.status}, self._kernel.accounts.phones(check.user))
+            await self._close(check, "denied", now)
         return check
+
+    async def _close(self, check: Check, status: Status, now: datetime) -> None:
+        """Ends a question without a yes. Once no question about the device
+        is open and nobody is there, its waiting triggers go."""
+        self._set(check, status, now)
+        self._done(check)
+        still_asking = self._db.execute("SELECT 1 FROM attendance WHERE device_id = ? AND status = 'pending'", (check.device,)).fetchone()
+        if still_asking is None and self.current(check.device) is None:
+            await self._kernel.triggers.drop_unconfirmed(check.device, "since nobody said it was them")
+
+    def _done(self, check: Check) -> None:
+        self._kernel.push.send("identify.done", {"id": check.id, "status": check.status}, self._kernel.accounts.phones(check.user))
 
     async def _confirm(self, check: Check, now: datetime) -> None:
         current = self.current(check.device)
@@ -128,8 +160,14 @@ class Attendance:
             "UPDATE attendance SET status = 'confirmed', confirmed_at = ?, last_active_at = ? WHERE id = ?",
             (iso(now), iso(now), check.id),
         )
+        # Everyone else asked about this device is too late.
+        for row in self._db.execute("SELECT * FROM attendance WHERE device_id = ? AND status = 'pending' AND id != ?", (check.device, check.id)).fetchall():
+            other = _check(row)
+            self._set(other, "withdrawn", now)
+            self._done(other)
         # What the device did since the question was asked is theirs too.
         self._kernel.events.claim(check.device, check.user, check.asked_at)
+        await self._kernel.triggers.confirm(check.device, check.user)
         name = self._user_name(check.user)
         await self._kernel.kernel_event("attendance.confirmed", f"{name} is at {self._name(check.device)}", user=check.user, device=check.device)
         self._kernel.conversations.note(check.device, f"{name} was recognized at this device; you're talking with them now")
@@ -182,8 +220,7 @@ class Attendance:
         for row in self._db.execute("SELECT * FROM attendance WHERE status IN ('pending', 'confirmed')").fetchall():
             check = _check(row)
             if check.status == "pending" and now - check.asked_at > ASK_TTL:
-                self._set(check, "expired", now)
-                self._kernel.push.send("identify.done", {"id": check.id, "status": "expired"}, self._kernel.accounts.phones(check.user))
+                await self._close(check, "expired", now)
             elif check.status == "confirmed" and check.last_active_at and now - check.last_active_at > IDLE:
                 await self._end(check, now, f"idle for {int(IDLE.total_seconds() // 60)} minutes")
 
@@ -213,6 +250,7 @@ def _check(row) -> Check:
         asked_by=row["asked_by"],
         status=row["status"],
         asked_at=from_iso(row["asked_at"]),
+        reason=row["reason"],
         confirmed_at=from_iso(row["confirmed_at"]),
         ended_at=from_iso(row["ended_at"]),
         last_active_at=from_iso(row["last_active_at"]),

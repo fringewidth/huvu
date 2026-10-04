@@ -69,7 +69,7 @@ async def test_a_turn_reaches_its_own_device_and_no_other(kernel, family, hermes
 
 
 async def test_a_household_device_chats_in_the_default_profile(kernel, family, hermes):
-    live = await kernel.conversations.ask(family.tv.id, "hi", user=None)
+    live = await kernel.conversations.ask(family.tv.id, "hi", user=None, group="home")
     await collect(kernel, live)
     assert hermes.profiles[live.turn.hermes_session] is None
     # Another user can't continue a device's conversation.

@@ -42,22 +42,38 @@ CallerKind = Literal["hermes", "script", "frontend", "kernel"]
 
 
 @dataclass(frozen=True)
+class Scope:
+    """What a caller may read: their own things (`user`), the group-wide
+    things of the groups they're a member of (`groups`), and, with `house`,
+    things no group owns, such as a doorbell press. A guest-only user gets
+    neither of the last two."""
+
+    user: str | None
+    groups: tuple[str, ...]
+    house: bool
+
+
+@dataclass(frozen=True)
 class Caller:
-    """Who asked for something, and for whom. `user` is None on a household
-    device and for the kernel itself. `device` is the device whose
-    conversation the request came from; wakes, scripts and Hermes's own cron
-    jobs have none."""
+    """Who asked for something, and for whom. `user` is None on a shared
+    device nobody is recognized at, and for the kernel itself. `group` is
+    the group of the shared device or group profile the request came
+    through, if any. `device` is the device whose conversation the request
+    came from; wakes, scripts and Hermes's own cron jobs have none."""
 
     kind: CallerKind
     session: str | None = None
     trigger: str | None = None
     user: str | None = None
     device: str | None = None
+    group: str | None = None
 
     def describe(self) -> str:
         parts = [self.kind]
         if self.user:
             parts.append(f"user {self.user}")
+        if self.group:
+            parts.append(f"group {self.group}")
         if self.device:
             parts.append(f"device {self.device}")
         if self.session:
@@ -67,7 +83,7 @@ class Caller:
         return ", ".join(parts)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "session": self.session, "trigger": self.trigger, "user": self.user, "device": self.device}
+        return {"kind": self.kind, "session": self.session, "trigger": self.trigger, "user": self.user, "device": self.device, "group": self.group}
 
 
 class Strict(BaseModel):
@@ -190,9 +206,11 @@ class Event(Strict):
     # Small, flat fields triggers can filter on. Big payloads stay in the source.
     data: dict[str, Any] = Field(default_factory=dict)
     labels: list[Label] = Field(default_factory=lambda: ["house"])
-    # Whose event it is. None is the household's, which every user sees;
-    # one with a user only shows to that user (and their dream).
+    # Whose event it is. One with a user shows only to that user (and their
+    # dream). Without one, it shows to the members of `group`, or, with no
+    # group either, to every member of any group (see Scope).
     user: str | None = None
+    group: str | None = None
     # The device whose conversation it came from, if any.
     device: str | None = None
 

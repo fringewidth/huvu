@@ -4,12 +4,19 @@ Cross-source triggers, the daily digest and cross-source search all need a
 single stream, so the envelope lives here. The detail stays in each source
 and is reached through the event's refs.
 
-An event either belongs to the household, which every user sees, or to one
-user, which only that user sees: their actions, approvals, triggers, chat
-turns, and what they did at a household device while recognized there (see
-attendance.py). A user's Hermes profile reads the log through the tools, so
-their dream sees their own events and the household's, never another
-user's.
+An event belongs to one user, to one group, or to the house:
+
+1. A user's event (their actions, approvals, triggers, chat turns, and what
+   they did at a shared device while recognized there, see attendance.py)
+   shows only to them.
+2. A group's event (a shared device's turn with nobody recognized) shows to
+   the group's members.
+3. The house's events (a doorbell press, the kernel starting) show to every
+   member of any group.
+
+A Hermes profile reads the log through the tools, so a user's dream sees
+their own events and their groups', never another user's. A guest sees only
+their own.
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .db import dumps, from_iso, iso, loads
-from .spec import Event
+from .spec import Event, Scope
 
 # How many example summaries a digest keeps per event type.
 DIGEST_EXAMPLES = 5
@@ -32,17 +39,23 @@ class Everyone:
 
 
 EVERYONE = Everyone()
-Viewer = str | None | Everyone
+Viewer = Scope | Everyone
 
 
-def _visible(viewer: Viewer, column: str = "user_id") -> tuple[str, list[Any]]:
-    """The SQL that keeps what `viewer` may see: the household's events and
-    their own. None sees only the household's."""
+def _visible(viewer: Viewer, prefix: str = "") -> tuple[str, list[Any]]:
+    """The SQL that keeps what `viewer` may see (see Scope)."""
     clause, args = "", []
-    if isinstance(viewer, str):
-        clause, args = f"({column} IS NULL OR {column} = ?)", [viewer]
-    elif viewer is None:
-        clause = f"{column} IS NULL"
+    if isinstance(viewer, Scope):
+        parts, args = [], []
+        if viewer.user is not None:
+            parts.append(f"{prefix}user_id = ?")
+            args.append(viewer.user)
+        if viewer.groups:
+            parts.append(f"({prefix}user_id IS NULL AND {prefix}group_id IN ({', '.join('?' * len(viewer.groups))}))")
+            args.extend(viewer.groups)
+        if viewer.house:
+            parts.append(f"({prefix}user_id IS NULL AND {prefix}group_id IS NULL)")
+        clause = f"({' OR '.join(parts)})" if parts else "0"
     return clause, args
 
 
@@ -53,7 +66,7 @@ class EventLog:
     def append(self, event: Event) -> Event:
         stored = event.model_copy(update={"id": event.id or new_id(event.at)})
         self._conn.execute(
-            "INSERT INTO events (id, at, ts, source, type, entity, summary, refs, data, labels, user_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, at, ts, source, type, entity, summary, refs, data, labels, user_id, group_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 stored.id,
                 iso(stored.at),
@@ -66,14 +79,15 @@ class EventLog:
                 dumps(stored.data),
                 dumps(stored.labels),
                 stored.user,
+                stored.group,
                 stored.device,
             ),
         )
         return stored
 
     def claim(self, device: str, user: str, since: datetime) -> int:
-        """Gives a user the household's events from a device since a time:
-        what they did there before huvu knew it was them."""
+        """Gives a user a shared device's unowned events since a time: what
+        they did there before huvu knew it was them."""
         cursor = self._conn.execute(
             "UPDATE events SET user_id = ? WHERE device_id = ? AND user_id IS NULL AND ts >= ?",
             (user, device, since.timestamp()),
@@ -102,7 +116,7 @@ class EventLog:
         what that user may see."""
         where: list[str] = []
         args: list[Any] = []
-        visible, visible_args = _visible(viewer, "e.user_id")
+        visible, visible_args = _visible(viewer, "e.")
         if visible:
             where.append(visible)
             args.extend(visible_args)
@@ -190,5 +204,6 @@ def _event(row: sqlite3.Row) -> Event:
         data=loads(row["data"]),
         labels=loads(row["labels"]),
         user=row["user_id"],
+        group=row["group_id"],
         device=row["device_id"],
     )

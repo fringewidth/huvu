@@ -1,9 +1,8 @@
 """Conversations: the frontend's turns, multiplexed onto Hermes sessions.
 
 Every device has one conversation, keyed by the device's id, and it belongs
-to the device's user (or to nobody, on a household device). It maps to one
-Hermes session in that user's Hermes profile, or in the default profile for
-the household. Each ask becomes a turn: the kernel sends it to Hermes, turns
+to the device's user, or to its group on a shared device. It maps to one
+Hermes session in that user's Hermes profile, or in the group's. Each ask becomes a turn: the kernel sends it to Hermes, turns
 Hermes's stream into frontend events (see the relay below), and sends those
 to the client that asked and to the same device's other open streams. A
 turn never reaches another device.
@@ -28,7 +27,7 @@ from pydantic import BaseModel
 
 from .db import dumps, from_iso, iso, loads
 from .hermes import HermesError, HermesEvent, Profile
-from .spec import Event
+from .spec import Caller, Event
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -88,8 +87,10 @@ class LiveTurn:
     turn: Turn
     profile: Profile
     # Whose turn it is in the event log: the device's user, or whoever is
-    # recognized at a household device.
+    # recognized at a shared device.
     user: str | None = None
+    # The shared device's group, if it is one.
+    group: str | None = None
     run_id: str | None = None
     task: asyncio.Task[None] | None = None
     history: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
@@ -130,16 +131,18 @@ class ConversationHub:
         replaces: str | None = None,
         *,
         user: str | None,
+        group: str | None = None,
         actions: list[Action] | None = None,
         turn_id: str | None = None,
     ) -> LiveTurn:
-        """`conversation_id` is the asking device's id, and `user` its user.
-        `turn_id` lets the client name its own turn, so it can stop or rewind
-        it by an id it already has."""
+        """`conversation_id` is the asking device's id, and `user` its user,
+        or `group` its group on a shared device. `turn_id` lets the client
+        name its own turn, so it can stop or rewind it by an id it already
+        has."""
         if turn_id is not None and self._db.execute("SELECT 1 FROM turns WHERE id = ?", (turn_id,)).fetchone():
             raise ValueError(f"turn {turn_id!r} already exists")
         conversation = self._conversation(conversation_id, user)
-        profile = self._kernel.accounts.profile(user)
+        profile = self._kernel.accounts.profile(user, group)
         for live in [l for l in self._live.values() if l.turn.conversation_id == conversation_id]:
             await self.stop(live.turn.id)
         kept = self.turns(conversation_id)
@@ -158,7 +161,7 @@ class ConversationHub:
             session = None
             message = _seeded(kept, message, tz)
         if session is None:
-            session = await self._new_session(conversation_id, user, profile)
+            session = await self._new_session(conversation_id, user, group, profile)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
             conversation_id=conversation_id,
@@ -169,7 +172,7 @@ class ConversationHub:
             actions=actions,
         )
         self._save(turn, insert=True)
-        live = LiveTurn(turn, profile, user=user or self._kernel.attendance.holder(conversation_id))
+        live = LiveTurn(turn, profile, user=user or self._kernel.attendance.holder(conversation_id), group=group)
         self._live[turn.id] = live
         self._emit(live, "turn.started", {"ask": text, "at": turn.at})
         live.task = asyncio.create_task(self._relay(live, message), name=f"turn:{turn.id}")
@@ -187,11 +190,11 @@ class ConversationHub:
             raise PermissionError(f"conversation {conversation_id} belongs to someone else")
         return row
 
-    async def _new_session(self, conversation_id: str, user: str | None, profile: Profile) -> str:
+    async def _new_session(self, conversation_id: str, user: str | None, group: str | None, profile: Profile) -> str:
         session = f"huvu-{conversation_id}-{secrets.token_hex(3)}"
         title = f"huvu chat on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}"
         await self._kernel.hermes.create_session(profile, session, title=title)
-        self._kernel.sessions.record(session, "chat", user=user, device=conversation_id)
+        self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id)
         self._db.execute("UPDATE conversations SET hermes_session = ? WHERE id = ?", (session, conversation_id))
         return session
 
@@ -222,14 +225,16 @@ class ConversationHub:
         for turn_id in list(self._live):
             await self.stop(turn_id)
 
-    async def show(self, session: str | None, user: str | None, kind: str, args: dict[str, Any]) -> bool:
+    async def show(self, caller: Caller, kind: str, args: dict[str, Any]) -> bool:
         """Adds a part from a `ui_*` tool to the live turn of the Hermes
         session that called it. Without a session (the huvu Hermes plugin
-        isn't installed), it uses the user's only live turn, if there is one."""
+        isn't installed), it uses the caller's only live turn, if there is
+        one."""
         live = [
             l
             for l in self._live.values()
-            if not l.ended and l.profile.name == user and (session is None or l.turn.hermes_session == session)
+            if not l.ended
+            and (l.turn.hermes_session == caller.session if caller.session else (l.user, l.group) == (caller.user, caller.group))
         ]
         target = live[0] if len(live) == 1 else None
         if target is not None:
@@ -348,6 +353,7 @@ class ConversationHub:
                 data={"device": turn.conversation_id},
                 labels=["owner"],
                 user=live.user,
+                group=None if live.user else live.group,
                 device=turn.conversation_id,
             )
         )

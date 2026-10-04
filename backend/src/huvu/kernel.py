@@ -134,11 +134,13 @@ class Kernel:
         data: dict[str, Any] | None = None,
         labels: list[Label] | None = None,
         user: str | None = None,
+        group: str | None = None,
         device: str | None = None,
     ) -> Event:
         """Logs one of the kernel's own events: trigger runs and errors,
         actions, approvals, wakes, chat turns. Triggers can't watch these.
-        `user` makes it that user's alone (see events.py)."""
+        `user` makes it that user's alone, and `group` its members' (see
+        events.py)."""
         return self.events.append(
             Event(
                 at=self.now(),
@@ -150,14 +152,16 @@ class Kernel:
                 data=data or {},
                 labels=labels or ["house"],
                 user=user,
+                group=group,
                 device=device,
             )
         )
 
-    async def notify(self, user: str | None, text: str, *, image: str | None = None, urgency: str = "normal") -> None:
-        """A notification on a user's phones, or on every user's phones for
-        the household."""
-        self.push.send("notify", {"text": text, "image": image, "urgency": urgency, "user": user}, self.accounts.phones(user))
+    async def notify(self, user: str | None, group: str | None, text: str, *, image: str | None = None, urgency: str = "normal") -> None:
+        """A notification on a user's phones, or on a group's members'
+        phones when there is no user."""
+        payload = {"text": text, "image": image, "urgency": urgency, "user": user, "group": None if user else group}
+        self.push.send("notify", payload, self.accounts.phones(user, group))
 
     async def feeds(self) -> list[Feed]:
         feeds: list[Feed] = []

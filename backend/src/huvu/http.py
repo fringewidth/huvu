@@ -30,7 +30,6 @@ from .source import SourceError
 from .spec import Caller
 from .times import for_model
 from .tools import ToolError
-from .triggers import TriggerError
 
 log = logging.getLogger("huvu.http")
 
@@ -62,14 +61,13 @@ class Login(BaseModel):
 
 class PairCode(BaseModel):
     code: str
+    # Which of the confirming member's groups the device joins. Needed only
+    # when they're a member of more than one.
+    group: str | None = None
 
 
 class Answer(BaseModel):
     approve: bool
-
-
-class ClaimAnswer(BaseModel):
-    number: int
 
 
 class Identify(BaseModel):
@@ -155,37 +153,38 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.post("/api/pair/confirm")
     async def confirm(body: PairCode, by: Device = phone) -> JSONResponse:
-        return JSONResponse(api_json(accounts.confirm_pairing(body.code, by).public()))
+        return JSONResponse(api_json(accounts.confirm_pairing(body.code, by, body.group).public()))
 
     @app.get("/api/me")
     async def me(me: Device = device) -> JSONResponse:
         user = accounts.user(me.user) if me.user else None
-        return JSONResponse(api_json({"device": me.public(), "user": user.public() if user else None}))
+        groups = accounts.memberships(me.user) if me.user else {}
+        return JSONResponse(api_json({"device": me.public(), "user": user.public() if user else None, "groups": groups}))
 
     @app.get("/api/devices")
     async def devices(me: Device = device) -> JSONResponse:
-        """A user's own devices and the household's. On a household device,
-        only itself."""
-        listed = accounts.devices(me.user, household=True) if me.user else [me]
+        """A user's own devices and their member groups' shared devices. On
+        a shared device, only itself."""
+        listed = accounts.devices_for(me.user) if me.user else [me]
         return JSONResponse(api_json([d.public() for d in listed]))
 
     @app.delete("/api/devices/{device_id}")
     async def revoke(device_id: str, me: Device = device) -> dict[str, bool]:
-        """Logs a device out: one's own, or a household device. A household
-        device can only unpair itself."""
+        """Logs a device out: one's own, or a shared device of a group one is
+        a member of. A shared device can only unpair itself."""
         target = accounts.device(device_id)
-        allowed = target is not None and (target.id == me.id or (me.user is not None and target.user in (None, me.user)))
-        if target is None or not allowed:
+        if target is None or not accounts.manages(me, target):
             raise HTTPException(404, f"no device {device_id!r}")
         accounts.revoke(device_id)
         return {"ok": True}
 
     # Who is at a shared device
 
-    @app.get("/api/people", dependencies=[device])
-    async def people() -> JSONResponse:
-        """The family, for a shared device's "who's this?" picker."""
-        return JSONResponse([u.public() for u in accounts.users()])
+    @app.get("/api/people")
+    async def people(me: Device = device) -> JSONResponse:
+        """Everyone in the device's group, for a shared device's "who's
+        this?" picker."""
+        return JSONResponse([u.public() for u in accounts.people(me.group or accounts.default_group())])
 
     @app.get("/api/attendance")
     async def attendance(me: Device = device) -> JSONResponse:
@@ -258,7 +257,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.get("/api/approvals")
     async def approvals(by: Device = phone) -> JSONResponse:
-        return JSONResponse(api_json([a.public() for a in kernel.policy.pending() if a.answerable_by(by)]))
+        return JSONResponse(api_json([a.public() for a in kernel.policy.pending() if kernel.policy.answerable(a, by)]))
 
     @app.post("/api/approvals/{approval_id}")
     async def answer(approval_id: str, body: Answer, by: Device = phone) -> JSONResponse:
@@ -268,24 +267,12 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(409, str(err)) from err
         return JSONResponse(api_json(approval.public()))
 
-    @app.get("/api/claims", dependencies=[phone])
-    async def claims() -> JSONResponse:
-        return JSONResponse(api_json(kernel.triggers.claims()))
-
-    @app.post("/api/claims/{trigger_id}")
-    async def claim(trigger_id: str, body: ClaimAnswer, by: Device = phone) -> JSONResponse:
-        try:
-            trigger = await kernel.triggers.claim(trigger_id, body.number, by)
-        except TriggerError as err:
-            raise HTTPException(409, str(err)) from err
-        return JSONResponse(api_json(trigger.public()))
-
     @app.post("/api/actions/{source}/{action}")
     async def act(source: str, action: str, request: Request, me: Device = device) -> JSONResponse:
         """Taps in the app. On a personal device the tap is the approval, so
         it runs at once. On a household device it goes through the policy."""
         args = await request.json() if await request.body() else {}
-        caller = Caller(kind="frontend", user=me.user or kernel.attendance.holder(me.id), device=me.id)
+        caller = Caller(kind="frontend", user=me.user or kernel.attendance.holder(me.id), device=me.id, group=me.group)
         try:
             result = await kernel.policy.request(source, action, args, caller, reason=f"tapped on {me.name}")
         except (SourceError, ToolError) as err:
@@ -299,7 +286,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         """The situation block for the huvu Hermes plugin: chosen values,
         readable, and what waits on the profile's user. Which values go in
         is Hermes's choice; the plugin sends them."""
-        known, user = mcp_caller(config, accounts, bearer(request))
+        known, user, group = mcp_caller(config, accounts, bearer(request))
         if not known:
             raise HTTPException(401, "unauthorized")
         readings = for_model(await kernel.state.get(body.values), kernel.now())
@@ -308,13 +295,14 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             named = accounts.user(user)
             lines.append(f"You are helping: {named.name if named else user}")
         else:
-            family = ", ".join(f"{u.name} ({u.id})" for u in accounts.users())
+            named = accounts.group(group)
+            people = ", ".join(f"{u.name} ({u.id})" for u in accounts.people(group or accounts.default_group()))
             lines.append(
-                "You are serving the household from a shared device; nobody in particular is speaking. "
-                f"The family: {family}. If someone says who they are, call people_identify."
+                f"You are serving {named.name if named else group} from a shared device; nobody in particular is speaking. "
+                f"The people who use it: {people}. If someone says who they are, call people_identify."
             )
         lines += [f"{key} = {r.get('value', r.get('reason'))} ({r.get('at', 'no time')})" for key, r in readings.items()]
-        pending = kernel.policy.pending_for(user)
+        pending = kernel.policy.pending_for(accounts.scope(user, group))
         lines.append(f"Pending approvals: {len(pending)}" if pending else "Pending approvals: none")
         return {"text": "\n".join(lines)}
 
@@ -323,7 +311,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
 async def _ask(kernel: Kernel, ask: Ask, me: Device):
     try:
-        live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, actions=ask.actions, turn_id=ask.id)
+        live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, group=me.group, actions=ask.actions, turn_id=ask.id)
     except KeyError as err:
         raise HTTPException(404, str(err)) from err
     except ValueError as err:

@@ -4,7 +4,6 @@ import asyncio
 
 import pytest
 
-from huvu.accounts import AuthError
 from huvu.spec import Caller
 from huvu.triggers import TriggerError, TriggerSpec, compare
 
@@ -143,7 +142,7 @@ async def test_once_triggers_end_and_get_a_default_expiry(kernel, hermes):
     await home.emit("doorbell", "ding")
     await settle(kernel)
     assert len(wakes(hermes)) == 1
-    assert kernel.triggers.list("me") == []
+    assert kernel.triggers.list(Caller(kind="hermes", user="me")) == []
 
 
 async def test_validation_errors_name_the_fix(kernel):
@@ -177,7 +176,7 @@ async def test_triggers_survive_a_restart(kernel, tmp_path, clock, home, hermes)
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": type(home)()}, clock=clock)
     await again.triggers.load()
-    assert [t.spec.note for t in again.triggers.list("me")] == ["Doorbell."]
+    assert [t.spec.note for t in again.triggers.list(Caller(kind="hermes", user="me"))] == ["Doorbell."]
     again.db.close()
 
 
@@ -206,10 +205,10 @@ async def test_wakes_run_in_the_triggers_users_profile(kernel, hermes):
 async def test_triggers_are_scoped_to_their_user(kernel):
     spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
     trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
-    assert kernel.triggers.list("mom") == []
+    assert kernel.triggers.list(Caller(kind="hermes", user="mom")) == []
     with pytest.raises(TriggerError):
-        await kernel.triggers.remove(trigger.id, "mom")
-    await kernel.triggers.remove(trigger.id, "me")
+        await kernel.triggers.remove(trigger.id, Caller(kind="hermes", user="mom"))
+    await kernel.triggers.remove(trigger.id, Caller(kind="hermes", user="me"))
 
 
 async def push_events(kernel, device: str) -> tuple[list[tuple[str, dict]], asyncio.Task]:
@@ -226,48 +225,57 @@ async def push_events(kernel, device: str) -> tuple[list[tuple[str, dict]], asyn
     return received, task
 
 
-async def test_a_household_trigger_waits_for_the_right_number(kernel, family, hermes):
+def at_the_tv(family) -> Caller:
+    return Caller(kind="hermes", session="s-tv", device=family.tv.id, group="home")
+
+
+DOORBELL = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+
+
+async def test_a_trigger_on_a_shared_device_asks_everyone_and_the_first_yes_owns_it(kernel, family, hermes):
     mine, mine_task = await push_events(kernel, family.me_phone.id)
-    tv, tv_task = await push_events(kernel, family.tv.id)
-    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), HOUSEHOLD)
+    moms, moms_task = await push_events(kernel, family.mom_phone.id)
+    result = await kernel.tools.call("triggers_register", DOORBELL, at_the_tv(family))
+    assert result.data["status"] == "unconfirmed" and result.data["user"] is None
+    assert "tap yes" in result.data["note_for_you"]
     await asyncio.sleep(0)
-    assert trigger.status == "unclaimed" and trigger.user is None
-    number = trigger.public()["claim"]
-    [(name, offer)] = mine
-    assert name == "claim" and number in offer["choices"] and "claim" not in offer
-    assert tv == []
-    # Unclaimed, it doesn't fire.
+    [(_, mine_asked)] = mine
+    [(_, moms_asked)] = moms
+    assert mine_asked["reason"] == "setting up: Doorbell." and moms_asked["asked_by"] == "trigger"
+    # Waiting, it doesn't fire.
     await kernel.registry.get("home").ctx.emit("doorbell", "ding")
     await settle(kernel)
     assert wakes(hermes) == []
-    # Only a phone claims it, and the claim makes it that user's.
-    with pytest.raises(AuthError):
-        await kernel.triggers.claim(trigger.id, number, family.me_web)
-    claimed = await kernel.triggers.claim(trigger.id, number, family.mom_phone)
-    assert claimed.status == "active" and claimed.user == "mom"
-    assert kernel.triggers.list("mom") == [claimed]
+    # Mom says yes first: she is at the TV now, and the trigger is hers.
+    await kernel.attendance.answer(moms_asked["id"], True, family.mom_phone)
+    [trigger] = kernel.triggers.list(Caller(kind="hermes", user="mom"))
+    assert trigger.status == "active" and kernel.attendance.holder(family.tv.id) == "mom"
+    await asyncio.sleep(0)
+    assert mine[-1] == ("identify.done", {"id": mine_asked["id"], "status": "withdrawn"})
     await kernel.registry.get("home").ctx.emit("doorbell", "ding")
     await settle(kernel)
     [session] = [s for s in hermes.sessions if s.startswith("wake-")]
     assert hermes.profiles[session] == "mom"
     mine_task.cancel()
-    tv_task.cancel()
+    moms_task.cancel()
 
 
-async def test_a_wrong_number_drops_the_trigger(kernel, family):
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), HOUSEHOLD)
-    wrong = next(n for n in range(10, 100) if n != trigger.claim.number)
-    with pytest.raises(TriggerError, match="dropped"):
-        await kernel.triggers.claim(trigger.id, wrong, family.me_phone)
-    assert kernel.triggers.claims() == []
-    with pytest.raises(TriggerError):
-        await kernel.triggers.claim(trigger.id, trigger.claim.number, family.me_phone)
+async def test_nobody_saying_yes_drops_it(kernel, family):
+    await kernel.triggers.register(TriggerSpec.model_validate(DOORBELL), at_the_tv(family))
+    questions = {u: kernel.attendance.pending_for(u) for u in ("me", "mom")}
+    await kernel.attendance.answer(questions["me"][0]["id"], False, family.me_phone)
+    assert kernel.triggers.list(at_the_tv(family)) != []
+    await kernel.attendance.answer(questions["mom"][0]["id"], False, family.mom_phone)
+    assert kernel.triggers.list(at_the_tv(family)) == []
 
 
-async def test_unclaimed_triggers_expire(kernel, clock):
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), HOUSEHOLD)
-    assert len(kernel.triggers.claims()) == 1
-    clock.advance(minutes=11)
-    await kernel.triggers.expire()
-    assert kernel.triggers.claims() == []
+async def test_unanswered_questions_drop_it(kernel, family, clock):
+    await kernel.triggers.register(TriggerSpec.model_validate(DOORBELL), at_the_tv(family))
+    clock.advance(minutes=6)
+    await kernel.attendance.expire()
+    assert kernel.triggers.list(at_the_tv(family)) == []
+
+
+async def test_a_trigger_needs_someone_to_ask(kernel, family):
+    with pytest.raises(TriggerError, match="belongs to a person"):
+        await kernel.triggers.register(TriggerSpec.model_validate(DOORBELL), Caller(kind="hermes", group="home"))

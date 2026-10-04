@@ -40,7 +40,7 @@ async def kernel(tmp_path, clock, home, hermes):
 
 @dataclass
 class Family:
-    """Two users with their devices, and a TV that belongs to nobody."""
+    """Two members of the home group with their devices, and the group's TV."""
 
     me_phone: Device
     me_web: Device
@@ -56,6 +56,8 @@ def family(kernel) -> Family:
     accounts = kernel.accounts
     me_token = accounts.add_user("me", "Me", "correct horse", "key-me")
     mom_token = accounts.add_user("mom", "Mom", "battery staple", "key-mom")
+    accounts.join("home", "me", "member")
+    accounts.join("home", "mom", "member")
     me_phone, _ = accounts.login("me", "correct horse", "my phone", "phone")
     me_web, _ = accounts.login("me", "correct horse", "laptop", "web")
     mom_phone, _ = accounts.login("mom", "battery staple", "mom's phone", "phone")

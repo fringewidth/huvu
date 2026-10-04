@@ -17,10 +17,12 @@ from false to true, whichever part became true last.
 
 Every trigger belongs to a user: its wakes run in that user's Hermes
 profile, and its approvals and notifications go to that user's phones. A
-trigger set up from a household device has no user yet, so it waits,
-unclaimed. The model tells the room a two-digit number, every user's phone
-offers three numbers, and whoever taps the right one owns the trigger. A
-wrong tap drops it, and an unclaimed trigger expires after CLAIM_TTL.
+trigger set up from a shared device nobody is recognized at has no user
+yet, so it waits, unconfirmed, and everyone in the device's group gets "is
+this you on the living room TV?" on their phone. The first yes makes that
+person the device's attendee (see attendance.py), and the device's waiting
+triggers become theirs and go live. If everyone says no, or nobody answers
+in time, they are dropped.
 """
 
 from __future__ import annotations
@@ -34,7 +36,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator
 
-from .accounts import AuthError, Device
 from .db import dumps, from_iso, iso, loads
 from .events import EventLog
 from .names import UnknownName, ValueRef
@@ -49,14 +50,14 @@ log = logging.getLogger("huvu.triggers")
 
 Op = Literal["==", "!=", "<", "<=", ">", ">=", "between", "in", "contains"]
 Repeat = Literal["no", "yes", "daily"]
-Status = Literal["active", "unclaimed", "done", "expired", "removed"]
+Status = Literal["active", "unconfirmed", "done", "expired", "removed"]
 
 # A trigger that fires once and names no expiry gets this one, so a
 # condition that never comes true doesn't stay forever.
 DEFAULT_EXPIRY = timedelta(days=7)
-# How long a trigger from a household device waits for someone to claim it.
-CLAIM_TTL = timedelta(minutes=10)
-CLAIM_CHOICES = 3
+# How long a trigger from a shared device waits for its person, should the
+# questions on their phones somehow outlive it.
+UNCONFIRMED_TTL = timedelta(minutes=15)
 # How many past events a test replays.
 REPLAY = 5
 
@@ -107,15 +108,6 @@ class Check:
 
 
 @dataclass
-class Claim:
-    """The number a household device shows, and the numbers every phone
-    offers, one of them right."""
-
-    number: int
-    choices: list[int]
-
-
-@dataclass
 class Trigger:
     id: str
     spec: TriggerSpec
@@ -123,10 +115,12 @@ class Trigger:
     armed: bool
     created_at: datetime
     created_by: str | None
-    # None only while unclaimed.
+    # None only while unconfirmed.
     user: str | None
     expires_at: datetime | None
-    claim: Claim | None = None
+    # The group and shared device it was set up through, if any.
+    group: str | None = None
+    device: str | None = None
     last_fired_at: datetime | None = None
     fire_count: int = 0
     # Filled in by the engine when the trigger is active.
@@ -134,20 +128,12 @@ class Trigger:
     resets: list[Check] = field(default_factory=list)
     event: EventCheck | None = None
 
-    def claim_public(self) -> dict[str, Any]:
-        """What a phone shows: the note and the choices, never the answer."""
-        return {
-            "trigger": self.id,
-            "note": self.spec.note,
-            "choices": self.claim.choices if self.claim else [],
-            "expires_at": self.created_at + CLAIM_TTL,
-        }
-
     def public(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "user": self.user,
-            "claim": self.claim.number if self.claim else None,
+            "group": self.group,
+            "device": self.device,
             "note": self.spec.note,
             "when": [c.model_dump(exclude_none=True) for c in self.spec.when],
             "repeat": self.spec.repeat,
@@ -217,9 +203,8 @@ class TriggerEngine:
 
     async def load(self) -> None:
         """Reloads stored triggers and activates the live ones."""
-        rows = self._db.execute("SELECT * FROM triggers WHERE status IN ('active', 'unclaimed')").fetchall()
+        rows = self._db.execute("SELECT * FROM triggers WHERE status IN ('active', 'unconfirmed')").fetchall()
         for row in rows:
-            claim = loads(row["claim"])
             trigger = Trigger(
                 id=row["id"],
                 spec=TriggerSpec.model_validate(loads(row["spec"])),
@@ -228,8 +213,9 @@ class TriggerEngine:
                 created_at=from_iso(row["created_at"]),
                 created_by=row["created_by"],
                 user=row["user_id"],
+                group=row["group_id"],
                 expires_at=from_iso(loads(row["spec"]).get("expires")),
-                claim=Claim(**claim) if claim else None,
+                device=row["device_id"],
                 last_fired_at=from_iso(row["last_fired_at"]),
                 fire_count=row["fire_count"],
             )
@@ -237,7 +223,7 @@ class TriggerEngine:
                 self._resolve(trigger)
             except (TriggerError, UnknownName) as err:
                 # A source was removed or renamed since. The dream sees this.
-                await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} no longer resolves: {err}", entity=trigger.id, user=trigger.user, device=_device(self._kernel, trigger))
+                await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} no longer resolves: {err}", entity=trigger.id, **_owner(trigger))
                 continue
             self._triggers[trigger.id] = trigger
             if trigger.status == "active":
@@ -306,86 +292,76 @@ class TriggerEngine:
         return Check(raw, ref, spec)
 
     async def register(self, spec: TriggerSpec, caller: Caller) -> Trigger:
-        """Registers a trigger for the caller's user. Without one (a
-        household device), it waits to be claimed."""
+        """Registers a trigger for the caller's user. On a shared device
+        nobody is recognized at, it waits, and everyone in the device's
+        group is asked on their phone whether it's them."""
         spec = self.validate(spec)
+        unconfirmed = caller.user is None
+        if unconfirmed and caller.device is None:
+            raise TriggerError("a trigger belongs to a person, and nobody is known here to ask; set it up from someone's own conversation")
         now = self._kernel.now()
-        unclaimed = caller.user is None
         trigger = Trigger(
             id=f"tr_{secrets.token_hex(4)}",
             spec=spec,
-            status="unclaimed" if unclaimed else "active",
+            status="unconfirmed" if unconfirmed else "active",
             armed=True,
             created_at=now,
             created_by=caller.session,
             user=caller.user,
+            group=caller.group,
+            device=caller.device,
             expires_at=from_iso(spec.expires),
-            claim=_new_claim() if unclaimed else None,
         )
         self._resolve(trigger)
         self._db.execute(
-            "INSERT INTO triggers (id, spec, status, armed, created_at, created_by, user_id, claim, fire_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
-            (
-                trigger.id,
-                dumps(spec.model_dump()),
-                trigger.status,
-                1,
-                iso(now),
-                caller.session,
-                trigger.user,
-                dumps(vars(trigger.claim)) if trigger.claim else None,
-            ),
+            "INSERT INTO triggers (id, spec, status, armed, created_at, created_by, user_id, group_id, device_id, fire_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (trigger.id, dumps(spec.model_dump()), trigger.status, 1, iso(now), caller.session, trigger.user, trigger.group, trigger.device),
         )
         self._triggers[trigger.id] = trigger
         await self._kernel.kernel_event(
-            "trigger.registered", f"trigger {trigger.id} registered ({trigger.user or 'unclaimed'}): {spec.note}", entity=trigger.id, user=trigger.user, device=_device(self._kernel, trigger)
+            "trigger.registered",
+            f"trigger {trigger.id} registered ({trigger.user or 'waiting for its person'}): {spec.note}",
+            entity=trigger.id,
+            **_owner(trigger),
         )
-        if unclaimed:
-            self._kernel.push.send("claim", trigger.claim_public(), self._kernel.accounts.phones(None))
+        if unconfirmed:
+            await self._kernel.attendance.ask_everyone(trigger.device, "trigger", f"setting up: {spec.note}")
         else:
             await self._activate(trigger)
         return trigger
 
-    async def claim(self, trigger_id: str, number: int, by: Device) -> Trigger:
-        """A user claims a household device's trigger from their phone, by
-        tapping the number the device showed. A wrong number drops it."""
+    async def confirm(self, device: str, user: str) -> list[Trigger]:
+        """Someone was confirmed at a shared device: its waiting triggers
+        are theirs now, and go live."""
+        confirmed = [t for t in self._triggers.values() if t.status == "unconfirmed" and t.device == device]
+        for trigger in confirmed:
+            trigger.user = user
+            trigger.status = "active"
+            self._db.execute("UPDATE triggers SET status = 'active', user_id = ? WHERE id = ?", (user, trigger.id))
+            await self._kernel.kernel_event("trigger.confirmed", f"trigger {trigger.id} is {user}'s: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
+            await self._activate(trigger)
+        return confirmed
+
+    async def drop_unconfirmed(self, device: str, reason: str) -> None:
+        """Nobody said it was them at the device: its waiting triggers go."""
+        for trigger in [t for t in self._triggers.values() if t.status == "unconfirmed" and t.device == device]:
+            await self._end(trigger, "removed", f"trigger {trigger.id} was dropped, {reason}: {trigger.spec.note}")
+
+    async def remove(self, trigger_id: str, caller: Caller) -> Trigger:
         trigger = self._triggers.get(trigger_id)
-        if trigger is None or trigger.status != "unclaimed" or trigger.claim is None:
-            raise TriggerError(f"no trigger {trigger_id!r} is waiting to be claimed")
-        if not by.is_phone or by.user is None:
-            raise AuthError("claim a trigger from your phone")
-        if number != trigger.claim.number:
-            await self._end(trigger, "removed", f"trigger {trigger.id} was dropped: the wrong number was tapped")
-            self._claim_done(trigger)
-            raise TriggerError("that wasn't the number on the device, so the trigger was dropped")
-        trigger.user = by.user
-        trigger.claim = None
-        trigger.status = "active"
-        self._db.execute("UPDATE triggers SET status = 'active', user_id = ?, claim = NULL WHERE id = ?", (trigger.user, trigger.id))
-        await self._kernel.kernel_event("trigger.claimed", f"trigger {trigger.id} claimed by {trigger.user}: {trigger.spec.note}", entity=trigger.id, user=trigger.user, device=_device(self._kernel, trigger))
-        self._claim_done(trigger)
-        await self._activate(trigger)
-        return trigger
-
-    def claims(self) -> list[dict[str, Any]]:
-        """Every trigger waiting to be claimed, as phones show it."""
-        return [t.claim_public() for t in self._triggers.values() if t.status == "unclaimed"]
-
-    def _claim_done(self, trigger: Trigger) -> None:
-        """Tells every phone the claim is over, so they drop it."""
-        self._kernel.push.send("claim.done", {"trigger": trigger.id, "user": trigger.user}, self._kernel.accounts.phones(None))
-
-    async def remove(self, trigger_id: str, user: str | None) -> Trigger:
-        trigger = self._triggers.get(trigger_id)
-        if trigger is None or trigger.user != user:
+        if trigger is None or trigger not in self.list(caller):
             raise TriggerError(f"no live trigger {trigger_id!r}")
         await self._end(trigger, "removed", f"trigger {trigger.id} removed")
         return trigger
 
-    def list(self, user: str | None) -> list[Trigger]:
-        """A user's live triggers. For the household, the ones still waiting
-        to be claimed."""
-        return [t for t in self._triggers.values() if t.user == user and t.status in ("active", "unclaimed")]
+    def list(self, caller: Caller) -> list[Trigger]:
+        """A user's live triggers. On a shared device nobody is recognized
+        at, the device's triggers still waiting for their person."""
+
+        def mine(t: Trigger) -> bool:
+            return t.user == caller.user if caller.user is not None else (t.user is None and t.device == caller.device)
+
+        return [t for t in self._triggers.values() if t.status in ("active", "unconfirmed") and mine(t)]
 
     def _get(self, trigger_id: str) -> Trigger:
         trigger = self._triggers.get(trigger_id)
@@ -421,7 +397,7 @@ class TriggerEngine:
         self._deactivate(trigger)
         self._triggers.pop(trigger.id, None)
         self._save(trigger)
-        await self._kernel.kernel_event(f"trigger.{status}", summary, entity=trigger.id, user=trigger.user, device=_device(self._kernel, trigger))
+        await self._kernel.kernel_event(f"trigger.{status}", summary, entity=trigger.id, **_owner(trigger))
 
     def _save(self, trigger: Trigger) -> None:
         self._db.execute(
@@ -517,7 +493,7 @@ class TriggerEngine:
         await self._kernel.kernel_event(
             "trigger.run",
             f"trigger {trigger.id} fired: {trigger.spec.note}",
-            entity=trigger.id, user=trigger.user, device=_device(self._kernel, trigger),
+            entity=trigger.id, **_owner(trigger),
             refs={"event": event.id} if event else {},
             labels=labels,
         )
@@ -533,7 +509,7 @@ class TriggerEngine:
                 await self._kernel.waker.wake(payload, trigger.user)
         except Exception as err:
             log.exception("trigger %s failed to deliver", trigger.id)
-            await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} failed: {err}", entity=trigger.id, user=trigger.user, device=_device(self._kernel, trigger))
+            await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} failed: {err}", entity=trigger.id, **_owner(trigger))
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -543,9 +519,8 @@ class TriggerEngine:
     async def expire(self) -> None:
         now = self._kernel.now()
         for trigger in list(self._triggers.values()):
-            if trigger.status == "unclaimed" and now - trigger.created_at > CLAIM_TTL:
-                await self._end(trigger, "expired", f"trigger {trigger.id} was never claimed: {trigger.spec.note}")
-                self._claim_done(trigger)
+            if trigger.status == "unconfirmed" and now - trigger.created_at > UNCONFIRMED_TTL:
+                await self._end(trigger, "expired", f"trigger {trigger.id} was never confirmed: {trigger.spec.note}")
             elif trigger.expires_at and now > trigger.expires_at:
                 await self._end(trigger, "expired", f"trigger {trigger.id} expired: {trigger.spec.note}")
 
@@ -607,13 +582,11 @@ def _safe_compare(check: Check, value: Any) -> bool:
     return ok
 
 
-def _new_claim() -> Claim:
-    """A two-digit number and decoys, in random order."""
-    choices = secrets.SystemRandom().sample(range(10, 100), CLAIM_CHOICES)
-    return Claim(number=secrets.choice(choices), choices=choices)
-
-
-def _device(kernel: Kernel, trigger: Trigger) -> str | None:
-    """The device a trigger was set up from, through its session."""
-    owner = kernel.sessions.owner(trigger.created_by)
-    return owner.device if owner else None
+def _owner(trigger: Trigger) -> dict[str, str | None]:
+    """Whose a trigger's events are: its user's, or, while it waits for its
+    person, its group's, from the device it was set up on."""
+    return {
+        "user": trigger.user,
+        "group": None if trigger.user else trigger.group,
+        "device": trigger.device,
+    }

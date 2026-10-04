@@ -100,11 +100,11 @@ async def test_external_results_keep_their_label(kernel):
 async def test_the_profile_names_the_user_and_the_session_the_device(kernel, family):
     kernel.sessions.record("s9", "chat", user="me", device=family.me_web.id)
     args = {"_session": "s9", "values": ["clock.time"]}
-    caller = caller_from(kernel, args, "me")
+    caller = caller_from(kernel, args, "me", None)
     assert (caller.user, caller.session, caller.device) == ("me", "s9", family.me_web.id)
     assert args == {"values": ["clock.time"]}
     # Mom's profile can't borrow my session.
-    borrowed = caller_from(kernel, {"_session": "s9"}, "mom")
+    borrowed = caller_from(kernel, {"_session": "s9"}, "mom", None)
     assert (borrowed.user, borrowed.session, borrowed.device) == ("mom", None, None)
 
 

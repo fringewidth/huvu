@@ -42,6 +42,8 @@ def server(tmp_path):
     kernel = Kernel(config, hermes=hermes, sources={"home": HomeSource()})
     me_token = kernel.accounts.add_user("me", "Me", "correct horse", "key-me")
     kernel.accounts.add_user("mom", "Mom", "battery staple", "key-mom")
+    kernel.accounts.join("home", "me", "member")
+    kernel.accounts.join("home", "mom", "member")
     app = create_app(kernel.config, kernel)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -159,7 +161,7 @@ def test_the_situation_names_the_profiles_user(server):
     mine = httpx.post(f"{server.base}/api/situation", json={"values": []}, headers={"Authorization": f"Bearer {server.me_mcp_token}"})
     assert "You are helping: Me" in mine.json()["text"]
     household = httpx.post(f"{server.base}/api/situation", json={"values": []}, headers={"Authorization": f"Bearer {HOUSEHOLD_MCP_TOKEN}"})
-    assert "household" in household.json()["text"]
+    assert "Home from a shared device" in household.json()["text"]
     assert httpx.post(f"{server.base}/api/situation", json={"values": []}).status_code == 401
 
 

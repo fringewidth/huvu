@@ -116,10 +116,12 @@ class SourceContext:
         labels: list[Label] | None = None,
         at: datetime | None = None,
         user: str | None = None,
+        group: str | None = None,
     ) -> Event:
         """Logs an event. `type` is unqualified (`doorbell`); the kernel adds
         the source's name. It must be one of the types in the spec. `user`
-        makes it one person's (their calendar), not the household's."""
+        makes it one person's (their calendar), and `group` one group's (a
+        second house's lock), not the whole house's."""
         event = Event(
             at=at or self._kernel.now(),
             source=self.name,
@@ -130,6 +132,7 @@ class SourceContext:
             data=data or {},
             labels=labels or ["house"],
             user=user,
+            group=group,
         )
         return await self._kernel.emit(event)
 

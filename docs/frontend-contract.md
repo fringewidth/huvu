@@ -89,27 +89,25 @@ Only the dev seed (`?seed` in a dev build) shows parts without a model sending t
 | Event | To | Data |
 |---|---|---|
 | The turn events above | The device whose conversation it is | As above. A client gets its own turns twice and keeps one by turn id. A turn the device didn't start itself (a future Alexa ask shown on the TV) arrives only here. |
-| `notify` | The phones of the user it is for, or every user's phones for the household | `text`, `image`, `urgency`, `user` |
+| `notify` | The phones of the user it is for, or the group members' phones for a shared device | `text`, `image`, `urgency`, `user`, `group` |
 | `approval` | The same phones | A pending or resolved approval |
-| `claim` | Every user's phones | `trigger`, `note`, `choices` (three two-digit numbers), `expires_at` |
-| `claim.done` | Every user's phones | `trigger`, `user` (who claimed it, or `null` if it was dropped or expired) |
-| `identify` | The phones of the person asked | `id`, `device` (`id`, `name`), `user`, `asked_by` (`device`, `model` or `voice`), `asked_at`, `expires_at` |
-| `identify.done` | The same phones | `id`, `status` (`confirmed`, `denied` or `expired`) |
+| `identify` | The phones of the person asked | `id`, `device` (`id`, `name`), `user`, `asked_by` (`device`, `model`, `voice` or `trigger`), `reason`, `asked_at`, `expires_at` |
+| `identify.done` | The same phones | `id`, `status` (`confirmed`, `denied`, `expired`, or `withdrawn` when someone else said yes first) |
 | `attendance` | The shared device | `user`: `{id, name}` once someone is recognized, `null` when that ends |
 
 A device that isn't connected misses these. Native push notifications are not built.
 
 ### Approvals and actions
 
-Approvals are answered from phones only. An approval belongs to the user it was asked for, or to nobody when a household device asked.
+Approvals are answered from phones only. An approval belongs to the user it was asked for, or, with `user` `null`, to the members of its `group`: when a shared device nobody is recognized at asked, or when a guest caused it. A guest never approves anything.
 
-`GET /api/approvals` (phone) lists what this phone may answer: its user's pending approvals and the household's. Each has `id`, `action`, `args`, `reason`, `asked_by`, `user`, `status`, `created_at`, `deadline`. `POST /api/approvals/{id}` (phone) with `{"approve": true}` or `false` answers one; the answer runs the action through the backend, and the result comes back. This is the only way to approve, so no model can approve its own request. Another user's approval, or any approval from a device that isn't a phone, answers `403`.
+`GET /api/approvals` (phone) lists what this phone may answer: its user's pending approvals and those of the groups they're a member of. Each has `id`, `action`, `args`, `reason`, `asked_by`, `user`, `group`, `status`, `created_at`, `deadline`. `POST /api/approvals/{id}` (phone) with `{"approve": true}` or `false` answers one; the answer runs the action through the backend, and the result comes back. This is the only way to approve, so no model can approve its own request. Another user's approval, or any approval from a device that isn't a phone, answers `403`.
 
-`POST /api/actions/{source}/{action}` with the action's args is a tap in the app. On a personal device (phone, web) the tap is the approval, so it runs at once. On a household device it goes through the policy like a model's request, so a `requires_human` action waits for someone's phone.
+`POST /api/actions/{source}/{action}` with the action's args is a tap in the app. On a member's personal device (phone, web) the tap is the approval, so it runs at once. On a shared device, or from a guest, it goes through the policy like a model's request, so a `requires_human` action waits for a member's phone.
 
-### Trigger claims
+### Triggers on a shared device
 
-A trigger set up from a household device has no user, so it waits to be claimed. The model tells the room a two-digit number, and every phone gets a `claim` push. `GET /api/claims` (phone) lists the open ones. `POST /api/claims/{trigger}` (phone) with `{"number": 42}` claims it for the phone's user. A wrong number drops the trigger and answers `409`. An unclaimed trigger expires after 10 minutes.
+A trigger belongs to a person. One set up on a shared device with nobody recognized waits, and everyone in the device's group, members and guests, gets an `identify` question with `asked_by: "trigger"` and the trigger in `reason`. The first yes recognizes that person at the device (see below) and makes the device's waiting triggers theirs. The other questions are `withdrawn`. If everyone says no, or nobody answers within 5 minutes, the waiting triggers are dropped.
 
 ### Feeds and media
 
@@ -117,22 +115,22 @@ A trigger set up from a household device has no user, so it waits to be claimed.
 
 ### Who is at a shared device
 
-A device without a user can recognize the person in front of it. The Hermes session stays the household's, so nothing about the conversation changes, but from then on the backend treats it as that person's: their triggers, their approvals and notifications on their phone, and their entries in the event log, which their own dream reads.
+A shared device can recognize the person in front of it, if they're in its group (member or guest). The Hermes session stays the group's, so nothing about the conversation changes, but from then on the backend treats it as that person's: their triggers, their approvals and notifications on their phone, and their entries in the event log, which their own dream reads.
 
-1. `GET /api/people` lists the family (`id`, `name`), for a "who's this?" picker.
-1. `POST /api/attendance` with `{"user"}`, from a device without a user, asks that person on their phones. The model can ask the same way, and later voice recognition will.
+1. `GET /api/people` lists the people in the device's group (`id`, `name`), for a "who's this?" picker.
+1. `POST /api/attendance` with `{"user"}`, from a shared device, asks that person on their phones. The model can ask the same way, and later voice recognition will.
 1. `GET /api/identify` (phone) lists the open questions for this phone's user. `POST /api/identify/{id}` (phone) with `{"yes": true}` or `false` answers one. Questions last 5 minutes.
 1. `GET /api/attendance` answers `{"user"}`: who is recognized at this device, or the device's own user on a personal device.
 1. `DELETE /api/attendance/{device}`, from the device or the recognized person's phone, ends it. So does someone else being confirmed, the model being told they left, or 10 minutes with no turn.
 
 ### Devices and auth
 
-Every request carries its device's token as `Authorization: Bearer <token>`. Streams also take it as `?token=`, for clients that can't set headers on one. A device is personal (`phone`, `web`) or household (`tv`, `speaker`). Phones matter most: approvals, claims and notifications go to them, since they are taken to be on their user's person.
+Every request carries its device's token as `Authorization: Bearer <token>`. Streams also take it as `?token=`, for clients that can't set headers on one. A device is personal (`phone`, `web`) or shared (`tv`, `speaker`). A shared device belongs to a group: a set of people who share devices, as members (who trust each other) or guests (who trust nothing). The household is the default group, `home`. Phones matter most: approvals, "is it you?" questions and notifications go to them, since they are taken to be on their user's person.
 
-1. **Personal devices log in.** `POST /api/login` with `{"username", "password", "device": {"name", "kind"}}` answers `{"token", "device"}`. A wrong password answers `401`, and so does a household kind.
-1. **Household devices pair.** `POST /api/pair` with `{"name", "kind"}` answers `{"pairing", "code", "expires_at"}`. The device shows `code` (`ABCD-EF23`) and polls `GET /api/pair/{pairing}`: `202` while waiting, then `200` with `{"status": "paired", "token", "device"}` once, then `410`. A user confirms from their phone with `POST /api/pair/confirm` and `{"code"}`. Codes last 10 minutes.
-1. `GET /api/me` answers `{"device", "user"}`, with `user` `null` on a household device.
-1. `GET /api/devices` lists the user's devices and the household's. `DELETE /api/devices/{id}` logs one out: one's own, or a household device. A household device can only unpair itself.
+1. **Personal devices log in.** `POST /api/login` with `{"username", "password", "device": {"name", "kind"}}` answers `{"token", "device"}`. A wrong password answers `401`, and so does a shared kind.
+1. **Shared devices pair.** `POST /api/pair` with `{"name", "kind"}` answers `{"pairing", "code", "expires_at"}`. The device shows `code` (`ABCD-EF23`) and polls `GET /api/pair/{pairing}`: `202` while waiting, then `200` with `{"status": "paired", "token", "device"}` once, then `410`. A member confirms from their phone with `POST /api/pair/confirm` and `{"code", "group"}`. `group` is needed only if they're a member of more than one; the device joins it. A guest can't pair. Codes last 10 minutes.
+1. `GET /api/me` answers `{"device", "user", "groups"}`. `user` is `null` on a shared device, whose `device.group` names its group. `groups` maps each of the user's groups to their role there.
+1. `GET /api/devices` lists the user's devices and the shared devices of their member groups. `DELETE /api/devices/{id}` logs one out: one's own, or a shared device of a group one is a member of. A shared device can only unpair itself.
 
 Users are added from the backend's command line (`uv run huvu user add`), not from the app. With `auth.mode = "off"`, a request without a valid token comes from a development phone owned by `auth.dev_user`, which is only for localhost.
 

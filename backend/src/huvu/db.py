@@ -30,8 +30,10 @@ CREATE TABLE IF NOT EXISTS events (
     refs TEXT NOT NULL,
     data TEXT NOT NULL,
     labels TEXT NOT NULL,
-    -- Whose event it is. NULL is the household's, which everyone sees.
+    -- Whose event it is. With no user, the members of group_id see it;
+    -- with neither, every member of any group does.
     user_id TEXT,
+    group_id TEXT,
     -- The device whose conversation it came from, if any.
     device_id TEXT
 );
@@ -58,12 +60,35 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL
 );
 
+-- A set of people who share devices and trust each other. The default
+-- group uses Hermes's default profile and the environment's secrets, so its
+-- hermes_key and mcp_token are NULL.
+CREATE TABLE IF NOT EXISTS groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    hermes_key TEXT,
+    mcp_token TEXT UNIQUE,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memberships (
+    group_id TEXT NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    -- member: trusted with the group's events, approvals and devices.
+    -- guest: uses the group's shared devices, trusts nothing.
+    role TEXT NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
-    -- NULL on a household device.
+    -- NULL on a shared device.
     user_id TEXT REFERENCES users (id) ON DELETE CASCADE,
+    -- The group a shared device belongs to.
+    group_id TEXT REFERENCES groups (id) ON DELETE CASCADE,
     -- SHA-256 of the device's bearer token.
     token TEXT UNIQUE,
     created_at TEXT NOT NULL
@@ -76,10 +101,11 @@ CREATE TABLE IF NOT EXISTS triggers (
     armed INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     created_by TEXT,
-    -- NULL while a trigger from a household device waits to be claimed.
+    -- NULL while a trigger from a shared device waits for its person.
     user_id TEXT,
-    -- The claim's number and choices, as JSON, while unclaimed.
-    claim TEXT,
+    -- The group and shared device it was set up through, if any.
+    group_id TEXT,
+    device_id TEXT,
     last_fired_at TEXT,
     fire_count INTEGER NOT NULL DEFAULT 0
 );
@@ -91,8 +117,10 @@ CREATE TABLE IF NOT EXISTS approvals (
     args TEXT NOT NULL,
     reason TEXT,
     caller TEXT NOT NULL,
-    -- Whose phones answer it. NULL sends it to every user's phones.
+    -- Whose phones answer it: the user's, or with no user, the members of
+    -- group_id.
     user_id TEXT,
+    group_id TEXT,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     deadline TEXT NOT NULL,
@@ -138,6 +166,8 @@ CREATE TABLE IF NOT EXISTS attendance (
     device_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     asked_by TEXT NOT NULL,
+    -- Why they're asked, shown on the phone, such as the trigger being set up.
+    reason TEXT,
     status TEXT NOT NULL,
     asked_at TEXT NOT NULL,
     confirmed_at TEXT,
@@ -149,8 +179,9 @@ CREATE INDEX IF NOT EXISTS attendance_device ON attendance (device_id, status);
 CREATE TABLE IF NOT EXISTS hermes_sessions (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
-    -- NULL for the household.
+    -- The user it runs for, or NULL for a group's shared device.
     user_id TEXT,
+    group_id TEXT,
     -- The device whose conversation this is. NULL for wakes.
     device_id TEXT,
     trigger_id TEXT,

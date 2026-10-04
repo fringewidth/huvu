@@ -2,16 +2,17 @@
 
 Every frontend request carries its device's bearer token (or `?token=` on
 streams, for clients that can't set headers). The token names the device,
-and the device names its user, or none for a household device.
+and the device names its user, or its group for a shared device.
 
-Hermes calls /mcp from one of several profiles: one per user, plus the
-default profile for the household. Each profile sends its own token, so the
-token says whose Hermes is calling. That holds even for Hermes's own cron
-jobs, whose sessions the backend never sees.
+Hermes calls /mcp from one of several profiles: one per user, and one per
+group for its shared devices (the default group's is Hermes's default
+profile). Each profile sends its own token, so the token says whose Hermes
+is calling. That holds even for Hermes's own cron jobs, whose sessions the
+backend never sees.
 
 With `auth.mode = "off"`, a request without a valid token comes from the
 development device (see accounts.py), and an MCP call without one comes
-from the household. That is only for development on localhost.
+from the default group. That is only for development on localhost.
 """
 
 from __future__ import annotations
@@ -24,9 +25,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .accounts import Accounts, Device
 from .config import Config
 
-# The user whose Hermes profile sent the MCP request being handled. None is
-# the household. Set by McpAuth for the MCP server's handlers.
-mcp_user: ContextVar[str | None] = ContextVar("mcp_user", default=None)
+# Whose Hermes profile sent the MCP request being handled: (user, group),
+# one of them set. Set by McpAuth for the MCP server's handlers.
+mcp_profile: ContextVar[tuple[str | None, str | None]] = ContextVar("mcp_profile", default=(None, None))
 
 
 def bearer(request: Request) -> str:
@@ -50,7 +51,7 @@ def device_auth(config: Config, accounts: Accounts):
 
 def phone_auth(config: Config, accounts: Accounts):
     """Like device_auth, for what only a phone may do: answer approvals,
-    claim triggers, pair household devices."""
+    answer "is it you?", pair shared devices."""
     device_check = device_auth(config, accounts)
 
     def check(request: Request) -> Device:
@@ -62,16 +63,16 @@ def phone_auth(config: Config, accounts: Accounts):
     return check
 
 
-def mcp_caller(config: Config, accounts: Accounts, token: str) -> tuple[bool, str | None]:
-    """Whose Hermes profile sent this token: (allowed, user)."""
-    known, user = accounts.mcp_caller(token) if token else (False, None)
+def mcp_caller(config: Config, accounts: Accounts, token: str) -> tuple[bool, str | None, str | None]:
+    """Whose Hermes profile sent this token: (allowed, user, group)."""
+    known, user, group = accounts.mcp_caller(token) if token else (False, None, None)
     if not known and config.auth_mode == "off":
-        known, user = True, None
-    return known, user
+        known, user, group = True, None, accounts.default_group()
+    return known, user, group
 
 
 class McpAuth:
-    """Wraps the MCP app: checks the profile's token and sets `mcp_user`."""
+    """Wraps the MCP app: checks the profile's token and sets `mcp_profile`."""
 
     def __init__(self, app: ASGIApp, config: Config, accounts: Accounts) -> None:
         self._app = app
@@ -84,13 +85,13 @@ class McpAuth:
             return
         headers = dict(scope.get("headers") or [])
         given = headers.get(b"authorization", b"").decode().removeprefix("Bearer ").strip()
-        known, user = mcp_caller(self._config, self._accounts, given)
+        known, user, group = mcp_caller(self._config, self._accounts, given)
         if not known:
             await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
             await send({"type": "http.response.body", "body": b"unauthorized"})
             return
-        reset = mcp_user.set(user)
+        reset = mcp_profile.set((user, group))
         try:
             await self._app(scope, receive, send)
         finally:
-            mcp_user.reset(reset)
+            mcp_profile.reset(reset)

@@ -24,15 +24,24 @@ Python, managed with uv. asyncio for the long-lived connections (Pulsar, the HA 
 
 Python over TypeScript or Go, because the ML pieces (face embeddings, Whisper, vision models) ship as Python first, Hermes is Python, and the tested Tuya code is Python. One language for the backend and any Hermes plugins.
 
-## Users and devices
+## Users, groups and devices
 
-huvu serves one family. Each member is a user with a username and a password, added from the command line (`uv run huvu user add`); nobody signs up. Each install of the app is a device (`accounts.py`).
+Each person is a user with a username and a password, added from the command line (`uv run huvu user add`); nobody signs up. Each install of the app is a device (`accounts.py`).
 
 1. **A personal device** (a phone, a browser) belongs to the user who logged in on it.
-1. **A household device** (the Fire TV, the speaker hardware still to be built) belongs to nobody. It can't type a password, so it pairs: it shows a code, and a user confirms it from their phone.
+1. **A shared device** (the Fire TV, the speaker hardware still to be built) belongs to a group. It can't type a password, so it pairs: it shows a code, and a member confirms it from their phone, choosing the group if they're in more than one.
 1. **Every device has its own token**, stored hashed, so a lost phone is logged out alone.
-1. **Phones are taken to be on their user's person.** Approvals, trigger claims and notifications go to phones.
-1. **Every device has one conversation**, and each conversation runs on one Hermes session. So a session belongs to a user and a device, or to no user on a household device. A turn never reaches another device.
+1. **Phones are taken to be on their user's person.** Approvals, "is it you?" questions and notifications go to phones.
+1. **Every device has one conversation**, and each conversation runs on one Hermes session. So a session belongs to a user and a device, or to a group on a shared device. A turn never reaches another device.
+
+### Groups
+
+A group is a set of people who share devices and trust each other. The household is the default group, `home`, which always exists. A second house would be another. A user is in a group as a member or a guest:
+
+1. **Members** trust each other implicitly. They see the group's events, answer its approvals, and pair and unpair its shared devices. Any member can add a shared device to the group; a shared device never pairs to a user.
+1. **Guests** (a babysitter, a visitor) can use the group's shared devices and be recognized at them. They trust nothing: they see only their own events, and they never approve anything. Every approval a guest causes, even with a tap on their own phone, goes to the group's members.
+
+A user can be in several groups, or none. The CLI puts a new user in `home` as a member unless told otherwise (`--group`, `--guest`, `--no-group`), and `huvu group add`, `join`, `leave` and `list` manage the rest.
 
 ### Who is at a shared device
 
@@ -41,16 +50,16 @@ A shared device is often in front of one person. When someone asks who it is (th
 The Hermes session doesn't change profile, since Hermes can't switch a session's profile and a new session would throw away its prompt cache. What changes is everything the backend controls:
 
 1. Events from the device are tagged with the person, back to the moment they were asked. Their dream reads them in their own profile.
-1. The session's tool calls act for them: a trigger is theirs with no number to claim, and approvals and notifications go to their phone. A tap on the device still goes through the policy.
+1. The session's tool calls act for them: a trigger is theirs at once, and approvals and notifications go to their phone. A tap on the device still goes through the policy.
 1. The model gets a note on its next ask, appended to the message, so the cache holds.
 
 It ends when someone else is confirmed, when it's released from the device, the person's phone or the model, or after 10 minutes with no turn.
 
 ### Hermes profiles
 
-Each user has their own Hermes profile, named after their username, and the household uses the default profile. A profile has its own memory, skills, sessions and cron jobs, so one person's preferences never reach another's answers. One Hermes gateway serves every profile: a profile's routes live under `/p/<profile>/`, each with its own API key. Household knowledge that everyone shares lives in the backend, where every profile reads it through MCP.
+Each user has their own Hermes profile, named after their username. Each group's shared devices run in the group's profile: the default group uses Hermes's default profile, and any other group a profile named after it. Users and groups share one namespace for that reason. A profile has its own memory, skills, sessions and cron jobs, so one person's preferences never reach another's answers. One Hermes gateway serves every profile: a profile's routes live under `/p/<profile>/`, each with its own API key. Knowledge everyone shares lives in the backend, where every profile reads it through MCP.
 
-Each profile sends huvu's MCP server its own token, so the backend knows whose Hermes is calling, even for a cron job whose session the backend never saw. A user's profile key and token live in the database. The household's come from the environment (`HERMES_API_KEY`, `HUVU_MCP_TOKEN`).
+Each profile sends huvu's MCP server its own token, so the backend knows whose Hermes is calling, even for a cron job whose session the backend never saw. Users' and groups' profile keys and tokens live in the database. The default group's come from the environment (`HERMES_API_KEY`, `HUVU_MCP_TOKEN`).
 
 ## Sources
 
@@ -78,7 +87,7 @@ class Source:
 1. `run` is the long-lived part: a Pulsar consumer, a websocket, a polling loop. It reports through `self.ctx`: `ctx.emit(type, summary, ...)` for events and `ctx.update(value, reading, ...)` for values. If it raises, the kernel logs a `source_error` event and starts it again with a backoff (5 s, doubling to 5 min).
 1. `read` answers `on_demand` values. Pushed values are answered from what the source pushed.
 1. `search` finds the source's things by name, area or alias, such as HA entities.
-1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it. Both get the `Caller`, whose `user` says whom the call is for (None for the household), so a source with per-person data, such as a calendar, answers with that person's.
+1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it. Both get the `Caller`, whose `user` says whom the call is for and `group` which group's shared device it came through, so a source with per-person data, such as a calendar, answers with that person's.
 1. `watch` asks the source to push changes for one value. A source that pushes everything anyway (HA) can leave it alone.
 1. `fetch` returns the binary content behind a ref (`tuya:album/8f2c`), such as a decrypted snapshot. The frontend gets it through a media URL.
 1. `feeds` lists live feeds the source can stream, for the frontend's list.
@@ -130,12 +139,13 @@ The core keeps a thin envelope for every event. The full detail stays in the sou
 | `summary` | One line a model can read |
 | `refs` | Source-scoped refs to the detail (`tuya:album/8f2c`) |
 | `labels` | Provenance labels |
-| `user` | Whose event it is. Empty is the household's, which every user sees; one with a user shows only to that user |
+| `user` | Whose event it is. One with a user shows only to that user |
+| `group` | Without a user, the group whose members see it. With neither, every member of any group sees it (a doorbell press); guests don't |
 | `device` | The device whose conversation it came from, if any |
 
 Cross-source triggers, the daily digest and cross-source search all need one stream, so the envelope lives in the core. SQLite with an FTS5 index over `summary`.
 
-The log scopes itself per user, so each user's dream reads their own events and the household's: actions, approvals, trigger runs and wake replies carry the user they were for. Every finished chat turn is logged too (`conversation.turn`, the ask and the start of the answer), as its user's. That is how a dream learns from what someone said at the TV, whose Hermes session lives in the household's profile.
+The log scopes itself, so each user's dream reads their own events, their member groups' and the house's: actions, approvals, trigger runs and wake replies carry the user they were for, and a shared device's turns with nobody recognized carry its group. Every finished chat turn is logged too (`conversation.turn`, the ask and the start of the answer), as its user's. That is how a dream learns from what someone said at the TV, whose Hermes session lives in the group's profile.
 
 Digests roll the log up by hour and by day. A digest is data, so the backend builds it and exposes it as the `events_digest` tool. Hermes decides when to read it.
 
@@ -205,16 +215,18 @@ Unknown value names are rejected with an error that names the nearest real one, 
 1. An input older than its source's `max_age` counts as unknown, and unknown counts as false.
 1. A fire wakes Hermes with the note, the matched values and the `include` values. Every fire is a `trigger.run` event, and every failure a `trigger.error` event.
 
-### Users and claims
+### Whose a trigger is
 
 Every trigger belongs to a user. Its wakes run in that user's Hermes profile, its scripts act as that user, and its approvals and notifications go to that user's phones. `triggers_list` and `triggers_remove` see only the calling profile's triggers.
 
-A trigger set up from a household device has no user yet, so it waits, unclaimed, and doesn't fire:
+A trigger set up from a shared device nobody is recognized at has no user yet, so it waits, unconfirmed, and doesn't fire:
 
-1. The tool result gives the model a two-digit number, and the device shows or says it.
-1. Every user's phone gets the trigger's note and three numbers, one of them right.
-1. Whoever taps the right number owns the trigger, and it goes live.
-1. A wrong tap drops it. Nobody claiming it within 10 minutes expires it.
+1. Everyone in the device's group, members and guests, gets "is this you on the living room TV?" on their phone, with the trigger's note.
+1. The tool result tells the model the trigger goes live only once someone taps yes, so it tells the person to check their phone.
+1. The first yes recognizes that person at the device (see [Who is at a shared device](#who-is-at-a-shared-device)), and the device's waiting triggers become theirs and go live. The other questions are withdrawn.
+1. If everyone says no, or nobody answers within 5 minutes, the waiting triggers are dropped.
+
+A trigger with nobody to ask (a group profile's cron job, which has no device) is refused.
 
 ### Scripts
 
@@ -228,10 +240,10 @@ Every write goes through one policy check in the backend, whoever asks: Hermes, 
 
 1. Each action has an autonomy level: silent, notify, or ask first.
 1. Ask first creates a pending approval with a deadline. It lives in the `huvu` source.
-1. An approval belongs to the user it was asked for: the chat's user, or the trigger's. It goes to that user's phones, and only they can answer it. One asked from a household device goes to every user's phones, and the first answer wins.
+1. An approval belongs to the user it was asked for: the chat's user, or the trigger's. It goes to that user's phones, and only they can answer it. One asked from a shared device nobody is recognized at, or caused by a guest, goes to the group's members, and the first answer wins.
 1. Every action, allowed or refused, goes into the event log with who asked and why.
 1. An action a driver marks `requires_human` always asks, and config can't lower it. Only a user's answer from their phone (`POST /api/approvals/{id}`) can approve it, so no model can approve its own request.
-1. A user's tap on a personal device (`POST /api/actions/{source}/{action}`) runs at once: the tap is the approval. A tap on a household device goes through the policy like any other request, so the TV can't open the door.
+1. A member's tap on a personal device (`POST /api/actions/{source}/{action}`) runs at once: the tap is the approval. A tap on a shared device, or by a guest, goes through the policy like any other request, so neither the TV nor the babysitter's phone can open the door.
 1. Config (`[policy]` in `huvu.toml`) can change any other action's level.
 1. Unlocking the front door always needs a human tap. A model or a face match alone never opens it.
 
@@ -332,8 +344,8 @@ Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFI
 1. **Trigger evaluation at scale.** Untested with fast inputs like location and glasses frames. Those sources filter before they emit.
 1. **The plugin against a live Hermes.** The hooks were tested the way Hermes's source calls them, not inside a running Hermes.
 1. **Profiles against a live Hermes.** The `/p/<profile>/` routes and per-profile keys come from Hermes's source and docs. No backend call has gone through them yet.
-1. **Native push.** Approvals, claims and notifications reach a phone only while its app holds the push stream open. FCM and APNs need a token registry and a sender.
-1. **Groups (low priority).** "No user" means the household today. Groups would generalize that: the household is one group, and a device or event belongs to a group. Members get implicit trust: they see the group's events and answer its approvals. This only matters once trust differs between people (a guest or babysitter who can't approve an unlock, kids, a second house). Open: is trust per group or per role inside it? The change goes through `accounts.phones`, `policy.pending_for`, `events._visible` and the household's Hermes profile.
+1. **Native push.** Approvals, "is it you?" questions and notifications reach a phone only while its app holds the push stream open. FCM and APNs need a token registry and a sender.
+1. **Finer roles.** Groups have two roles, member and guest. Kids who may approve the porch light but not the front door would need a third, or per-action rules.
 1. **Turns across a restart.** A turn running when the backend stops ends as failed. Hermes may still finish it, unseen.
 
 ## Build order

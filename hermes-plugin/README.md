@@ -4,14 +4,14 @@ The Hermes side of the boundary with huvu's backend. What it does and why is in 
 
 ## Profiles
 
-huvu runs one Hermes profile per user, named after their huvu username, plus Hermes's default profile for household devices (the TV, speakers). Each profile keeps its own memory, skills and cron jobs. One Hermes gateway serves them all at `/p/<profile>/`. See Hermes's docs on profiles and multi-profile gateways.
+huvu runs one Hermes profile per user, named after their huvu username, and one per group for its shared devices (the TV, speakers). The default group, `home`, uses Hermes's default profile; any other group gets a profile named after it (`uv run huvu group add <name>` prints its MCP token). Each profile keeps its own memory, skills and cron jobs. One Hermes gateway serves them all at `/p/<profile>/`. See Hermes's docs on profiles and multi-profile gateways.
 
 Every profile needs the setup below. Two values differ per profile:
 
-| | Default profile (household) | A user's profile |
+| | Default profile (the `home` group) | A user's or another group's profile |
 |---|---|---|
-| `API_SERVER_KEY` in the profile's `.env` | The backend's `HERMES_API_KEY` | Typed in at `uv run huvu user add <name>` |
-| `HUVU_MCP_TOKEN` in the profile's `.env` | The backend's `HUVU_MCP_TOKEN` | Printed once by `uv run huvu user add <name>` |
+| `API_SERVER_KEY` in the profile's `.env` | The backend's `HERMES_API_KEY` | Typed in at `uv run huvu user add <name>` or `group add <name>` |
+| `HUVU_MCP_TOKEN` in the profile's `.env` | The backend's `HUVU_MCP_TOKEN` | Printed once by the same command |
 
 The backend tells profiles apart by the MCP token, so never give two profiles the same one.
 

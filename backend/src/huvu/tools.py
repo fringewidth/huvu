@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from .accounts import AuthError
+from .accounts import AuthError, Device
 from .events import day_bounds
 from .names import UnknownName
 from .registry import suggest
@@ -164,7 +164,7 @@ class ToolBox:
                 "Registers a trigger: a condition over source data that wakes you when it comes true. Write `note` first: why it exists and what to do. "
                 "`when` is a flat list that must all hold. `repeat` is no, yes or daily. `include` lists values to bring along in the wake. "
                 "`expires` takes 2h, tomorrow 09:00 or ISO; a repeat=no trigger without one expires in 7 days. "
-                "On a household device the trigger waits until someone claims it: the result has a `claim` number, which you tell them to tap on their phone.",
+                "On a shared device with nobody recognized, the trigger waits until someone confirms on their phone that it was them; the result says so.",
                 TRIGGER_SCHEMA,
                 self._triggers_register,
                 writes=True,
@@ -174,7 +174,7 @@ class ToolBox:
             Tool("triggers_remove", "Removes a trigger.", _schema({"id": {"type": "string"}}, ["id"]), self._triggers_remove, writes=True),
             Tool(
                 "people_identify",
-                "Asks a family member, on their phone, whether they're the one at this shared device. "
+                "Asks someone who uses this shared device, on their phone, whether they're the one at it. "
                 "Use it when someone says who they are, or you think you know. `user` is their username or name. "
                 "Once they tap yes, you act for them: their triggers, approvals and notifications.",
                 _schema({"user": {"type": "string"}}, ["user"]),
@@ -224,12 +224,12 @@ class ToolBox:
             since=_ago(args["since"], now) if args.get("since") else None,
             until=_ago(args["until"], now) if args.get("until") else None,
             limit=int(args.get("limit") or 20),
-            viewer=caller.user,
+            viewer=self._kernel.accounts.scope(caller.user, caller.group),
         )
         return Result(data=events, labels=merge_labels(["house"], *(e.labels for e in events)))
 
     async def _events_get(self, args: dict[str, Any], caller: Caller) -> Result:
-        event = self._kernel.events.get(args["id"], viewer=caller.user)
+        event = self._kernel.events.get(args["id"], viewer=self._kernel.accounts.scope(caller.user, caller.group))
         if event is None:
             raise ToolError(f"no event {args['id']!r}")
         return Result(data=event, labels=event.labels)
@@ -239,7 +239,7 @@ class ToolBox:
         if args.get("hour") is not None:
             start = start + timedelta(hours=int(args["hour"]))
             end = start + timedelta(hours=1)
-        return Result(data=self._kernel.events.digest(start, end, viewer=caller.user), labels=["house"])
+        return Result(data=self._kernel.events.digest(start, end, viewer=self._kernel.accounts.scope(caller.user, caller.group)), labels=["house"])
 
     async def _sources_list(self, args: dict[str, Any], caller: Caller) -> Result:
         data = [
@@ -257,37 +257,43 @@ class ToolBox:
 
     async def _triggers_register(self, args: dict[str, Any], caller: Caller) -> Result:
         trigger = await self._kernel.triggers.register(TriggerSpec.model_validate(args), caller)
-        return Result(data=trigger.public(), labels=["house"])
+        data = trigger.public()
+        if trigger.status == "unconfirmed":
+            data["note_for_you"] = (
+                "Not live yet. Everyone who uses this device was asked on their phone whether it's them; it goes live, as theirs, "
+                "only once one of them taps yes, and is dropped if nobody does within 5 minutes. Tell the person to check their phone and tap yes."
+            )
+        return Result(data=data, labels=["house"])
 
     async def _triggers_test(self, args: dict[str, Any], caller: Caller) -> Result:
         return Result(data=await self._kernel.triggers.test(TriggerSpec.model_validate(args), caller.user), labels=["house"])
 
     async def _triggers_list(self, args: dict[str, Any], caller: Caller) -> Result:
-        return Result(data=[t.public() for t in self._kernel.triggers.list(caller.user)], labels=["house"])
+        return Result(data=[t.public() for t in self._kernel.triggers.list(caller)], labels=["house"])
 
     async def _triggers_remove(self, args: dict[str, Any], caller: Caller) -> Result:
-        trigger = await self._kernel.triggers.remove(args["id"], caller.user)
+        trigger = await self._kernel.triggers.remove(args["id"], caller)
         return Result(data=trigger.public(), labels=["house"])
 
     async def _people_identify(self, args: dict[str, Any], caller: Caller) -> Result:
         device = self._shared_device(caller)
         wanted = str(args["user"]).strip().lower()
-        users = self._kernel.accounts.users()
+        users = self._kernel.accounts.people(device.group or self._kernel.accounts.default_group())
         user = next((u for u in users if wanted in (u.id, u.name.lower())), None)
         if user is None:
-            raise ToolError(f"no family member {args['user']!r}; they are: {', '.join(f'{u.name} ({u.id})' for u in users)}")
-        check = await self._kernel.attendance.ask(device, user.id, "model")
+            raise ToolError(f"nobody called {args['user']!r} uses this device; the people who do: {', '.join(f'{u.name} ({u.id})' for u in users)}")
+        check = await self._kernel.attendance.ask(device.id, user.id, "model")
         return Result(data={"asked": user.name, "status": check.status, "say": "Tell them to check their phone and tap yes."}, labels=["owner"])
 
     async def _people_release(self, args: dict[str, Any], caller: Caller) -> Result:
-        ended = await self._kernel.attendance.release(self._shared_device(caller), None, "the model was told they left")
+        ended = await self._kernel.attendance.release(self._shared_device(caller).id, None, "the model was told they left")
         return Result(data={"released": ended.user if ended else None}, labels=["owner"])
 
-    def _shared_device(self, caller: Caller) -> str:
-        device = self._kernel.accounts.device(caller.device) if caller.device else None
+    def _shared_device(self, caller: Caller) -> Device:
+        device = self._kernel.accounts.device(caller.device)
         if device is None or device.user is not None:
             raise ToolError("this only works in a conversation on a shared device, such as the TV")
-        return device.id
+        return device
 
     async def _ui_choices(self, args: dict[str, Any], caller: Caller) -> Result:
         options = [str(o) for o in args["options"]]
@@ -305,7 +311,7 @@ class ToolBox:
         return await self._show(caller, "image", {"src": url, "caption": args.get("caption", "")}, ["house"])
 
     async def _show(self, caller: Caller, kind: str, args: dict[str, Any], labels: list[Label]) -> Result:
-        shown = await self._kernel.conversations.show(caller.session, caller.user, kind, args)
+        shown = await self._kernel.conversations.show(caller, kind, args)
         if not shown:
             raise ToolError("there is no conversation on screen to show this in; send it with huvu_notify instead")
         return Result(data={"shown": True}, labels=labels)
