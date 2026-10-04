@@ -1,6 +1,6 @@
 name: huvu
 version: "0.0.0"
-description: "Connects Hermes sessions to the huvu backend: tells huvu which session made each tool call, and adds the situation block at the start of a session."
+description: "Connects Hermes sessions to the huvu backend: tells huvu which session made each tool call, adds the situation block at the start of a session, and adds huvu's guide to every session's system prompt."
 author: "huvu"
 provides_hooks:
   - pre_tool_call

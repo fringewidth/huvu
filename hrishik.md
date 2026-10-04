@@ -1,3 +1,4 @@
 ```sh
-./add-user.sh hrishik '<password>' Hrishik
+./setup.sh
+./setup.sh hrishik '<password>' Hrishik
 ```

@@ -17,7 +17,7 @@ The backend tells profiles apart by the MCP token, so never give two profiles th
 
 ## Setup, for each profile
 
-For a user, `./add-user.sh <username> <password> [display name]` at the repo root does all of this and adds the huvu user too.
+`./setup.sh` at the repo root does all of this for the default profile, and `./setup.sh <username> <password> [display name]` for a user, adding the huvu user too. It's safe to run again: it keeps existing keys and re-applies the settings. The default profile's key and token go in `backend/.env` (gitignored), which the backend reads.
 
 1. Create the profile, for a user: `hermes profile create <name>`. Leave out `--clone`, which copies the current profile's memory into the new one. The profile's home is `~/.hermes/profiles/<name>/`. The default profile already exists, at `~/.hermes/`.
 1. Link the plugin into the profile: `ln -s "$PWD/huvu" <profile home>/plugins/huvu`.
@@ -36,7 +36,12 @@ For a user, `./add-user.sh <username> <password> [display name]` at the repo roo
    auxiliary:
      background_review:
        enabled: false
+
+   skills:
+     external_dirs: ["<repo>/hermes-skills"]
    ```
+
+   At every start, huvu writes a skill per source into its data folder and links each one into the repo's `hermes-skills/` (gitignored), making the folder if it's missing. Point every profile at that folder once; huvu keeps its contents right. Anything else you put there is left alone.
 
 1. Put the plugin's settings in the profile's `.env`:
 

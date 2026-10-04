@@ -163,7 +163,13 @@ class ActionSpec(Strict):
 
 class SourceSpec(Strict):
     name: str
+    # One line: what the source covers. It is the source's skill's
+    # description, which every Hermes session sees in its skill index.
     description: str
+    # The hand-written part of the source's skill (Markdown): when to use it
+    # and the gotchas its schemas can't say. huvu adds the reference part
+    # (actions, queries, values, events) itself. See skills.py.
+    guide: str = ""
     values: list[ValueSpec] = Field(default_factory=list)
     events: list[EventSpec] = Field(default_factory=list)
     queries: list[QuerySpec] = Field(default_factory=list)
@@ -226,12 +232,15 @@ class Reading(Strict):
 
 
 class Match(Strict):
-    """One result of a state search: a value key and what to call it."""
+    """One result of a state search: a value key and what to call it, and
+    the actions that work the thing, so the model finds how to work a
+    device where it finds the device."""
 
     value: str
     name: str
     area: str | None = None
     now: Any = None
+    actions: list[str] = Field(default_factory=list)
 
 
 class Result(Strict):

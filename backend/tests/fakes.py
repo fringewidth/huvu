@@ -47,6 +47,7 @@ class HomeSource(Source):
         return SourceSpec(
             name="home",
             description="A fake house.",
+            guide="Search for a light before turning it on.",
             values=[
                 ValueSpec(name="eta_min", description="Minutes to home by car", type="number", max_age=timedelta(minutes=30)),
                 ValueSpec(name="light", description="State of a light", type="string", params={"entity_id": "string"}),
@@ -66,7 +67,7 @@ class HomeSource(Source):
 
     async def search(self, text: str) -> list[Match]:
         lights = {"light.porch": "Porch Light", "light.light_3": "Light 3"}
-        return [Match(value=f"home.light[{k}]", name=v) for k, v in lights.items() if text.lower() in v.lower()]
+        return [Match(value=f"home.light[{k}]", name=v, actions=["home_turn_on"]) for k, v in lights.items() if text.lower() in v.lower()]
 
     async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         if name != "snapshot":

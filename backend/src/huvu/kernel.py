@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
+from . import skills
 from .accounts import Accounts
 from .attendance import Attendance
 from .builtin.clock import ClockSource
@@ -97,6 +98,9 @@ class Kernel:
         # Turns that were running when the kernel last stopped never ended.
         self.db.execute("UPDATE turns SET running = 0, ending = 'failed' WHERE running = 1")
         await self.registry.start()
+        skills.write_all(self.registry.specs(), self.config.skills_folder)
+        if self.config.hermes_skills_dir is not None:
+            skills.link_all(self.registry.specs(), self.config.skills_folder, self.config.hermes_skills_dir)
         await self.triggers.load()
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
         await self.kernel_event("started", f"kernel started with sources {', '.join(self.registry.names)}")

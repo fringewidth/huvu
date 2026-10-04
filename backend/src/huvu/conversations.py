@@ -383,10 +383,12 @@ class ConversationHub:
         if hidden:
             return
         adapter = ADAPTERS.get(bare)
+        # `act` runs a source action by name: the stage shows the action.
+        shown = str(args.get("name") or bare) if huvu and bare == "act" else bare
         part = {
             "kind": "tool",
             "id": f"{live.turn.id}-p{len(live.turn.parts)}",
-            "toolName": bare,
+            "toolName": shown,
             "args": adapter.args(args) if adapter else {},
             "result": None,
         }

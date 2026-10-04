@@ -144,7 +144,11 @@ async def test_hermes_side_over_mcp(server):
             init = await session.initialize()
             assert "state_search" in (init.instructions or "")
             tools = {t.name for t in (await session.list_tools()).tools}
-            assert {"state_get", "triggers_register", "home_turn_on", "ui_choices"} <= tools
+            assert {"act", "query", "state_get", "triggers_register", "ui_choices"} <= tools
+            # Source actions and queries are reached through act and query.
+            assert not any(t.startswith("home_") for t in tools)
+            done = await session.call_tool("act", {"name": "home_turn_on", "args": {"entity_id": "light.porch"}})
+            assert json.loads(done.content[0].text) == {"done": "turn_on"}
             result = await session.call_tool("state_get", {"values": ["clock.time"], "_session": "hs1"})
             body = json.loads(result.content[0].text)
             assert "just now" in body["clock.time"]["at"]

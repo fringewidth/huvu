@@ -104,7 +104,7 @@ def _manage(config, args) -> None:
                 print(token)
             else:
                 print(f"Added {args.id}. Put HUVU_MCP_TOKEN={token} in their Hermes profile's .env (shown once).")
-                print("The rest of the profile's setup is in hermes-plugin/README.md, or use add-user.sh.")
+                print("The rest of the profile's setup is in hermes-plugin/README.md, or use setup.sh at the repo root.")
         case ("user", "passwd"):
             accounts.set_password(args.id, _new_password())
         case ("user", "hermes-key"):

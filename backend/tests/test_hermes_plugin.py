@@ -28,3 +28,24 @@ def test_the_situation_block_comes_once(monkeypatch):
     monkeypatch.setattr(plugin, "_situation", lambda: "Now: Sat 00:10")
     assert plugin._on_pre_llm_call(session_id="s1", is_first_turn=True) == {"context": "[huvu situation]\nNow: Sat 00:10"}
     assert plugin._on_pre_llm_call(session_id="s1", is_first_turn=False) is None
+
+
+def test_the_guide_goes_into_every_session_prompt():
+    plugin = load()
+
+    class Ctx:
+        def __init__(self) -> None:
+            self.sections: dict[str, str] = {}
+            self.hooks: list[str] = []
+
+        def register_hook(self, name, fn) -> None:
+            self.hooks.append(name)
+
+        def register_system_prompt_section(self, id, content) -> None:
+            self.sections[id] = content
+
+    ctx = Ctx()
+    plugin.register(ctx)
+    assert ctx.hooks == ["pre_tool_call", "pre_llm_call"]
+    assert "huvu-<source>" in ctx.sections["huvu"] and "huvu_notify" in ctx.sections["huvu"]
+    assert len(ctx.sections["huvu"]) <= 4000

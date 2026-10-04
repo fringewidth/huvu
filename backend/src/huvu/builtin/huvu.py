@@ -41,6 +41,12 @@ class HuvuSource(Source):
         return SourceSpec(
             name="huvu",
             description="State no device owns: house mode, aliases, approvals, notifications.",
+            guide=(
+                "Aliases map what people call a thing to its value key, and state_search puts them first: when someone names a thing "
+                "their own way and you find it, set an alias. huvu_notify reaches a person's phone whenever you want, and is how you "
+                "tell them about anything you changed on your own. The house mode (normal, away, guests, sleeping) works in trigger "
+                "conditions like any value."
+            ),
             values=[
                 ValueSpec(name="mode", description=f"House mode: {', '.join(MODES)}", type="string", labels=["owner"]),
                 ValueSpec(

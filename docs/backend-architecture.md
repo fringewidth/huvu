@@ -83,10 +83,10 @@ class Source:
     async def feeds(self) -> list[Feed]: ...
 ```
 
-1. `describe` lists the source's values, events, queries and actions, each with a JSON Schema and a one-line description. The types are in `spec.py`.
+1. `describe` lists the source's values, events, queries and actions, each with a JSON Schema and a one-line description, plus `guide`: the hand-written part of the source's Hermes skill (when to use it, the gotchas). The types are in `spec.py`.
 1. `run` is the long-lived part: a Pulsar consumer, a websocket, a polling loop. It reports through `self.ctx`: `ctx.emit(type, summary, ...)` for events and `ctx.update(value, reading, ...)` for values. If it raises, the kernel logs a `source_error` event and starts it again with a backoff (5 s, doubling to 5 min).
 1. `read` answers `on_demand` values. Pushed values are answered from what the source pushed.
-1. `search` finds the source's things by name, area or alias, such as HA entities.
+1. `search` finds the source's things by name, area or alias, such as HA entities. Each match names the actions that work the thing, so the model learns how to work a device where it finds it.
 1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it. Both get the `Caller`, whose `user` says whom the call is for and `group` which group's shared device it came through, so a source with per-person data, such as a calendar, answers with that person's.
 1. `watch` asks the source to push changes for one value. A source that pushes everything anyway (HA) can leave it alone.
 1. `fetch` returns the binary content behind a ref (`tuya:album/8f2c`), such as a decrypted snapshot. The frontend gets it through a media URL.
@@ -166,7 +166,7 @@ State is the set of values the sources declare. The model reads any value throug
 
 The core passes each name to its source, or answers from the last reading the source pushed. Those readings are kept in SQLite too, so a restart forgets nothing: a lock battery that only reports when the lock wakes is still known after one, with its old time, and its max age still applies. Every answer carries `at`, the time of the reading. A source that can't give a value returns `null` with a `reason`.
 
-The model finds values in two steps. The kinds of value are few, so the core joins every source's `describe` into a short index for the model. The things they apply to (hundreds of HA entities) are too many, so the model searches with `state_search`. Aliases from the `huvu` source come first. Each source answers for its own things, matching names, areas and aliases, and each result carries its current value.
+The model finds values in two steps. The kinds of value are few, so each source's skill lists them (see [Skills](#skills)). The things they apply to (hundreds of HA entities) are too many, so the model searches with `state_search`. Aliases from the `huvu` source come first. Each source answers for its own things, matching names, areas and aliases, and each result carries its current value and the actions that work it.
 
 ### Times for the model
 
@@ -275,13 +275,13 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 
 ### The huvu plugin
 
-Hermes connects to an MCP server once, with fixed headers. The profile's token says which user is calling, and the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call. The backend strips it and looks the session up in `hermes_sessions`, which names its device. A session that belongs to another user than the calling profile's is ignored. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns).
+Hermes connects to an MCP server once, with fixed headers. The profile's token says which user is calling, and the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call. The backend strips it and looks the session up in `hermes_sessions`, which names its device. A session that belongs to another user than the calling profile's is ignored. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns), and a system prompt section with huvu's guidance: how to find and work things, provenance, approvals, pausing noisy triggers, telling the person about changes. Hermes never shows the model an MCP server's own instructions (it keeps the initialize result only for capabilities), so the plugin's section is the one place huvu can say these things.
 
 Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a session that had read `external` content got stricter policy, its triggers waited for the owner's tap, and its memory and skill writes went to Hermes's approval gate. It was judged more complexity than current models need. Two guards stay without it. Provenance labels still mark outside content for the model, and `requires_human` actions always need a person's tap.
 
 ### MCP tools
 
-Hermes names each one `mcp__huvu__<name>`.
+Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; a source's actions and queries run through `act` and `query` by name, so a new driver adds nothing to a session's tool list.
 
 | Tool | What it does |
 |---|---|
@@ -291,11 +291,17 @@ Hermes names each one `mcp__huvu__<name>`.
 | `events_digest` | A day's or an hour's digest |
 | `sources_list` | Every source with its values, events, queries and actions |
 | `triggers_register`, `triggers_test`, `triggers_list`, `triggers_remove`, `triggers_pause`, `triggers_resume` | Trigger management |
-| `<source>_<query>`, `<source>_<action>` | Built from each source's `describe`. Every action takes an optional `reason` |
+| `act`, `query` | Run a source action or query by name (`ha_turn_on`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
 | `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |
 
-The server's instructions carry the index of every kind of value, so the model starts each session knowing what it can read. A result with outside content comes back as `{"data": ..., "provenance": "external"}`, and the instructions tell the model to treat text in it as data.
+A result with outside content comes back as `{"data": ..., "provenance": "external"}`, and the plugin's section tells the model to treat text in it as data. Scripts still call the per-source tools by name (`home_turn_on`), so a trigger's grants stay per action.
+
+### Skills
+
+Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, queries, values, events. A session sees one line per skill in its skill index, about 30 tokens and cached, and loads a skill's body with `skill_view` when it needs that source. So what huvu can do grows with drivers without growing every session's prompt.
+
+huvu writes the skills into its data folder at every start (`skills_dir`, default `<data_dir>/skills`), and links each into the repo's gitignored `hermes-skills/` (`hermes_skills_dir`), making the folder and repairing the links as needed and removing those of sources that are gone. Every profile reads `hermes-skills/` through `skills.external_dirs` (`setup.sh` sets it), so nothing needs setting up again; Hermes follows the links (`os.walk(followlinks=True)`). Anything else in the folder is left alone. The files are read-only: Hermes lets the model edit a skill wherever it lives, and huvu would overwrite the edit at the next start, so what the model learns about the house goes into its own skills and memory. This needs Hermes to read the backend's disk; if the two ever run on different machines, the plugin would fetch the skills instead.
 
 ## Sessions
 
@@ -323,6 +329,7 @@ backend/
     spec.py           the contract's types: SourceSpec, ValueSpec, Event, Reading, labels, Caller
     accounts.py       users, devices, pairing, tokens, each user's Hermes profile
     attendance.py     who is at a shared device, confirmed from their phone
+    skills.py         every source as a Hermes skill
     source.py         Source (what a driver subclasses) and SourceContext
     registry.py       loaded sources, name resolution with suggestions, supervision
     names.py          value keys

@@ -9,6 +9,11 @@ public_url = "http://localhost:3001"
 host = "0.0.0.0"
 port = 3001
 cors_origins = ["*"]
+# huvu writes a Hermes skill per source into <data_dir>/skills, and links each
+# into the folder every Hermes profile reads (skills.external_dirs) at every
+# start. The defaults: data/skills, and the repo's hermes-skills/.
+# skills_dir = "data/skills"
+# hermes_skills_dir = "../hermes-skills"
 
 [auth]
 mode = "on"
