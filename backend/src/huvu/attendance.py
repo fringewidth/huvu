@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 AskedBy = Literal["device", "model", "voice", "trigger"]
 # withdrawn: someone else said yes first.
-Status = Literal["pending", "confirmed", "denied", "expired", "withdrawn", "ended"]
+Status = Literal["pending", "answering", "confirmed", "denied", "expired", "withdrawn", "ended"]
 
 # How long a phone has to answer "is it you?".
 ASK_TTL = timedelta(minutes=5)
@@ -78,8 +78,10 @@ class Attendance:
     def _db(self):
         return self._kernel.db
 
-    async def ask(self, device_id: str, user_id: str, asked_by: AskedBy, reason: str | None = None) -> Check:
-        """Asks a user, on their phones, whether they're at this device."""
+    async def ask(self, device_id: str, user_id: str, asked_by: AskedBy, reason: str | None = None) -> Check | None:
+        """Asks a user, on their phones, whether they're at this device.
+        Asking again while they haven't answered returns None: the first
+        question stands, and nothing new reaches their phone."""
         accounts = self._kernel.accounts
         device = self._shared(device_id)
         if accounts.role(device.group, user_id) is None:
@@ -94,10 +96,13 @@ class Attendance:
             asked_at=now,
             reason=reason,
         )
-        self._db.execute(
-            "INSERT INTO attendance (id, device_id, user_id, asked_by, reason, status, asked_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+        inserted = self._db.execute(
+            "INSERT INTO attendance (id, device_id, user_id, asked_by, reason, status, asked_at) VALUES (?, ?, ?, ?, ?, 'pending', ?) "
+            "ON CONFLICT DO NOTHING",
             (check.id, device_id, user_id, asked_by, reason, iso(now)),
-        )
+        ).rowcount
+        if not inserted:
+            return None
         await self._kernel.kernel_event(
             "attendance.asked", f"asked {user_id} whether they're at {device.name} ({asked_by})", user=user_id, device=device_id
         )
@@ -109,8 +114,8 @@ class Attendance:
         it's them. Someone already asked about this device isn't asked
         twice."""
         device = self._shared(device_id)
-        waiting = {r["user_id"] for r in self._db.execute("SELECT user_id FROM attendance WHERE device_id = ? AND status = 'pending'", (device_id,))}
-        return [await self.ask(device_id, u.id, asked_by, reason) for u in self._kernel.accounts.people(device.group or "") if u.id not in waiting]
+        asked = [await self.ask(device_id, u.id, asked_by, reason) for u in self._kernel.accounts.people(device.group or "")]
+        return [c for c in asked if c is not None]
 
     def _shared(self, device_id: str) -> Device:
         device = self._kernel.accounts.device(device_id)
@@ -129,6 +134,10 @@ class Attendance:
         if now - check.asked_at > ASK_TTL:
             await self._close(check, "expired", now)
             raise AuthError("this question expired")
+        # A double tap: the first answer counts, the second gets nothing.
+        won = self._db.execute("UPDATE attendance SET status = 'answering' WHERE id = ? AND status = 'pending'", (check_id,)).rowcount
+        if not won:
+            raise AuthError("this question was already answered")
         if yes:
             await self._confirm(check, now)
             self._done(check)

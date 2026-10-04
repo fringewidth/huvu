@@ -9,9 +9,10 @@ Hermes client with its sessions and wakes, and the link to the frontend.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .accounts import Accounts
@@ -39,6 +40,11 @@ from .wake import Waker
 log = logging.getLogger("huvu.kernel")
 
 TICK = 60.0
+# Hermes sessions huvu started are deleted after this long unused. The event
+# log and the turns huvu keeps for the stage stay.
+SESSION_RETENTION = timedelta(days=30)
+# How often the sweep runs.
+SWEEP_EVERY = timedelta(days=1)
 
 
 class Kernel:
@@ -111,8 +117,41 @@ class Kernel:
                 await self.triggers.expire()
                 await self.policy.expire()
                 await self.attendance.expire()
+                await self._sweep_if_due()
             except Exception:
                 log.exception("tick failed")
+
+    async def _sweep_if_due(self) -> None:
+        row = self.db.execute("SELECT value FROM kv WHERE namespace = 'kernel' AND key = 'last_sweep'").fetchone()
+        last = datetime.fromisoformat(json.loads(row["value"])) if row else None
+        if last is None or self.now() - last >= SWEEP_EVERY:
+            await self.sweep_sessions()
+
+    async def sweep_sessions(self) -> int:
+        """Deletes the Hermes sessions huvu started that nobody has used for
+        SESSION_RETENTION: chats left behind by a rewind or a cold resume,
+        old wakes. Hermes's own sessions (cron jobs, the dream) are its
+        business."""
+        deleted = 0
+        for session, owner in self.sessions.unused_since(self.now() - SESSION_RETENTION):
+            try:
+                await self.hermes.delete_session(self.accounts.profile(owner.user, owner.group), session)
+            except Exception:
+                # Hermes is down, or the user is gone. Kept, and tried again
+                # at the next sweep, unless the user is gone for good.
+                log.warning("couldn't delete Hermes session %s", session, exc_info=True)
+                if owner.user is not None and self.accounts.user(owner.user) is None:
+                    self.sessions.forget(session)
+                continue
+            self.sessions.forget(session)
+            deleted += 1
+        self.db.execute(
+            "INSERT INTO kv (namespace, key, value) VALUES ('kernel', 'last_sweep', ?) ON CONFLICT (namespace, key) DO UPDATE SET value = excluded.value",
+            (json.dumps(self.now().isoformat()),),
+        )
+        if deleted:
+            await self.kernel_event("sessions.swept", f"deleted {deleted} Hermes sessions unused for {SESSION_RETENTION.days} days")
+        return deleted
 
     async def emit(self, event: Event) -> Event:
         """Logs a source's event, then lets triggers see it. The type must be

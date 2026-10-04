@@ -7,10 +7,25 @@ Hermes's stream into frontend events (see the relay below), and sends those
 to the client that asked and to the same device's other open streams. A
 turn never reaches another device.
 
+Prompt caching decides when a session continues. The provider keeps a
+session's prompt cached for CACHE_TTL after its last use, so an ask within
+that window continues the same Hermes session and hits the cache. An ask
+after it starts a fresh session, primed with a transcript of the asks and
+answers so far: with the cache cold, a short transcript costs less than
+replaying the old session's thinking and tool output. Each turn's cache
+reads land in the event log (`conversation.turn`, `usage`), so the window
+can be checked against the provider.
+
 Edit and retry rewind: the turn and everything after it are replaced.
-Hermes's API can fork a session but can't cut one short, so a rewind starts
-a fresh Hermes session and seeds it with a transcript of the turns that
-stay. The earlier turns' tool calls don't carry over.
+Hermes's API can fork a session but can't cut one short, so a rewind always
+starts a fresh session from the transcript of the turns that stay. (A rewind
+endpoint in Hermes, wrapping what its CLI's /undo does, would keep a warm
+cache; see docs/backend-architecture.md.)
+
+Stopping a turn asks Hermes to stop, and keeps relaying until Hermes's own
+stream ends, so the turn shows every token Hermes produced and ends the way
+Hermes says it did: complete if it finished anyway, stopped if it was cut
+off. Only a Hermes that hasn't ended STOP_GRACE later is cut off here.
 """
 
 from __future__ import annotations
@@ -20,7 +35,7 @@ import logging
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import datetime, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
@@ -37,6 +52,18 @@ log = logging.getLogger("huvu.conversations")
 Ending = Literal["failed", "stopped"] | None
 
 HUVU_PREFIX = "mcp__huvu__"
+# How long the provider keeps a session's prompt cached after its last use.
+CACHE_TTL = timedelta(minutes=5)
+# How long a stopped turn may take to end before huvu cuts it off itself.
+STOP_GRACE = 15.0
+# Opens a fresh session that continues a conversation, the way a compacted
+# session continues.
+COMPACTED = (
+    "This conversation is being continued from an earlier session that was compacted. "
+    "What was said so far is below: their messages, and your answers. "
+    "Carry on from where you left off as the same assistant. Don't mention or acknowledge this note; "
+    "just answer their new message at the end."
+)
 # How much of a turn the event log keeps in its summary.
 TURN_ASK_CHARS = 200
 TURN_ANSWER_CHARS = 300
@@ -97,6 +124,9 @@ class LiveTurn:
     subscribers: list[asyncio.Queue[tuple[str, dict[str, Any]] | None]] = field(default_factory=list)
     # Part ids of tools that started and haven't completed, by tool name.
     open_tools: dict[str, list[str]] = field(default_factory=dict)
+    stop_requested: bool = False
+    # Token counts from Hermes's last event, cache reads included.
+    usage: dict[str, Any] | None = None
     ended: bool = False
 
 
@@ -108,6 +138,7 @@ class ConversationHub:
         # recognized there. Appended to the message, so the session's
         # prompt cache holds.
         self._notes: dict[str, list[Action]] = {}
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     def note(self, conversation_id: str, text: str) -> None:
         self._notes.setdefault(conversation_id, []).append(Action(text=text, at=self._kernel.now()))
@@ -144,7 +175,7 @@ class ConversationHub:
         conversation = self._conversation(conversation_id, user)
         profile = self._kernel.accounts.profile(user, group)
         for live in [l for l in self._live.values() if l.turn.conversation_id == conversation_id]:
-            await self.stop(live.turn.id)
+            await self.stop(live.turn.id, wait=True)
         kept = self.turns(conversation_id)
         session = conversation["hermes_session"]
         actions = actions or []
@@ -159,8 +190,12 @@ class ConversationHub:
             self._db.execute("DELETE FROM turns WHERE conversation_id = ? AND seq >= ?", (conversation_id, kept[index].seq))
             kept = kept[:index]
             session = None
-            message = _seeded(kept, message, tz)
+        elif session is not None and self._cold(session):
+            session = None
         if session is None:
+            # A rewind, a cold cache, or a session the retention sweep
+            # deleted: a fresh session carries the conversation so far.
+            message = _seeded(kept, message, tz)
             session = await self._new_session(conversation_id, user, group, profile)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
@@ -211,19 +246,55 @@ class ConversationHub:
         while (item := await queue.get()) is not None:
             yield item
 
-    async def stop(self, turn_id: str) -> None:
+    def _cold(self, session: str) -> bool:
+        """Whether the provider's cache of a session has expired."""
+        last = self._kernel.sessions.last_used(session)
+        return last is None or self._kernel.now() - last > CACHE_TTL
+
+    async def stop(self, turn_id: str, *, wait: bool = False) -> None:
+        """Asks Hermes to stop the turn. The relay goes on until Hermes's
+        stream ends; `wait` waits for that, up to STOP_GRACE."""
         live = self._live.get(turn_id)
-        if live is None:
+        if live is None or live.ended:
             return
-        if live.run_id:
-            await self._kernel.hermes.stop(live.profile, live.run_id)
-        if live.task and not live.task.done():
+        if not live.stop_requested:
+            live.stop_requested = True
+            # Before run.started there is no run to stop yet; the relay
+            # stops it when it starts.
+            if live.run_id:
+                await self._kernel.hermes.stop(live.profile, live.run_id)
+        grace = self._grace(live)
+        if wait:
+            await grace
+        else:
+            self._spawn(grace)
+
+    async def _grace(self, live: LiveTurn) -> None:
+        if live.task is None:
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(live.task), STOP_GRACE)
+        except TimeoutError:
+            log.warning("turn %s: Hermes didn't end within %.0f s of a stop; cutting it off", live.turn.id, STOP_GRACE)
             live.task.cancel()
             await asyncio.gather(live.task, return_exceptions=True)
 
     async def close(self) -> None:
-        for turn_id in list(self._live):
-            await self.stop(turn_id)
+        """At shutdown: cut every turn off now."""
+        for live in list(self._live.values()):
+            if live.run_id:
+                await self._kernel.hermes.stop(live.profile, live.run_id)
+            if live.task and not live.task.done():
+                live.task.cancel()
+                await asyncio.gather(live.task, return_exceptions=True)
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def show(self, caller: Caller, kind: str, args: dict[str, Any]) -> bool:
         """Adds a part from a `ui_*` tool to the live turn of the Hermes
@@ -269,6 +340,8 @@ class ConversationHub:
         name = event.name
         if name == "run.started":
             live.run_id = data.get("run_id")
+            if live.stop_requested and live.run_id:
+                self._spawn(self._kernel.hermes.stop(live.profile, live.run_id))
         elif name == "assistant.delta" and data.get("delta"):
             live.turn.answer += data["delta"]
             self._emit(live, "answer.delta", {"text": data["delta"]})
@@ -280,6 +353,10 @@ class ConversationHub:
             # A turn that streamed no deltas still has its final text here.
             live.turn.answer = data["content"]
             self._emit(live, "answer.delta", {"text": data["content"]})
+        if name in ("run.completed", "run.cancelled", "run.failed") and isinstance(data.get("usage"), dict):
+            live.usage = data["usage"]
+        # Hermes says how the turn ended. A turn stopped after Hermes had
+        # finished is complete.
         endings: dict[str, Ending] = {"run.completed": None, "run.cancelled": "stopped", "run.failed": "failed", "error": "failed"}
         return endings.get(name, ending)
 
@@ -329,6 +406,8 @@ class ConversationHub:
         live.turn.ending = ending
         live.turn.running = False
         self._save(live.turn, insert=False)
+        if live.turn.hermes_session:
+            self._kernel.sessions.touch(live.turn.hermes_session)
         self._emit(live, "turn.ended", {"ending": ending, "answer": live.turn.answer})
         self._log(live)
         live.ended = True
@@ -350,7 +429,7 @@ class ConversationHub:
                 entity=turn.id,
                 summary=f"asked {turn.ask[:TURN_ASK_CHARS]!r}; huvu said {answer[:TURN_ANSWER_CHARS]!r}" + (f" ({turn.ending})" if turn.ending else ""),
                 refs={"turn": f"kernel:turn/{turn.id}"},
-                data={"device": turn.conversation_id},
+                data={"device": turn.conversation_id, "session": turn.hermes_session, "usage": live.usage},
                 labels=["owner"],
                 user=live.user,
                 group=None if live.user else live.group,
@@ -417,17 +496,19 @@ def _with_actions(text: str, actions: list[Action], tz: tzinfo | None) -> str:
 
 
 def _seeded(kept: list[Turn], text: str, tz: tzinfo | None) -> str:
+    """The first message of a fresh session that continues a conversation,
+    the way a compacted session continues: what was asked and answered so
+    far, then the new message. The model is told to carry on as if nothing
+    happened, not to acknowledge it."""
     if not kept:
         return text
-    lines = ["(This conversation continues from an earlier session. What was said so far:)"]
+    lines = [COMPACTED, "", "<earlier>"]
     for turn in kept:
         lines += [_note(a, tz) for a in turn.actions]
-        lines.append(f"Owner: {turn.ask}")
+        lines.append(f"Them: {turn.ask}")
         if turn.answer:
-            lines.append(f"huvu: {turn.answer}")
-    lines.append("")
-    lines.append("(The owner's new message:)")
-    lines.append(text)
+            lines.append(f"You: {turn.answer}")
+    lines += ["</earlier>", "", text]
     return "\n".join(lines)
 
 

@@ -56,6 +56,7 @@ class Waker:
         except HermesError as err:
             await self._kernel.kernel_event("trigger.error", f"wake for {trigger} failed: {err}", entity=trigger, user=user)
             raise
+        self._kernel.sessions.touch(session)
         await self._kernel.kernel_event(
             "wake.done",
             f"wake for {trigger} ended: {reply[:SUMMARY_CHARS] or '(no reply)'}",

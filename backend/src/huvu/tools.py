@@ -283,7 +283,8 @@ class ToolBox:
         if user is None:
             raise ToolError(f"nobody called {args['user']!r} uses this device; the people who do: {', '.join(f'{u.name} ({u.id})' for u in users)}")
         check = await self._kernel.attendance.ask(device.id, user.id, "model")
-        return Result(data={"asked": user.name, "status": check.status, "say": "Tell them to check their phone and tap yes."}, labels=["owner"])
+        status = check.status if check else "already_asked"
+        return Result(data={"asked": user.name, "status": status, "say": "Tell them to check their phone and tap yes."}, labels=["owner"])
 
     async def _people_release(self, args: dict[str, Any], caller: Caller) -> Result:
         ended = await self._kernel.attendance.release(self._shared_device(caller).id, None, "the model was told they left")

@@ -126,3 +126,13 @@ async def test_someone_else_takes_over_and_questions_expire(kernel, family, cloc
     clock.advance(minutes=6)
     await kernel.attendance.expire()
     assert kernel.attendance.pending_for("mom") == []
+
+
+async def test_asking_twice_asks_once(kernel, family):
+    first = await kernel.attendance.ask(family.tv.id, "mom", "device")
+    assert first is not None
+    assert await kernel.attendance.ask(family.tv.id, "mom", "device") is None
+    assert len(kernel.attendance.pending_for("mom")) == 1
+    await kernel.attendance.answer(first.id, True, family.mom_phone)
+    with pytest.raises(AuthError, match="already answered|no open question"):
+        await kernel.attendance.answer(first.id, True, family.mom_phone)

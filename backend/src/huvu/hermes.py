@@ -82,6 +82,12 @@ class HermesClient:
             async for event in parse_sse(res.aiter_lines()):
                 yield event
 
+    async def delete_session(self, profile: Profile, session_id: str) -> None:
+        """Deletes a session. One that is already gone counts as deleted."""
+        res = await self._http.delete(f"{profile.prefix}/api/sessions/{session_id}", headers=profile.headers)
+        if res.status_code >= 400 and res.status_code != 404:
+            raise HermesError(f"deleting session {session_id}: {res.status_code} {res.text[:300]}")
+
     async def stop(self, profile: Profile, run_id: str) -> None:
         res = await self._http.post(f"{profile.prefix}/v1/runs/{run_id}/stop", headers=profile.headers)
         if res.status_code >= 400:

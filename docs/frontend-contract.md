@@ -31,7 +31,7 @@ The answer is Server-Sent Events. Every event's data carries `turn` and `convers
 | `part.update` | `id`, `result`: a tool part's result, once the tool finishes |
 | `turn.ended` | `ending` (`null`, `"failed"` or `"stopped"`) and the whole `answer` |
 
-A comment line (`: keepalive`) comes every 15 s while nothing else does. Dropping this stream doesn't stop the turn; `POST /api/turns/{turn}/stop` does, for a turn of this device's own conversation. `GET /api/conversation` returns this device's turns, with `id`, `at`, `ask`, `answer`, `parts`, `actions`, `ending` and `running`, for a client that opens later.
+A comment line (`: keepalive`) comes every 15 s while nothing else does. Dropping this stream doesn't stop the turn; `POST /api/turns/{turn}/stop` does, for a turn of this device's own conversation. A stop asks Hermes to stop, and the stream keeps going until Hermes ends: keep reading it, show what arrives, and take `turn.ended` as the answer to how the turn ended. A turn Hermes finished anyway ends with `ending: null`, not `"stopped"`. `GET /api/conversation` returns this device's turns, with `id`, `at`, `ask`, `answer`, `parts`, `actions`, `ending` and `running`, for a client that opens later.
 
 The backend builds parts from Hermes's stream:
 
@@ -101,7 +101,7 @@ A device that isn't connected misses these. Native push notifications are not bu
 
 Approvals are answered from phones only. An approval belongs to the user it was asked for, or, with `user` `null`, to the members of its `group`: when a shared device nobody is recognized at asked, or when a guest caused it. A guest never approves anything.
 
-`GET /api/approvals` (phone) lists what this phone may answer: its user's pending approvals and those of the groups they're a member of. Each has `id`, `action`, `args`, `reason`, `asked_by`, `user`, `group`, `status`, `created_at`, `deadline`. `POST /api/approvals/{id}` (phone) with `{"approve": true}` or `false` answers one; the answer runs the action through the backend, and the result comes back. This is the only way to approve, so no model can approve its own request. Another user's approval, or any approval from a device that isn't a phone, answers `403`.
+`GET /api/approvals` (phone) lists what this phone may answer: its user's pending approvals and those of the groups they're a member of. Each has `id`, `action`, `args`, `reason`, `asked_by`, `user`, `group`, `status`, `created_at`, `deadline`. `POST /api/approvals/{id}` (phone) with `{"approve": true}` or `false` answers one; the answer runs the action through the backend, and the result comes back. This is the only way to approve, so no model can approve its own request. Another user's approval, or any approval from a device that isn't a phone, answers `403`. One already answered, by a second tap or another phone, answers `409`. An action that needs approval while the same one already waits comes back `{"status": "already_pending"}`, with no approval of its own.
 
 `POST /api/actions/{source}/{action}` with the action's args is a tap in the app. On a member's personal device (phone, web) the tap is the approval, so it runs at once. On a shared device, or from a guest, it goes through the policy like a model's request, so a `requires_human` action waits for a member's phone.
 
@@ -118,7 +118,7 @@ A trigger belongs to a person. One set up on a shared device with nobody recogni
 A shared device can recognize the person in front of it, if they're in its group (member or guest). The Hermes session stays the group's, so nothing about the conversation changes, but from then on the backend treats it as that person's: their triggers, their approvals and notifications on their phone, and their entries in the event log, which their own dream reads.
 
 1. `GET /api/people` lists the people in the device's group (`id`, `name`), for a "who's this?" picker.
-1. `POST /api/attendance` with `{"user"}`, from a shared device, asks that person on their phones. The model can ask the same way, and later voice recognition will.
+1. `POST /api/attendance` with `{"user"}`, from a shared device, asks that person on their phones. Asking again before they answer changes nothing and answers `409`. The model can ask the same way, and later voice recognition will.
 1. `GET /api/identify` (phone) lists the open questions for this phone's user. `POST /api/identify/{id}` (phone) with `{"yes": true}` or `false` answers one. Questions last 5 minutes.
 1. `GET /api/attendance` answers `{"user"}`: who is recognized at this device, or the device's own user on a personal device.
 1. `DELETE /api/attendance/{device}`, from the device or the recognized person's phone, ends it. So does someone else being confirmed, the model being told they left, or 10 minutes with no turn.

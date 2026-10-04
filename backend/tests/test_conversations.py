@@ -88,7 +88,7 @@ async def test_an_edit_starts_a_seeded_session(kernel, hermes):
     assert len(hermes.sessions) == 2
     session, message = hermes.messages[-1]
     assert session == hermes.sessions[-1]
-    assert "Owner: one" in message and "two, but better" in message and "Owner: two\n" not in message
+    assert "Them: one" in message and "two, but better" in message and "Them: two\n" not in message
     assert [t.ask for t in kernel.conversations.turns("c1")] == ["one", "two, but better"]
 
 
@@ -111,7 +111,7 @@ async def test_actions_ride_with_the_next_ask_and_survive_a_rewind(kernel, herme
     edited = await kernel.conversations.ask("c1", "two, but better", user="me", replaces=second.turn.id)
     await collect(kernel, edited)
     seeded = hermes.messages[-1][1]
-    assert seeded.index("opened the live feed balcony") < seeded.index("Owner: one")
+    assert seeded.index("opened the live feed balcony") < seeded.index("Them: one")
 
 
 async def test_a_clients_turn_id_is_kept_and_used_once(kernel):
@@ -124,18 +124,98 @@ async def test_a_clients_turn_id_is_kept_and_used_once(kernel):
         await kernel.conversations.ask("c1", "again", user="me", turn_id="t_mine")
 
 
-async def test_stopping_a_turn_ends_it_as_stopped(kernel, hermes):
-    gate = asyncio.Event()
+async def stopped_when(hermes, *, then: list) -> list:
+    """A script that streams a little, waits for a stop, then does `then`."""
 
     async def wait(session_id: str) -> None:
-        await gate.wait()
+        await hermes.stop_requested.wait()
 
-    hermes.script = [("run.started", {"run_id": "run_5"}), ("assistant.delta", {"delta": "thinking"}), wait, ("run.completed", {})]
+    return [("run.started", {"run_id": "run_5"}), ("assistant.delta", {"delta": "thinking"}), wait, *then]
+
+
+async def test_a_stop_keeps_what_hermes_sends_until_it_ends(kernel, hermes):
+    hermes.script = await stopped_when(hermes, then=[("assistant.delta", {"delta": " and more"}), ("run.cancelled", {})])
     live = await kernel.conversations.ask("c1", "slow one", user="me")
     await asyncio.sleep(0.01)
-    await kernel.conversations.stop(live.turn.id)
+    await kernel.conversations.stop(live.turn.id, wait=True)
     [turn] = kernel.conversations.turns("c1")
-    assert turn.ending == "stopped" and hermes.stopped == ["run_5"]
+    assert turn.ending == "stopped" and turn.answer == "thinking and more" and hermes.stopped == ["run_5"]
+
+
+async def test_a_turn_hermes_finishes_anyway_is_complete(kernel, hermes):
+    hermes.script = await stopped_when(hermes, then=[("assistant.delta", {"delta": ", done"}), ("run.completed", {})])
+    live = await kernel.conversations.ask("c1", "slow one", user="me")
+    await asyncio.sleep(0.01)
+    await kernel.conversations.stop(live.turn.id, wait=True)
+    [turn] = kernel.conversations.turns("c1")
+    assert turn.ending is None and turn.answer == "thinking, done"
+
+
+async def test_a_hermes_that_never_ends_is_cut_off(kernel, hermes, monkeypatch):
+    import huvu.conversations
+
+    monkeypatch.setattr(huvu.conversations, "STOP_GRACE", 0.05)
+    never = asyncio.Event()
+
+    async def hang(session_id: str) -> None:
+        await never.wait()
+
+    hermes.script = [("run.started", {"run_id": "run_5"}), ("assistant.delta", {"delta": "thinking"}), hang]
+    live = await kernel.conversations.ask("c1", "slow one", user="me")
+    await asyncio.sleep(0.01)
+    await kernel.conversations.stop(live.turn.id, wait=True)
+    [turn] = kernel.conversations.turns("c1")
+    assert turn.ending == "stopped" and turn.answer == "thinking"
+
+
+async def test_a_stop_before_the_run_starts_reaches_it(kernel, hermes):
+    gate = asyncio.Event()
+
+    async def slow_start(session_id: str) -> None:
+        await gate.wait()
+
+    async def wait(session_id: str) -> None:
+        await hermes.stop_requested.wait()
+
+    hermes.script = [slow_start, ("run.started", {"run_id": "run_7"}), wait, ("run.cancelled", {})]
+    live = await kernel.conversations.ask("c1", "hi", user="me")
+    await asyncio.sleep(0.01)
+    await kernel.conversations.stop(live.turn.id)
+    gate.set()
+    await collect(kernel, live)
+    assert hermes.stopped == ["run_7"] and kernel.conversations.turns("c1")[0].ending == "stopped"
+
+
+async def test_a_warm_session_continues_and_a_cold_one_starts_over(kernel, hermes, clock):
+    await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
+    clock.advance(minutes=4)
+    await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
+    assert len(hermes.sessions) == 1 and hermes.messages[-1][1] == "two"
+    clock.advance(minutes=6)
+    await collect(kernel, await kernel.conversations.ask("c1", "three", user="me"))
+    assert len(hermes.sessions) == 2
+    session, message = hermes.messages[-1]
+    assert session == hermes.sessions[-1]
+    assert message.startswith("This conversation is being continued from an earlier session that was compacted.")
+    assert "Them: one\nYou: ok\nThem: two\nYou: ok\n</earlier>" in message and message.endswith("three")
+
+
+async def test_turns_log_their_usage(kernel, hermes):
+    hermes.script = [("run.started", {"run_id": "r"}), ("assistant.delta", {"delta": "ok"}), ("run.completed", {"usage": {"input_tokens": 900, "cache_read_tokens": 800}})]
+    await collect(kernel, await kernel.conversations.ask("c1", "hi", user="me"))
+    [logged] = kernel.events.search(type="conversation.turn")
+    assert logged.data["usage"] == {"input_tokens": 900, "cache_read_tokens": 800}
+
+
+async def test_the_sweep_deletes_old_sessions_and_the_next_ask_starts_over(kernel, hermes, clock):
+    await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
+    first = hermes.sessions[0]
+    clock.advance(days=31)
+    assert await kernel.sweep_sessions() == 1
+    assert hermes.deleted == [first] and kernel.sessions.last_used(first) is None
+    await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
+    assert "Them: one" in hermes.messages[-1][1]
+    assert kernel.events.search(type="conversation.turn")
 
 
 async def test_ui_tools_without_a_live_turn_say_what_to_do(kernel):

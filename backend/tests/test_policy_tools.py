@@ -180,3 +180,29 @@ async def test_mcp_results_are_readable_and_marked(kernel):
     result = await kernel.tools.call("state_get", {"values": ["home.eta_min"]}, Caller(kind="hermes"))
     text = json.dumps(for_model(result.data, kernel.now()))
     assert "just now" in text
+
+
+async def test_a_double_press_opens_one_approval(kernel, home, family):
+    me = Caller(kind="hermes", user="me")
+    first, second = await asyncio.gather(
+        kernel.policy.request("home", "unlock", {}, me),
+        kernel.policy.request("home", "unlock", {}, me),
+    )
+    assert first.data["status"] == "pending_approval"
+    assert second.data == {"status": "already_pending"}
+    assert len(kernel.policy.pending()) == 1
+    # Once it's answered, the same request opens a new one.
+    await kernel.policy.resolve(first.data["approval"], approve=False, by=family.me_phone)
+    again = await kernel.policy.request("home", "unlock", {}, me)
+    assert again.data["status"] == "pending_approval"
+
+
+async def test_two_answers_at_once_run_it_once(kernel, home, family):
+    held = await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes", device=family.tv.id, group="home"))
+    results = await asyncio.gather(
+        kernel.policy.resolve(held.data["approval"], approve=True, by=family.me_phone),
+        kernel.policy.resolve(held.data["approval"], approve=True, by=family.mom_phone),
+        return_exceptions=True,
+    )
+    assert home.acted == [("unlock", {})]
+    assert sum(isinstance(r, Exception) for r in results) == 1

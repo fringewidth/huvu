@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS approvals (
     user_id TEXT,
     group_id TEXT,
     status TEXT NOT NULL,
+    -- While pending: the action, its args and who answers, so the same
+    -- request twice (a double press) can't open a second approval.
+    pending_key TEXT UNIQUE,
     created_at TEXT NOT NULL,
     deadline TEXT NOT NULL,
     resolved_at TEXT,
@@ -175,6 +178,8 @@ CREATE TABLE IF NOT EXISTS attendance (
     last_active_at TEXT
 );
 CREATE INDEX IF NOT EXISTS attendance_device ON attendance (device_id, status);
+-- One open question per person per device, so a double press asks once.
+CREATE UNIQUE INDEX IF NOT EXISTS attendance_one_question ON attendance (device_id, user_id) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS hermes_sessions (
     id TEXT PRIMARY KEY,
@@ -185,7 +190,10 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
     -- The device whose conversation this is. NULL for wakes.
     device_id TEXT,
     trigger_id TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- When a turn in it last ended: the prompt cache's clock, and the
+    -- retention sweep's.
+    last_used_at TEXT
 );
 """
 
@@ -199,8 +207,8 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
-def dumps(value: Any) -> str:
-    return json.dumps(value, default=_default, ensure_ascii=False)
+def dumps(value: Any, *, sort_keys: bool = False) -> str:
+    return json.dumps(value, default=_default, ensure_ascii=False, sort_keys=sort_keys)
 
 
 def loads(text: str | None) -> Any:

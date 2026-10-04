@@ -241,6 +241,7 @@ Every write goes through one policy check in the backend, whoever asks: Hermes, 
 1. Each action has an autonomy level: silent, notify, or ask first.
 1. Ask first creates a pending approval with a deadline. It lives in the `huvu` source.
 1. An approval belongs to the user it was asked for: the chat's user, or the trigger's. It goes to that user's phones, and only they can answer it. One asked from a shared device nobody is recognized at, or caused by a guest, goes to the group's members, and the first answer wins.
+1. The same request twice while the first waits (a double press, two clients racing) opens one approval. A unique key on pending approvals decides it in the database: the first gets the approval, and the other gets only `already_pending`. Answering races the same way: two phones answering at once run the action once, and the slower answer is refused.
 1. Every action, allowed or refused, goes into the event log with who asked and why.
 1. An action a driver marks `requires_human` always asks, and config can't lower it. Only a user's answer from their phone (`POST /api/approvals/{id}`) can approve it, so no model can approve its own request.
 1. A member's tap on a personal device (`POST /api/actions/{source}/{action}`) runs at once: the tap is the approval. A tap on a shared device, or by a guest, goes through the policy like any other request, so neither the TV nor the babysitter's phone can open the door.
@@ -298,7 +299,10 @@ The backend multiplexes on top of that (`conversations.py`):
 1. Every trigger wake starts a fresh Hermes session in the trigger user's profile, with the wake payload (`wake.py`). Its reply goes to the log as a `wake.done` event. If the agent wants to reach the user, it calls `huvu_notify`. Two wakes run at once at most.
 1. A turn streams to the client that asked, and to the same device's other push streams. It never reaches another device.
 1. Hermes's own sessions (the dream, the morning chat) are its business. A chat Hermes starts reaches the frontend through `huvu_notify`.
-1. Edit and retry rewind. Hermes's API can fork a session but can't cut one short, so a rewind starts a fresh Hermes session and seeds its first message with a transcript of the turns that stay. The earlier turns' tool calls don't carry over.
+1. **The prompt cache decides when a session continues.** The provider keeps a session's prompt cached for 5 minutes after its last use (`CACHE_TTL` in `conversations.py`). An ask within that window continues the same Hermes session and hits the cache. An ask after it starts a fresh session, primed the way a compacted session is: the asks and answers so far, with a note telling the model to carry on as the same assistant without acknowledging it. Thinking and tool output are left out, since with the cache cold they would cost full price to replay. Every `conversation.turn` event carries the run's `usage`, cache reads included, to check this against the provider.
+1. **Edit and retry rewind**, always through a fresh session with the transcript of the turns that stay. Hermes can fork a session but its API can't cut one short; its CLI and chat gateways can (`/undo`, `rewind_user_turn`), so a rewind endpoint upstream would let a rewind within the cache window keep its cache. Both sessions stay until the sweep.
+1. **Stop lets Hermes finish.** A stop asks Hermes to stop and keeps relaying until Hermes's stream ends, so the turn has every token Hermes produced and ends the way Hermes reports: complete if it finished anyway, stopped if it was cut off. Only a Hermes that hasn't ended 15 s later is cut off by huvu. The frontend and the backend agree on how every turn ended.
+1. **Old sessions are swept.** Once a day, the Hermes sessions huvu started that haven't been used for 30 days are deleted through Hermes's API. The event log and the turns huvu keeps for the stage stay. Hermes's own sessions (cron jobs, the dream) are untouched, and Hermes prunes nothing by itself (`hermes sessions prune` only touches ended sessions).
 
 The relay turns Hermes's events into frontend events. Hermes's housekeeping tools (memory, skills, session search) and huvu's reads stay hidden. huvu's actions show as notes. Hermes tools with an adapter (`web_search`) get the fields the stage reads; any other tool shows as a generic note.
 
@@ -338,6 +342,8 @@ hermes-plugin/huvu/   the Hermes plugin
 Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFIG`), and the tests with `uv run pytest`.
 
 ## Open questions
+
+1. **Rewind endpoint in Hermes (a PR to write).** `POST /api/sessions/{id}/rewind` with `{"turns": N}`, wrapping `rewind_user_turn` the way the CLI's `/undo` does. huvu would then rewind within the cache window in place, and fall back to a transcript only after it.
 
 1. **Strict tool schemas.** Check if Hermes uses OpenAI's strict mode for the Codex provider. Enums of value names would make made-up names impossible.
 1. **Pulsar.** The Tuya consumer has never run. See `front-door-lock.md`.

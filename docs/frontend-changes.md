@@ -18,6 +18,8 @@ Today the frontend calls only `POST /api/chat`, `POST /api/turns/{id}/stop` and 
 
 ## Conversation
 
+1. **Stop keeps reading.** After `POST /api/turns/{id}/stop`, don't abort the chat stream. Keep rendering deltas until `turn.ended`, and take its `ending`: `null` means Hermes finished anyway, so show it as complete.
+
 1. **One conversation per device.** The chat body has no `conversation` field anymore. The backend ignores it, so dropping it is cleanup only.
 1. **Restore on launch** from `GET /api/conversation` (this device's turns), if the stage should come back after a restart. Today the store starts empty.
 1. **Drop "the phone asks, the TV shows."** No turn reaches another device. Nothing in the frontend depends on it yet, but `CLAUDE.md` and any TV plans that assume it need to change.
@@ -38,7 +40,8 @@ Today the frontend calls only `POST /api/chat`, `POST /api/turns/{id}/stop` and 
 ## Approvals (phones only)
 
 1. **An approvals screen or sheet**: `GET /api/approvals`, and live updates from `approval` pushes. Show the action, `reason`, who asked (`asked_by`: the user, the device, or the trigger), and a countdown to `deadline`.
-1. **Approve or deny** with `POST /api/approvals/{id}`. `403` means another user's approval, or not a phone.
+1. **Approve or deny** with `POST /api/approvals/{id}`. `403` means another user's approval, or not a phone. `409` means it was already answered (a double tap, or another phone first); drop it quietly.
+1. **A tap that comes back `already_pending`** opened nothing new: the same approval is already waiting. Say so, don't show a second one.
 1. **A group's approval** (`user: null`, with `group`) shows on every member's phone. The first answer wins, so the others should drop it when the resolved `approval` push arrives.
 1. **On a non-phone device**, an action that comes back `pending_approval` (a tap on the TV, a chat on the laptop) should say it is waiting on a phone.
 

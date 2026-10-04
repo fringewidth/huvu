@@ -12,6 +12,10 @@ goes to the phones of its group's members, and the first answer wins. So
 does one a guest causes: a guest never approves anything, not even by
 tapping on their own phone.
 
+The same request twice while the first waits (a double press, two clients
+racing) opens one approval: whichever reaches the database first gets it,
+and the other gets nothing, only a result saying one is already pending.
+
 An action marked `requires_human` always asks, and config can't lower it.
 A tap on a personal device runs at once, since the tap is the approval. A
 tap on a household device goes through the policy like any other request,
@@ -20,6 +24,7 @@ even while someone is recognized there, so the TV can't open the door.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
 from dataclasses import dataclass, field
@@ -36,7 +41,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("huvu.policy")
 
-ApprovalStatus = Literal["pending", "approved", "denied", "expired", "failed"]
+# answering: someone's answer won the race and is being carried out.
+ApprovalStatus = Literal["pending", "answering", "approved", "denied", "expired", "failed"]
 
 
 @dataclass
@@ -100,10 +106,10 @@ class Policy:
         )
         if level == "ask":
             approval = await self._hold(source, action, args, caller, reason, spec)
-            result = Result(
-                data={"status": "pending_approval", "approval": approval.id, "deadline": approval.deadline},
-                labels=["house"],
-            )
+            data = {"status": "already_pending"}
+            if approval is not None:
+                data = {"status": "pending_approval", "approval": approval.id, "deadline": approval.deadline}
+            result = Result(data=data, labels=["house"])
         else:
             result = await self.run(source, action, args, caller)
             if level == "notify":
@@ -146,7 +152,9 @@ class Policy:
         )
         return result
 
-    async def _hold(self, source: str, action: str, args: dict[str, Any], caller: Caller, reason: str | None, spec: ActionSpec) -> Approval:
+    async def _hold(self, source: str, action: str, args: dict[str, Any], caller: Caller, reason: str | None, spec: ActionSpec) -> Approval | None:
+        """Opens an approval, or returns None when the same one is already
+        pending."""
         now = self._kernel.now()
         user, group = self._kernel.accounts.approvers(caller.user, caller.group)
         approval = Approval(
@@ -162,10 +170,14 @@ class Policy:
             created_at=now,
             deadline=now + spec.approval_ttl,
         )
-        self._kernel.db.execute(
-            "INSERT INTO approvals (id, source, action, args, reason, caller, user_id, group_id, status, created_at, deadline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (approval.id, source, action, dumps(args), reason, dumps(approval.caller), approval.user, approval.group, "pending", iso(now), iso(approval.deadline)),
-        )
+        key = hashlib.sha256(dumps([source, action, args, user, group], sort_keys=True).encode()).hexdigest()
+        inserted = self._kernel.db.execute(
+            "INSERT INTO approvals (id, source, action, args, reason, caller, user_id, group_id, status, pending_key, created_at, deadline) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?) ON CONFLICT (pending_key) DO NOTHING",
+            (approval.id, source, action, dumps(args), reason, dumps(approval.caller), approval.user, approval.group, key, iso(now), iso(approval.deadline)),
+        ).rowcount
+        if not inserted:
+            return None
         await self._kernel.kernel_event(
             "approval.created",
             f"waiting for {approval.user or f'the members of {approval.group}'} on {source}.{action}" + (f": {reason}" if reason else ""),
@@ -205,6 +217,11 @@ class Policy:
         if now > approval.deadline:
             await self._finish(approval, "expired", now)
             raise SourceError(f"approval {approval_id} expired at {approval.deadline:%H:%M}")
+        # Two answers at once (two phones, a double tap): the first to flip
+        # it out of pending carries it out; the other gets nothing.
+        won = self._kernel.db.execute("UPDATE approvals SET status = 'answering' WHERE id = ? AND status = 'pending'", (approval_id,)).rowcount
+        if not won:
+            raise SourceError(f"approval {approval_id} was already answered")
         status: ApprovalStatus = "denied"
         if approve:
             status = await self._carry_out(approval, by)
@@ -225,7 +242,7 @@ class Policy:
         approval.status = status
         approval.resolved_at = now
         self._kernel.db.execute(
-            "UPDATE approvals SET status = ?, resolved_at = ?, result = ? WHERE id = ?",
+            "UPDATE approvals SET status = ?, pending_key = NULL, resolved_at = ?, result = ? WHERE id = ?",
             (status, iso(now), dumps(approval.result), approval.id),
         )
         await self._kernel.kernel_event(

@@ -46,6 +46,25 @@ class SessionBook:
         row = self._conn.execute(query, (session_id,)).fetchone() if session_id else None
         return SessionOwner(user=row["user_id"], group=row["group_id"], device=row["device_id"]) if row else None
 
+    def touch(self, session_id: str) -> None:
+        self._conn.execute("UPDATE hermes_sessions SET last_used_at = ? WHERE id = ?", (iso(self._now()), session_id))
+
+    def last_used(self, session_id: str) -> datetime | None:
+        row = self._conn.execute("SELECT last_used_at FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone()
+        return datetime.fromisoformat(row["last_used_at"]) if row and row["last_used_at"] else None
+
+    def unused_since(self, before: datetime) -> list[tuple[str, SessionOwner]]:
+        """Sessions not used since `before`, with their owners."""
+        rows = self._conn.execute(
+            "SELECT id, user_id, group_id, device_id FROM hermes_sessions WHERE COALESCE(last_used_at, created_at) < ?",
+            (iso(before),),
+        ).fetchall()
+        return [(r["id"], SessionOwner(user=r["user_id"], group=r["group_id"], device=r["device_id"])) for r in rows]
+
+    def forget(self, session_id: str) -> None:
+        self._conn.execute("DELETE FROM hermes_sessions WHERE id = ?", (session_id,))
+        self._conn.execute("UPDATE conversations SET hermes_session = NULL WHERE hermes_session = ?", (session_id,))
+
     def created(self, session_id: str) -> datetime | None:
         row = self._conn.execute("SELECT created_at FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone()
         return datetime.fromisoformat(row["created_at"]) if row else None

@@ -197,8 +197,11 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     @app.post("/api/attendance")
     async def identify(body: Identify, me: Device = device) -> JSONResponse:
         """A shared device asks: is this person here? Their phones get the
-        question."""
+        question. Asking again while they haven't answered changes nothing
+        and answers 409."""
         check = await kernel.attendance.ask(me.id, body.user, "device")
+        if check is None:
+            raise HTTPException(409, "they were already asked; waiting for their answer")
         return JSONResponse(api_json(check.public(me.name)))
 
     @app.delete("/api/attendance/{device_id}")

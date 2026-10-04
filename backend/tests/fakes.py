@@ -3,6 +3,7 @@ scripted Hermes, and a clock the test moves by hand."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from typing import Any
@@ -100,6 +101,9 @@ class FakeHermes:
         self.profiles: dict[str, str | None] = {}
         self.messages: list[tuple[str, str]] = []
         self.stopped: list[str] = []
+        self.deleted: list[str] = []
+        # Set when a run is stopped, for scripts that wait on it.
+        self.stop_requested = asyncio.Event()
         self.script: list[Any] = []
         self.hooks: list[Any] = []
 
@@ -120,6 +124,10 @@ class FakeHermes:
 
     async def stop(self, profile: Profile, run_id: str) -> None:
         self.stopped.append(run_id)
+        self.stop_requested.set()
+
+    async def delete_session(self, profile: Profile, session_id: str) -> None:
+        self.deleted.append(session_id)
 
     async def close(self) -> None:
         pass
