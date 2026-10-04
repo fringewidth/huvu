@@ -1,9 +1,12 @@
 """The push channel: one long-lived stream per open client.
 
-Some things reach a client that didn't ask for them: a turn another device
-started (the phone asks, the TV shows), a notification from a wake, a
-pending approval. Every open client keeps `GET /api/push` open and gets
-all of them. One owner, so every client sees everything.
+Some things reach a device that didn't ask for them right then: a turn in
+its conversation that it didn't start, a notification, a pending approval,
+a trigger waiting to be claimed. Every open client keeps `GET /api/push`
+open, and gets only what is addressed to its device. Notifications,
+approvals and claims go to phones, which are taken to be on their user's
+person. A device that isn't connected misses them; native push
+notifications are not built yet.
 """
 
 from __future__ import annotations
@@ -11,15 +14,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+import secrets
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from .policy import Approval
 
 log = logging.getLogger("huvu.push")
 
@@ -30,7 +31,7 @@ QUEUE_SIZE = 256
 @dataclass
 class Client:
     id: str
-    kind: str
+    device: str
     queue: asyncio.Queue[tuple[str, Any]] = field(default_factory=lambda: asyncio.Queue(QUEUE_SIZE))
 
 
@@ -40,30 +41,27 @@ class PushHub:
 
     @property
     def clients(self) -> list[dict[str, str]]:
-        return [{"id": c.id, "kind": c.kind} for c in self._clients.values()]
+        return [{"id": c.id, "device": c.device} for c in self._clients.values()]
 
-    async def subscribe(self, client_id: str, kind: str) -> AsyncIterator[tuple[str, Any]]:
-        client = Client(client_id, kind)
-        self._clients[client_id] = client
+    async def subscribe(self, device: str) -> AsyncIterator[tuple[str, Any]]:
+        """One open stream for a device. A device can hold several."""
+        client = Client(f"{device}-{secrets.token_hex(3)}", device)
+        self._clients[client.id] = client
         try:
             while True:
                 yield await client.queue.get()
         finally:
-            if self._clients.get(client_id) is client:
-                del self._clients[client_id]
+            self._clients.pop(client.id, None)
 
-    def broadcast(self, name: str, data: Any) -> None:
+    def send(self, name: str, data: Any, devices: Iterable[str]) -> None:
+        wanted = set(devices)
         for client in self._clients.values():
+            if client.device not in wanted:
+                continue
             try:
                 client.queue.put_nowait((name, data))
             except asyncio.QueueFull:
                 log.warning("push client %s is not reading; dropped %s", client.id, name)
-
-    async def notify(self, text: str, *, image: str | None = None, urgency: str = "normal") -> None:
-        self.broadcast("notify", {"text": text, "image": image, "urgency": urgency})
-
-    async def approval(self, approval: Approval) -> None:
-        self.broadcast("approval", approval.public())
 
 
 def sse(name: str, data: Any) -> str:

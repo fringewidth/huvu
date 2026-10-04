@@ -7,6 +7,7 @@ import json
 import socket
 import threading
 import time
+from dataclasses import dataclass
 
 import httpx
 import pytest
@@ -18,11 +19,29 @@ from huvu.kernel import Kernel
 
 from .fakes import FakeHermes, HomeSource
 
+HOUSEHOLD_MCP_TOKEN = "household-token"
+
+
+@dataclass
+class Server:
+    base: str
+    kernel: Kernel
+    hermes: FakeHermes
+    me_mcp_token: str
+
+    def login(self, kind: str = "web", user: str = "me", password: str = "correct horse") -> dict[str, str]:
+        res = httpx.post(f"{self.base}/api/login", json={"username": user, "password": password, "device": {"name": f"{user}'s {kind}", "kind": kind}})
+        res.raise_for_status()
+        return {"Authorization": f"Bearer {res.json()['token']}"}
+
 
 @pytest.fixture
 def server(tmp_path):
     hermes = FakeHermes()
-    kernel = Kernel(Config(data_dir=tmp_path, public_url="http://test"), hermes=hermes, sources={"home": HomeSource()})
+    config = Config(data_dir=tmp_path, public_url="http://test", mcp_token=HOUSEHOLD_MCP_TOKEN)
+    kernel = Kernel(config, hermes=hermes, sources={"home": HomeSource()})
+    me_token = kernel.accounts.add_user("me", "Me", "correct horse", "key-me")
+    kernel.accounts.add_user("mom", "Mom", "battery staple", "key-mom")
     app = create_app(kernel.config, kernel)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -34,51 +53,90 @@ def server(tmp_path):
         if srv.started:
             break
         time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}", kernel, hermes
+    yield Server(f"http://127.0.0.1:{port}", kernel, hermes, me_token)
     srv.should_exit = True
     thread.join(5)
 
 
+def test_requests_need_a_device(server):
+    assert httpx.get(f"{server.base}/api/conversation").status_code == 401
+    bad = httpx.post(f"{server.base}/api/login", json={"username": "me", "password": "nope", "device": {"name": "x", "kind": "web"}})
+    assert bad.status_code == 401
+    tv = httpx.post(f"{server.base}/api/login", json={"username": "me", "password": "correct horse", "device": {"name": "x", "kind": "tv"}})
+    assert tv.status_code == 401 and "pairs" in tv.json()["detail"]
+    me = httpx.get(f"{server.base}/api/me", headers=server.login()).json()
+    assert me["user"]["id"] == "me" and me["device"]["kind"] == "web"
+
+
 def test_chat_streams_events(server):
-    base, kernel, hermes = server
-    with httpx.stream("POST", f"{base}/api/chat", json={"conversation": "c1", "ask": "hi"}) as res:
+    with httpx.stream("POST", f"{server.base}/api/chat", json={"ask": "hi"}, headers=server.login()) as res:
         body = "".join(res.iter_text())
     names = [line[7:] for line in body.splitlines() if line.startswith("event: ")]
     assert names == ["turn.started", "answer.delta", "turn.ended"]
     ended = json.loads([line for line in body.splitlines() if line.startswith("data: ")][-1][6:])
     assert ended["ending"] is None and ended["answer"] == "ok"
+    assert list(server.hermes.profiles.values()) == ["me"]
 
 
-def test_chat_keeps_the_clients_turn_id_and_tells_the_model_about_actions(server):
-    base, kernel, hermes = server
+def test_each_device_has_its_own_conversation(server):
+    laptop, phone = server.login("web"), server.login("phone")
     body = {"id": "t_abc", "ask": "who is out there?", "actions": [{"text": "opened the live feed balcony", "at": "2026-10-03T13:42:00+00:00"}]}
-    with httpx.stream("POST", f"{base}/api/chat", json=body) as res:
+    with httpx.stream("POST", f"{server.base}/api/chat", json=body, headers=laptop) as res:
         "".join(res.iter_text())
-    [turn] = httpx.get(f"{base}/api/conversations/default").json()
+    [turn] = httpx.get(f"{server.base}/api/conversation", headers=laptop).json()
     assert turn["id"] == "t_abc" and turn["actions"][0]["text"] == "opened the live feed balcony"
-    assert "opened the live feed balcony" in hermes.messages[-1][1] and hermes.messages[-1][1].endswith("who is out there?")
+    message = server.hermes.messages[-1][1]
+    assert "opened the live feed balcony" in message and message.endswith("who is out there?")
+    assert httpx.get(f"{server.base}/api/conversation", headers=phone).json() == []
+    assert httpx.post(f"{server.base}/api/turns/t_abc/stop", headers=phone).status_code == 404
     # A turn id is used once, and an unknown turn can't be replaced.
-    assert httpx.post(f"{base}/api/chat", json={"id": "t_abc", "ask": "again"}).status_code == 409
-    assert httpx.post(f"{base}/api/chat", json={"ask": "again", "replaces": "t_nope"}).status_code == 404
+    assert httpx.post(f"{server.base}/api/chat", json={"id": "t_abc", "ask": "again"}, headers=laptop).status_code == 409
+    assert httpx.post(f"{server.base}/api/chat", json={"ask": "again", "replaces": "t_nope"}, headers=laptop).status_code == 404
 
 
-def test_feeds_media_and_approvals(server):
-    base, kernel, _ = server
-    assert httpx.get(f"{base}/api/feeds").json()[0]["id"] == "balcony"
-    url = kernel.media.url_for("home:snap/1").replace("http://test", base)
-    image = httpx.get(url)
-    assert image.headers["content-type"] == "image/jpeg"
-    held = httpx.post(f"{base}/api/actions/home/announce", json={})
-    assert held.json() == {"done": "announce"}
-    assert httpx.get(f"{base}/api/approvals").json() == []
+def test_feeds_media_taps_and_approvals(server):
+    laptop, phone = server.login("web"), server.login("phone")
+    assert httpx.get(f"{server.base}/api/feeds", headers=laptop).json()[0]["id"] == "balcony"
+    url = server.kernel.media.url_for("home:snap/1").replace("http://test", server.base)
+    assert httpx.get(url).headers["content-type"] == "image/jpeg"
+    tapped = httpx.post(f"{server.base}/api/actions/home/announce", json={}, headers=laptop)
+    assert tapped.json() == {"done": "announce"}
+    assert httpx.get(f"{server.base}/api/approvals", headers=laptop).status_code == 403
+    assert httpx.get(f"{server.base}/api/approvals", headers=phone).json() == []
+
+
+def test_a_household_device_pairs_from_a_phone(server):
+    started = httpx.post(f"{server.base}/api/pair", json={"name": "living room", "kind": "tv"}).json()
+    poll = f"{server.base}/api/pair/{started['pairing']}"
+    assert httpx.get(poll).status_code == 202
+    laptop = server.login("web")
+    assert httpx.post(f"{server.base}/api/pair/confirm", json={"code": started["code"]}, headers=laptop).status_code == 403
+    confirmed = httpx.post(f"{server.base}/api/pair/confirm", json={"code": started["code"].lower()}, headers=server.login("phone"))
+    assert confirmed.json()["user"] is None
+    paired = httpx.get(poll).json()
+    assert paired["status"] == "paired"
+    # The token is handed over once.
+    assert httpx.get(poll).status_code == 410
+    tv = {"Authorization": f"Bearer {paired['token']}"}
+    me = httpx.get(f"{server.base}/api/me", headers=tv).json()
+    assert me["user"] is None and me["device"]["kind"] == "tv"
+    # The TV can't approve anything, and its taps go through the policy.
+    assert httpx.get(f"{server.base}/api/approvals", headers=tv).status_code == 403
+    held = httpx.post(f"{server.base}/api/actions/home/unlock", json={}, headers=tv).json()
+    assert held["status"] == "pending_approval"
+    assert [a["user"] for a in httpx.get(f"{server.base}/api/approvals", headers=server.login("phone", "mom", "battery staple")).json()] == [None]
 
 
 async def test_hermes_side_over_mcp(server):
+    import httpx2
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    base, _, _ = server
-    async with streamable_http_client(f"{base}/mcp") as streams:
+    async with httpx2.AsyncClient() as anonymous:
+        assert (await anonymous.post(f"{server.base}/mcp", json={})).status_code == 401
+    headers = {"Authorization": f"Bearer {server.me_mcp_token}"}
+    server.kernel.accounts.login("me", "correct horse", "laptop", "web")
+    async with httpx2.AsyncClient(headers=headers) as client, streamable_http_client(f"{server.base}/mcp", http_client=client) as streams:
         read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
             init = await session.initialize()
@@ -90,5 +148,34 @@ async def test_hermes_side_over_mcp(server):
             assert "just now" in body["clock.time"]["at"]
             outside = await session.call_tool("home_snapshot", {"_session": "hs1"})
             assert json.loads(outside.content[0].text)["provenance"] == "external"
+            # The profile's token says whose trigger this is.
+            registered = await session.call_tool("triggers_register", {"note": "Doorbell.", "when": [{"event": "home.doorbell"}]})
+            assert json.loads(registered.content[0].text)["user"] == "me"
             bad = await session.call_tool("state_gte", {})
             assert bad.is_error and "Did you mean state_get" in bad.content[0].text
+
+
+def test_the_situation_names_the_profiles_user(server):
+    mine = httpx.post(f"{server.base}/api/situation", json={"values": []}, headers={"Authorization": f"Bearer {server.me_mcp_token}"})
+    assert "You are helping: Me" in mine.json()["text"]
+    household = httpx.post(f"{server.base}/api/situation", json={"values": []}, headers={"Authorization": f"Bearer {HOUSEHOLD_MCP_TOKEN}"})
+    assert "household" in household.json()["text"]
+    assert httpx.post(f"{server.base}/api/situation", json={"values": []}).status_code == 401
+
+
+def test_a_shared_device_asks_who_is_there(server):
+    started = httpx.post(f"{server.base}/api/pair", json={"name": "living room", "kind": "tv"}).json()
+    httpx.post(f"{server.base}/api/pair/confirm", json={"code": started["code"]}, headers=server.login("phone"))
+    tv = {"Authorization": f"Bearer {httpx.get(f'{server.base}/api/pair/{started['pairing']}').json()['token']}"}
+    assert [p["id"] for p in httpx.get(f"{server.base}/api/people", headers=tv).json()] == ["me", "mom"]
+    asked = httpx.post(f"{server.base}/api/attendance", json={"user": "mom"}, headers=tv).json()
+    moms_phone = server.login("phone", "mom", "battery staple")
+    [question] = httpx.get(f"{server.base}/api/identify", headers=moms_phone).json()
+    assert question["id"] == asked["id"] and question["device"]["name"] == "living room"
+    answered = httpx.post(f"{server.base}/api/identify/{asked['id']}", json={"yes": True}, headers=moms_phone)
+    assert answered.json()["status"] == "confirmed"
+    assert httpx.get(f"{server.base}/api/attendance", headers=tv).json()["user"]["name"] == "Mom"
+    tv_id = httpx.get(f"{server.base}/api/me", headers=tv).json()["device"]["id"]
+    assert httpx.delete(f"{server.base}/api/attendance/{tv_id}", headers=server.login("phone")).status_code == 403
+    assert httpx.delete(f"{server.base}/api/attendance/{tv_id}", headers=tv).json() == {"ok": True}
+    assert httpx.get(f"{server.base}/api/attendance", headers=tv).json()["user"] is None

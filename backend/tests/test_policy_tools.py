@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
+from huvu.accounts import AuthError
 from huvu.mcp_server import caller_from
-from huvu.policy import Caller
+from huvu.spec import Caller
 from huvu.tools import ToolError
 from huvu.triggers import TriggerSpec
 
@@ -26,28 +28,68 @@ async def test_notify_actions_run_at_once(kernel, home):
     assert home.acted == [("announce", {})]
 
 
-async def test_requires_human_always_asks_and_only_the_owner_answers(kernel, home):
-    held = await kernel.tools.call("home_unlock", {}, Caller(kind="hermes"))
+async def test_requires_human_always_asks_and_only_its_users_phone_answers(kernel, home, family):
+    held = await kernel.tools.call("home_unlock", {}, Caller(kind="hermes", user="me"))
     assert held.data["status"] == "pending_approval"
     assert home.acted == []
-    approval = await kernel.policy.resolve(held.data["approval"], approve=True)
+    for other in (family.mom_phone, family.me_web, family.tv):
+        with pytest.raises(AuthError):
+            await kernel.policy.resolve(held.data["approval"], approve=True, by=other)
+    approval = await kernel.policy.resolve(held.data["approval"], approve=True, by=family.me_phone)
     assert approval.status == "approved"
     assert home.acted == [("unlock", {})]
+    assert home.actors[-1].user == "me" and home.actors[-1].device == family.me_phone.id
 
 
-async def test_denied_and_expired_approvals_never_run(kernel, clock, home):
-    held = await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes"))
-    await kernel.policy.resolve(held.data["approval"], approve=False)
-    second = await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes"))
+async def test_approvals_go_to_the_users_phones_or_everyones(kernel, family):
+    from .test_triggers import push_events
+
+    mine, mine_task = await push_events(kernel, family.me_phone.id)
+    moms, moms_task = await push_events(kernel, family.mom_phone.id)
+    laptop, laptop_task = await push_events(kernel, family.me_web.id)
+    await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes", user="me"))
+    await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes", device=family.tv.id))
+    await asyncio.sleep(0)
+    assert [d["user"] for _, d in mine] == ["me", None]
+    assert [d["user"] for _, d in moms] == [None]
+    assert laptop == []
+    # The household's approval can be answered from either phone.
+    household = moms[0][1]["id"]
+    assert (await kernel.policy.resolve(household, approve=False, by=family.mom_phone)).status == "denied"
+    for task in (mine_task, moms_task, laptop_task):
+        task.cancel()
+
+
+async def test_denied_and_expired_approvals_never_run(kernel, clock, home, family):
+    held = await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes", user="me"))
+    await kernel.policy.resolve(held.data["approval"], approve=False, by=family.me_phone)
+    second = await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes", user="me"))
     clock.advance(minutes=11)
     with pytest.raises(Exception, match="expired"):
-        await kernel.policy.resolve(second.data["approval"], approve=True)
+        await kernel.policy.resolve(second.data["approval"], approve=True, by=family.me_phone)
     assert home.acted == []
 
 
-async def test_frontend_taps_run_at_once(kernel, home):
-    await kernel.policy.request("home", "unlock", {}, Caller(kind="frontend"))
+async def test_taps_run_at_once_on_personal_devices_only(kernel, home, family):
+    await kernel.policy.request("home", "unlock", {}, Caller(kind="frontend", user="me", device=family.me_web.id))
     assert home.acted == [("unlock", {})]
+    held = await kernel.policy.request("home", "unlock", {}, Caller(kind="frontend", device=family.tv.id))
+    assert held.data["status"] == "pending_approval"
+    assert home.acted == [("unlock", {})]
+
+
+async def test_notifications_reach_the_users_phones(kernel, family):
+    from .test_triggers import push_events
+
+    mine, mine_task = await push_events(kernel, family.me_phone.id)
+    moms, moms_task = await push_events(kernel, family.mom_phone.id)
+    await kernel.tools.call("huvu_notify", {"text": "for me"}, Caller(kind="hermes", user="me"))
+    await kernel.tools.call("huvu_notify", {"text": "for everyone"}, Caller(kind="hermes"))
+    await asyncio.sleep(0)
+    assert [d["text"] for _, d in mine] == ["for me", "for everyone"]
+    assert [d["text"] for _, d in moms] == ["for everyone"]
+    mine_task.cancel()
+    moms_task.cancel()
 
 
 async def test_external_results_keep_their_label(kernel):
@@ -55,10 +97,15 @@ async def test_external_results_keep_their_label(kernel):
     assert "external" in result.labels
 
 
-def test_the_plugin_session_becomes_the_caller():
+async def test_the_profile_names_the_user_and_the_session_the_device(kernel, family):
+    kernel.sessions.record("s9", "chat", user="me", device=family.me_web.id)
     args = {"_session": "s9", "values": ["clock.time"]}
-    caller = caller_from(args)
-    assert caller.session == "s9" and args == {"values": ["clock.time"]}
+    caller = caller_from(kernel, args, "me")
+    assert (caller.user, caller.session, caller.device) == ("me", "s9", family.me_web.id)
+    assert args == {"values": ["clock.time"]}
+    # Mom's profile can't borrow my session.
+    borrowed = caller_from(kernel, {"_session": "s9"}, "mom")
+    assert (borrowed.user, borrowed.session, borrowed.device) == ("mom", None, None)
 
 
 async def test_unknown_tools_and_missing_args_explain_themselves(kernel):
@@ -89,9 +136,9 @@ def run(ctx):
 """
 
 
-async def test_scripts_call_granted_tools_and_wake(kernel, home, hermes):
+async def test_scripts_call_granted_tools_and_wake(kernel, home, hermes, family):
     spec = {"note": "Triage the doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": SCRIPT, "grants": ["home_snapshot", "home_turn_on"]}
-    await kernel.triggers.register(TriggerSpec.model_validate(spec), Caller(kind="hermes", session="s1"))
+    await kernel.triggers.register(TriggerSpec.model_validate(spec), Caller(kind="hermes", session="s1", user="me"))
     await kernel.registry.get("home").ctx.emit("doorbell", "ding")
     await settle(kernel)
     assert home.acted == [("turn_on", {"entity_id": "light.porch"})]

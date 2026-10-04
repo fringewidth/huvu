@@ -14,6 +14,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from .accounts import Accounts
+from .attendance import Attendance
 from .builtin.clock import ClockSource
 from .builtin.huvu import HuvuSource
 from .config import Config
@@ -55,6 +57,7 @@ class Kernel:
         self._clock = clock
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = connect(config.data_dir / "huvu.db")
+        self.accounts = Accounts(self.db, self.now, household_key=config.hermes_api_key, household_mcp_token=config.mcp_token)
         self.events = EventLog(self.db)
         self.registry = Registry(self)
         self.state = StateService(self)
@@ -62,10 +65,11 @@ class Kernel:
         self.tools = ToolBox(self)
         self.triggers = TriggerEngine(self)
         self.scripts = ScriptRunner(self)
-        self.hermes = hermes or HermesClient(config.hermes_url, config.hermes_api_key)
+        self.hermes = hermes or HermesClient(config.hermes_url)
         self.sessions = SessionBook(self.db, self.now)
         self.conversations = ConversationHub(self)
         self.waker = Waker(self)
+        self.attendance = Attendance(self)
         self.push = PushHub()
         self.media = MediaStore(self)
         self.huvu = HuvuSource(self)
@@ -100,12 +104,13 @@ class Kernel:
         self.db.close()
 
     async def _tick(self) -> None:
-        """Expires triggers and approvals once a minute."""
+        """Expires triggers, approvals and attendance once a minute."""
         while True:
             await asyncio.sleep(TICK)
             try:
                 await self.triggers.expire()
                 await self.policy.expire()
+                await self.attendance.expire()
             except Exception:
                 log.exception("tick failed")
 
@@ -128,9 +133,12 @@ class Kernel:
         refs: dict[str, str] | None = None,
         data: dict[str, Any] | None = None,
         labels: list[Label] | None = None,
+        user: str | None = None,
+        device: str | None = None,
     ) -> Event:
         """Logs one of the kernel's own events: trigger runs and errors,
-        actions, approvals, wakes. Triggers can't watch these."""
+        actions, approvals, wakes, chat turns. Triggers can't watch these.
+        `user` makes it that user's alone (see events.py)."""
         return self.events.append(
             Event(
                 at=self.now(),
@@ -141,8 +149,15 @@ class Kernel:
                 refs=refs or {},
                 data=data or {},
                 labels=labels or ["house"],
+                user=user,
+                device=device,
             )
         )
+
+    async def notify(self, user: str | None, text: str, *, image: str | None = None, urgency: str = "normal") -> None:
+        """A notification on a user's phones, or on every user's phones for
+        the household."""
+        self.push.send("notify", {"text": text, "image": image, "urgency": urgency, "user": user}, self.accounts.phones(user))
 
     async def feeds(self) -> list[Feed]:
         feeds: list[Feed] = []

@@ -1,9 +1,12 @@
 """Conversations: the frontend's turns, multiplexed onto Hermes sessions.
 
-A frontend conversation maps to one Hermes session. Each ask becomes a turn:
-the kernel sends it to Hermes, turns Hermes's stream into frontend events
-(see the relay below), and sends those to the client that asked and to
-every other open client through the push channel.
+Every device has one conversation, keyed by the device's id, and it belongs
+to the device's user (or to nobody, on a household device). It maps to one
+Hermes session in that user's Hermes profile, or in the default profile for
+the household. Each ask becomes a turn: the kernel sends it to Hermes, turns
+Hermes's stream into frontend events (see the relay below), and sends those
+to the client that asked and to the same device's other open streams. A
+turn never reaches another device.
 
 Edit and retry rewind: the turn and everything after it are replaced.
 Hermes's API can fork a session but can't cut one short, so a rewind starts
@@ -24,7 +27,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel
 
 from .db import dumps, from_iso, iso, loads
-from .hermes import HermesError, HermesEvent
+from .hermes import HermesError, HermesEvent, Profile
+from .spec import Event
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -34,6 +38,9 @@ log = logging.getLogger("huvu.conversations")
 Ending = Literal["failed", "stopped"] | None
 
 HUVU_PREFIX = "mcp__huvu__"
+# How much of a turn the event log keeps in its summary.
+TURN_ASK_CHARS = 200
+TURN_ANSWER_CHARS = 300
 # Hermes's own tools that are the agent's housekeeping, not something to
 # show the owner.
 HIDDEN_TOOLS = {"memory", "skill_manage", "skill_view", "skills_list", "session_search", "todo", "clarify"}
@@ -79,6 +86,10 @@ class Turn:
 @dataclass
 class LiveTurn:
     turn: Turn
+    profile: Profile
+    # Whose turn it is in the event log: the device's user, or whoever is
+    # recognized at a household device.
+    user: str | None = None
     run_id: str | None = None
     task: asyncio.Task[None] | None = None
     history: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
@@ -92,6 +103,13 @@ class ConversationHub:
     def __init__(self, kernel: Kernel) -> None:
         self._kernel = kernel
         self._live: dict[str, LiveTurn] = {}
+        # What huvu tells the model on a device's next ask, such as who was
+        # recognized there. Appended to the message, so the session's
+        # prompt cache holds.
+        self._notes: dict[str, list[Action]] = {}
+
+    def note(self, conversation_id: str, text: str) -> None:
+        self._notes.setdefault(conversation_id, []).append(Action(text=text, at=self._kernel.now()))
 
     @property
     def _db(self):
@@ -101,27 +119,36 @@ class ConversationHub:
         rows = self._db.execute("SELECT * FROM turns WHERE conversation_id = ? ORDER BY seq", (conversation_id,)).fetchall()
         return [self._live[r["id"]].turn if r["id"] in self._live else _turn(r) for r in rows]
 
+    def owns(self, conversation_id: str, turn_id: str) -> bool:
+        row = self._db.execute("SELECT conversation_id FROM turns WHERE id = ?", (turn_id,)).fetchone()
+        return bool(row and row["conversation_id"] == conversation_id)
+
     async def ask(
         self,
         conversation_id: str,
         text: str,
         replaces: str | None = None,
         *,
+        user: str | None,
         actions: list[Action] | None = None,
         turn_id: str | None = None,
     ) -> LiveTurn:
-        """`turn_id` lets the client name its own turn, so it can stop or
-        rewind it by an id it already has."""
+        """`conversation_id` is the asking device's id, and `user` its user.
+        `turn_id` lets the client name its own turn, so it can stop or rewind
+        it by an id it already has."""
         if turn_id is not None and self._db.execute("SELECT 1 FROM turns WHERE id = ?", (turn_id,)).fetchone():
             raise ValueError(f"turn {turn_id!r} already exists")
-        conversation = self._conversation(conversation_id)
+        conversation = self._conversation(conversation_id, user)
+        profile = self._kernel.accounts.profile(user)
         for live in [l for l in self._live.values() if l.turn.conversation_id == conversation_id]:
             await self.stop(live.turn.id)
         kept = self.turns(conversation_id)
         session = conversation["hermes_session"]
         actions = actions or []
         tz = self._kernel.now().tzinfo
-        message = _with_actions(text, actions, tz)
+        self._kernel.attendance.touch(conversation_id)
+        notes = self._notes.pop(conversation_id, [])
+        message = _with_notes(_with_actions(text, actions, tz), notes, tz)
         if replaces is not None:
             index = next((i for i, t in enumerate(kept) if t.id == replaces), None)
             if index is None:
@@ -131,7 +158,7 @@ class ConversationHub:
             session = None
             message = _seeded(kept, message, tz)
         if session is None:
-            session = await self._new_session(conversation_id)
+            session = await self._new_session(conversation_id, user, profile)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
             conversation_id=conversation_id,
@@ -142,23 +169,29 @@ class ConversationHub:
             actions=actions,
         )
         self._save(turn, insert=True)
-        live = LiveTurn(turn)
+        live = LiveTurn(turn, profile, user=user or self._kernel.attendance.holder(conversation_id))
         self._live[turn.id] = live
         self._emit(live, "turn.started", {"ask": text, "at": turn.at})
         live.task = asyncio.create_task(self._relay(live, message), name=f"turn:{turn.id}")
         return live
 
-    def _conversation(self, conversation_id: str):
+    def _conversation(self, conversation_id: str, user: str | None):
         row = self._db.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         if row is None:
-            self._db.execute("INSERT INTO conversations (id, created_at) VALUES (?, ?)", (conversation_id, iso(self._kernel.now())))
+            self._db.execute(
+                "INSERT INTO conversations (id, user_id, created_at) VALUES (?, ?, ?)",
+                (conversation_id, user, iso(self._kernel.now())),
+            )
             row = self._db.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        elif row["user_id"] != user:
+            raise PermissionError(f"conversation {conversation_id} belongs to someone else")
         return row
 
-    async def _new_session(self, conversation_id: str) -> str:
+    async def _new_session(self, conversation_id: str, user: str | None, profile: Profile) -> str:
         session = f"huvu-{conversation_id}-{secrets.token_hex(3)}"
-        await self._kernel.hermes.create_session(session, title=f"huvu {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}")
-        self._kernel.sessions.record(session, "chat", conversation_id=conversation_id)
+        title = f"huvu chat on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}"
+        await self._kernel.hermes.create_session(profile, session, title=title)
+        self._kernel.sessions.record(session, "chat", user=user, device=conversation_id)
         self._db.execute("UPDATE conversations SET hermes_session = ? WHERE id = ?", (session, conversation_id))
         return session
 
@@ -180,7 +213,7 @@ class ConversationHub:
         if live is None:
             return
         if live.run_id:
-            await self._kernel.hermes.stop(live.run_id)
+            await self._kernel.hermes.stop(live.profile, live.run_id)
         if live.task and not live.task.done():
             live.task.cancel()
             await asyncio.gather(live.task, return_exceptions=True)
@@ -189,11 +222,15 @@ class ConversationHub:
         for turn_id in list(self._live):
             await self.stop(turn_id)
 
-    async def show(self, session: str | None, kind: str, args: dict[str, Any]) -> bool:
+    async def show(self, session: str | None, user: str | None, kind: str, args: dict[str, Any]) -> bool:
         """Adds a part from a `ui_*` tool to the live turn of the Hermes
         session that called it. Without a session (the huvu Hermes plugin
-        isn't installed), it uses the only live turn, if there is one."""
-        live = [l for l in self._live.values() if not l.ended and (session is None or l.turn.hermes_session == session)]
+        isn't installed), it uses the user's only live turn, if there is one."""
+        live = [
+            l
+            for l in self._live.values()
+            if not l.ended and l.profile.name == user and (session is None or l.turn.hermes_session == session)
+        ]
         target = live[0] if len(live) == 1 else None
         if target is not None:
             if kind == "image":
@@ -207,7 +244,7 @@ class ConversationHub:
     async def _relay(self, live: LiveTurn, message: str) -> None:
         ending: Ending = "failed"
         try:
-            async for event in self._kernel.hermes.chat(live.turn.hermes_session or "", message):
+            async for event in self._kernel.hermes.chat(live.profile, live.turn.hermes_session or "", message):
                 ending = self._translate(live, event, ending)
         except asyncio.CancelledError:
             ending = "stopped"
@@ -279,7 +316,7 @@ class ConversationHub:
         live.history.append((name, payload))
         for queue in live.subscribers:
             queue.put_nowait((name, payload))
-        self._kernel.push.broadcast(name, payload)
+        self._kernel.push.send(name, payload, [live.turn.conversation_id])
 
     def _end(self, live: LiveTurn, ending: Ending) -> None:
         if live.ended:
@@ -288,10 +325,32 @@ class ConversationHub:
         live.turn.running = False
         self._save(live.turn, insert=False)
         self._emit(live, "turn.ended", {"ending": ending, "answer": live.turn.answer})
+        self._log(live)
         live.ended = True
         for queue in live.subscribers:
             queue.put_nowait(None)
         self._live.pop(live.turn.id, None)
+
+    def _log(self, live: LiveTurn) -> None:
+        """The turn in the event log, as its user's, so their dream can read
+        what was said, even at a household device whose Hermes session
+        lives in the household's profile."""
+        turn = live.turn
+        answer = turn.answer.strip().replace("\n", " ")
+        self._kernel.events.append(
+            Event(
+                at=self._kernel.now(),
+                source="kernel",
+                type="conversation.turn",
+                entity=turn.id,
+                summary=f"asked {turn.ask[:TURN_ASK_CHARS]!r}; huvu said {answer[:TURN_ANSWER_CHARS]!r}" + (f" ({turn.ending})" if turn.ending else ""),
+                refs={"turn": f"kernel:turn/{turn.id}"},
+                data={"device": turn.conversation_id},
+                labels=["owner"],
+                user=live.user,
+                device=turn.conversation_id,
+            )
+        )
 
     def _save(self, turn: Turn, insert: bool) -> None:
         if insert:
@@ -338,6 +397,11 @@ ADAPTERS: dict[str, Adapter] = {
 def _note(action: Action, tz: tzinfo | None) -> str:
     when = f"{action.at.astimezone(tz):%a %Y-%m-%d %H:%M}"
     return f"(Owner action in the app, {when}: {action.text}. Not a request, no reply needed.)"
+
+
+def _with_notes(text: str, notes: list[Action], tz: tzinfo | None) -> str:
+    lines = [f"(huvu, {n.at.astimezone(tz):%H:%M}: {n.text}. Not a request, no reply needed.)" for n in notes]
+    return "\n".join([*lines, "", text]) if lines else text
 
 
 def _with_actions(text: str, actions: list[Action], tz: tzinfo | None) -> str:

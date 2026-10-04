@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .spec import Blob, Event, Feed, Label, Match, Reading, Result, SourceSpec
+from .spec import Blob, Caller, Event, Feed, Label, Match, Reading, Result, SourceSpec
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -66,12 +66,16 @@ class Source:
         such as HA entities. The kernel merges every source's answer."""
         return []
 
-    async def query(self, name: str, args: dict[str, Any]) -> Result:
+    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
+        """Runs a query. `caller.user` is whom it's for, so a source with
+        per-person data (a calendar) answers with that person's; it is None
+        for the household."""
         raise SourceError(f"{self.ctx.name} has no query {name!r}")
 
-    async def act(self, name: str, args: dict[str, Any]) -> Result:
+    async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         """Runs an action. The kernel calls this only after the action
-        policy allowed it, so the source does no permission checks."""
+        policy allowed it, so the source does no permission checks.
+        `caller.user` is whom it's for, as in `query`."""
         raise SourceError(f"{self.ctx.name} has no action {name!r}")
 
     async def watch(self, value: str, params: dict[str, Any]) -> None:
@@ -111,9 +115,11 @@ class SourceContext:
         data: dict[str, Any] | None = None,
         labels: list[Label] | None = None,
         at: datetime | None = None,
+        user: str | None = None,
     ) -> Event:
         """Logs an event. `type` is unqualified (`doorbell`); the kernel adds
-        the source's name. It must be one of the types in the spec."""
+        the source's name. It must be one of the types in the spec. `user`
+        makes it one person's (their calendar), not the household's."""
         event = Event(
             at=at or self._kernel.now(),
             source=self.name,
@@ -123,6 +129,7 @@ class SourceContext:
             refs=refs or {},
             data=data or {},
             labels=labels or ["house"],
+            user=user,
         )
         return await self._kernel.emit(event)
 
@@ -148,9 +155,10 @@ class SourceContext:
         """Reads values from any source, by their keys (`ha.entity_state[light.porch]`)."""
         return await self._kernel.state.get(keys)
 
-    async def query(self, source: str, name: str, args: dict[str, Any]) -> Result:
-        """Runs another source's query."""
-        return await self._kernel.registry.get(source).query(name, args)
+    async def query(self, source: str, name: str, args: dict[str, Any], caller: Caller | None = None) -> Result:
+        """Runs another source's query, for the caller this source is
+        answering, or for the kernel."""
+        return await self._kernel.registry.get(source).query(name, args, caller or Caller(kind="kernel"))
 
     async def watch(self, key: str, callback) -> None:
         """Calls `callback(key, reading)` on each change of another source's

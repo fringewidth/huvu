@@ -13,7 +13,17 @@ from typing import TYPE_CHECKING, Any
 from ..db import dumps, loads
 from ..names import UnknownName
 from ..source import Source, SourceError
-from ..spec import ActionSpec, EventSpec, Match, QuerySpec, Reading, Result, SourceSpec, ValueSpec
+from ..spec import (
+    ActionSpec,
+    Caller,
+    EventSpec,
+    Match,
+    QuerySpec,
+    Reading,
+    Result,
+    SourceSpec,
+    ValueSpec,
+)
 
 if TYPE_CHECKING:
     from ..kernel import Kernel
@@ -71,7 +81,7 @@ class HuvuSource(Source):
                 ),
                 ActionSpec(
                     name="notify",
-                    description="Sends the owner a notification on every open client. `image` is a ref from a source, such as a doorbell snapshot.",
+                    description="Sends a notification to the phones of the person you're helping, or to everyone's phones when you serve the household. `image` is a ref from a source, such as a doorbell snapshot.",
                     input_schema=_object(
                         {
                             "text": {"type": "string"},
@@ -115,16 +125,16 @@ class HuvuSource(Source):
         needle = text.lower().strip()
         return [Match(value=target, name=f"you call it {alias!r}") for alias, target in self._aliases().items() if needle in alias or alias in needle]
 
-    async def query(self, name: str, args: dict[str, Any]) -> Result:
+    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         if name == "aliases":
             data: Any = self._aliases()
         elif name == "pending_approvals":
-            data = [a.public() for a in self._kernel.policy.pending()]
+            data = [a.public() for a in self._kernel.policy.pending_for(caller.user)]
         else:
             raise SourceError(f"huvu has no query {name!r}")
         return Result(data=data, labels=["owner"])
 
-    async def act(self, name: str, args: dict[str, Any]) -> Result:
+    async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         handlers = {
             "set_mode": self._set_mode,
             "set_alias": self._set_alias,
@@ -134,9 +144,9 @@ class HuvuSource(Source):
         handler = handlers.get(name)
         if handler is None:
             raise SourceError(f"huvu has no action {name!r}")
-        return await handler(args)
+        return await handler(args, caller)
 
-    async def _set_mode(self, args: dict[str, Any]) -> Result:
+    async def _set_mode(self, args: dict[str, Any], caller: Caller) -> Result:
         mode = args["mode"]
         if mode not in MODES:
             raise SourceError(f"mode must be one of {', '.join(MODES)}")
@@ -145,7 +155,7 @@ class HuvuSource(Source):
         await self.ctx.emit("mode_changed", f"house mode set to {mode}", data={"mode": mode}, labels=["owner"])
         return Result(data={"mode": mode}, labels=["owner"])
 
-    async def _set_alias(self, args: dict[str, Any]) -> Result:
+    async def _set_alias(self, args: dict[str, Any], caller: Caller) -> Result:
         try:
             ref, _ = self._kernel.registry.resolve_value(args["value"])
         except UnknownName as err:
@@ -155,16 +165,17 @@ class HuvuSource(Source):
         self._put("aliases", aliases)
         return Result(data={"alias": args["alias"], "value": ref.key}, labels=["owner"])
 
-    async def _remove_alias(self, args: dict[str, Any]) -> Result:
+    async def _remove_alias(self, args: dict[str, Any], caller: Caller) -> Result:
         aliases = self._aliases()
         removed = aliases.pop(args["alias"].lower().strip(), None)
         self._put("aliases", aliases)
         return Result(data={"removed": removed is not None}, labels=["owner"])
 
-    async def _notify(self, args: dict[str, Any]) -> Result:
+    async def _notify(self, args: dict[str, Any], caller: Caller) -> Result:
         image = self._kernel.media.url_for(args["image"]) if args.get("image") else None
-        await self._kernel.push.notify(args["text"], image=image, urgency=args.get("urgency", "normal"))
-        await self.ctx.emit("notified", f"told the owner: {args['text']}", refs={"image": args["image"]} if image else {}, labels=["owner"])
+        await self._kernel.notify(caller.user, args["text"], image=image, urgency=args.get("urgency", "normal"))
+        whom = caller.user or "everyone"
+        await self.ctx.emit("notified", f"told {whom}: {args['text']}", refs={"image": args["image"]} if image else {}, labels=["owner"], user=caller.user)
         return Result(data={"sent": True}, labels=["owner"])
 
 

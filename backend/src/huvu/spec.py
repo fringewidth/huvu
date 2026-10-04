@@ -8,6 +8,7 @@ engine and the frontend all read the same shapes.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
@@ -36,6 +37,37 @@ Autonomy = Literal["silent", "notify", "ask"]
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*$")
 MEMBER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+CallerKind = Literal["hermes", "script", "frontend", "kernel"]
+
+
+@dataclass(frozen=True)
+class Caller:
+    """Who asked for something, and for whom. `user` is None on a household
+    device and for the kernel itself. `device` is the device whose
+    conversation the request came from; wakes, scripts and Hermes's own cron
+    jobs have none."""
+
+    kind: CallerKind
+    session: str | None = None
+    trigger: str | None = None
+    user: str | None = None
+    device: str | None = None
+
+    def describe(self) -> str:
+        parts = [self.kind]
+        if self.user:
+            parts.append(f"user {self.user}")
+        if self.device:
+            parts.append(f"device {self.device}")
+        if self.session:
+            parts.append(f"session {self.session}")
+        if self.trigger:
+            parts.append(f"trigger {self.trigger}")
+        return ", ".join(parts)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind, "session": self.session, "trigger": self.trigger, "user": self.user, "device": self.device}
 
 
 class Strict(BaseModel):
@@ -158,6 +190,11 @@ class Event(Strict):
     # Small, flat fields triggers can filter on. Big payloads stay in the source.
     data: dict[str, Any] = Field(default_factory=dict)
     labels: list[Label] = Field(default_factory=lambda: ["house"])
+    # Whose event it is. None is the household's, which every user sees;
+    # one with a user only shows to that user (and their dream).
+    user: str | None = None
+    # The device whose conversation it came from, if any.
+    device: str | None = None
 
 
 class Reading(Strict):

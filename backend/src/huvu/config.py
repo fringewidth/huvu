@@ -6,8 +6,8 @@
     cors_origins = ["*"]
 
     [auth]
-    mode = "off"             # or "jwt"
-    owner = "you@example.com"
+    mode = "on"              # or "off", for development on localhost
+    dev_user = "you"         # with mode = "off", whose requests they are
 
     [hermes]
     url = "http://localhost:8642"
@@ -20,8 +20,11 @@
     driver = "huvu_drivers.tuya:TuyaSource"
     options = { device_id = "..." }
 
-Secrets never go in the file: HUVU_JWT_SECRET, HUVU_MCP_TOKEN and
-HERMES_API_KEY come from the environment.
+Secrets never go in the file. HERMES_API_KEY (the default Hermes profile's
+key) and HUVU_MCP_TOKEN (the token that profile sends to /mcp) come from the
+environment; both serve household devices. Users, devices and each user's
+profile secrets live in the database (see accounts.py), managed with
+`huvu user ...`.
 """
 
 from __future__ import annotations
@@ -49,13 +52,14 @@ class Config:
     host: str = "0.0.0.0"
     port: int = 3001
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
-    auth_mode: Literal["off", "jwt"] = "off"
-    owner: str | None = None
-    jwt_secret: str | None = None
-    # The bearer token Hermes sends to /mcp. None leaves /mcp open, which
-    # is only fine while it listens on localhost.
+    auth_mode: Literal["on", "off"] = "on"
+    # With auth off, the user behind every request. None makes them the
+    # household's.
+    dev_user: str | None = None
+    # The token Hermes's default profile (the household's) sends to /mcp.
     mcp_token: str | None = None
     hermes_url: str = "http://localhost:8642"
+    # The default profile's API key.
     hermes_api_key: str | None = None
     policy: dict[str, Autonomy] = field(default_factory=dict)
     sources: list[SourceConfig] = field(default_factory=list)
@@ -73,17 +77,16 @@ def load(path: Path | None = None) -> Config:
         host=raw.get("host", "0.0.0.0"),
         port=int(raw.get("port", 3001)),
         cors_origins=list(raw.get("cors_origins", ["*"])),
-        auth_mode=auth.get("mode", "off"),
-        owner=auth.get("owner"),
-        jwt_secret=os.environ.get("HUVU_JWT_SECRET"),
+        auth_mode=auth.get("mode", "on"),
+        dev_user=auth.get("dev_user"),
         mcp_token=os.environ.get("HUVU_MCP_TOKEN"),
         hermes_url=hermes.get("url", "http://localhost:8642"),
         hermes_api_key=os.environ.get("HERMES_API_KEY"),
         policy=dict(raw.get("policy", {})),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
-    if config.auth_mode == "jwt" and not (config.jwt_secret and config.owner):
-        raise ValueError("auth.mode = jwt needs HUVU_JWT_SECRET in the environment and auth.owner in the config")
+    if config.auth_mode not in ("on", "off"):
+        raise ValueError(f"auth.mode must be on or off, not {config.auth_mode!r}")
     for key, level in config.policy.items():
         if level not in ("silent", "notify", "ask"):
             raise ValueError(f"policy {key!r}: {level!r} must be silent, notify or ask")

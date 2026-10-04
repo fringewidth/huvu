@@ -7,9 +7,20 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from typing import Any
 
-from huvu.hermes import HermesEvent
+from huvu.hermes import HermesEvent, Profile
 from huvu.source import Source, SourceError
-from huvu.spec import ActionSpec, Blob, EventSpec, Feed, Match, QuerySpec, Result, SourceSpec, ValueSpec
+from huvu.spec import (
+    ActionSpec,
+    Blob,
+    Caller,
+    EventSpec,
+    Feed,
+    Match,
+    QuerySpec,
+    Result,
+    SourceSpec,
+    ValueSpec,
+)
 
 
 class FakeClock:
@@ -28,6 +39,7 @@ class HomeSource(Source):
     def __init__(self) -> None:
         super().__init__({})
         self.acted: list[tuple[str, dict[str, Any]]] = []
+        self.actors: list[Caller] = []
         self.watched: list[str] = []
 
     def describe(self) -> SourceSpec:
@@ -55,13 +67,14 @@ class HomeSource(Source):
         lights = {"light.porch": "Porch Light", "light.light_3": "Light 3"}
         return [Match(value=f"home.light[{k}]", name=v) for k, v in lights.items() if text.lower() in v.lower()]
 
-    async def query(self, name: str, args: dict[str, Any]) -> Result:
+    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         if name != "snapshot":
             raise SourceError(f"no query {name}")
         return Result(data={"ref": "home:snap/1", "text": "a note held up to the camera"}, labels=["external"])
 
-    async def act(self, name: str, args: dict[str, Any]) -> Result:
+    async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         self.acted.append((name, args))
+        self.actors.append(caller)
         return Result(data={"done": name})
 
     async def watch(self, value: str, params: dict[str, Any]) -> None:
@@ -83,16 +96,19 @@ class FakeHermes:
 
     def __init__(self) -> None:
         self.sessions: list[str] = []
+        # Session id -> the profile it was created in. None is the default.
+        self.profiles: dict[str, str | None] = {}
         self.messages: list[tuple[str, str]] = []
         self.stopped: list[str] = []
         self.script: list[Any] = []
         self.hooks: list[Any] = []
 
-    async def create_session(self, session_id: str, *, title: str | None = None, source: str = "huvu") -> str:
+    async def create_session(self, profile: Profile, session_id: str, *, title: str | None = None) -> str:
         self.sessions.append(session_id)
+        self.profiles[session_id] = profile.name
         return session_id
 
-    async def chat(self, session_id: str, message: str) -> AsyncIterator[HermesEvent]:
+    async def chat(self, profile: Profile, session_id: str, message: str) -> AsyncIterator[HermesEvent]:
         self.messages.append((session_id, message))
         steps = self.script or [("run.started", {"run_id": "run_1"}), ("assistant.delta", {"delta": "ok"}), ("run.completed", {})]
         for step in steps:
@@ -102,7 +118,7 @@ class FakeHermes:
             name, data = step
             yield HermesEvent(name, {"session_id": session_id, **data})
 
-    async def stop(self, run_id: str) -> None:
+    async def stop(self, profile: Profile, run_id: str) -> None:
         self.stopped.append(run_id)
 
     async def close(self) -> None:

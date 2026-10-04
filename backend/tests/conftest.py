@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 
+from huvu.accounts import Device
 from huvu.config import Config
 from huvu.kernel import Kernel
 
@@ -34,3 +36,29 @@ async def kernel(tmp_path, clock, home, hermes):
     await k.triggers.stop()
     await k.conversations.close()
     k.db.close()
+
+
+@dataclass
+class Family:
+    """Two users with their devices, and a TV that belongs to nobody."""
+
+    me_phone: Device
+    me_web: Device
+    mom_phone: Device
+    tv: Device
+    # The MCP token each user's Hermes profile sends.
+    me_token: str
+    mom_token: str
+
+
+@pytest.fixture
+def family(kernel) -> Family:
+    accounts = kernel.accounts
+    me_token = accounts.add_user("me", "Me", "correct horse", "key-me")
+    mom_token = accounts.add_user("mom", "Mom", "battery staple", "key-mom")
+    me_phone, _ = accounts.login("me", "correct horse", "my phone", "phone")
+    me_web, _ = accounts.login("me", "correct horse", "laptop", "web")
+    mom_phone, _ = accounts.login("mom", "battery staple", "mom's phone", "phone")
+    pairing = accounts.start_pairing("living room", "tv")
+    tv = accounts.confirm_pairing(pairing.code, me_phone)
+    return Family(me_phone, me_web, mom_phone, tv, me_token, mom_token)

@@ -3,6 +3,13 @@
 Cross-source triggers, the daily digest and cross-source search all need a
 single stream, so the envelope lives here. The detail stays in each source
 and is reached through the event's refs.
+
+An event either belongs to the household, which every user sees, or to one
+user, which only that user sees: their actions, approvals, triggers, chat
+turns, and what they did at a household device while recognized there (see
+attendance.py). A user's Hermes profile reads the log through the tools, so
+their dream sees their own events and the household's, never another
+user's.
 """
 
 from __future__ import annotations
@@ -20,6 +27,25 @@ from .spec import Event
 DIGEST_EXAMPLES = 5
 
 
+class Everyone:
+    """Reads with no user filter, for the kernel itself."""
+
+
+EVERYONE = Everyone()
+Viewer = str | None | Everyone
+
+
+def _visible(viewer: Viewer, column: str = "user_id") -> tuple[str, list[Any]]:
+    """The SQL that keeps what `viewer` may see: the household's events and
+    their own. None sees only the household's."""
+    clause, args = "", []
+    if isinstance(viewer, str):
+        clause, args = f"({column} IS NULL OR {column} = ?)", [viewer]
+    elif viewer is None:
+        clause = f"{column} IS NULL"
+    return clause, args
+
+
 class EventLog:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
@@ -27,7 +53,7 @@ class EventLog:
     def append(self, event: Event) -> Event:
         stored = event.model_copy(update={"id": event.id or new_id(event.at)})
         self._conn.execute(
-            "INSERT INTO events (id, at, ts, source, type, entity, summary, refs, data, labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, at, ts, source, type, entity, summary, refs, data, labels, user_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 stored.id,
                 iso(stored.at),
@@ -39,12 +65,25 @@ class EventLog:
                 dumps(stored.refs),
                 dumps(stored.data),
                 dumps(stored.labels),
+                stored.user,
+                stored.device,
             ),
         )
         return stored
 
-    def get(self, event_id: str) -> Event | None:
-        row = self._conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+    def claim(self, device: str, user: str, since: datetime) -> int:
+        """Gives a user the household's events from a device since a time:
+        what they did there before huvu knew it was them."""
+        cursor = self._conn.execute(
+            "UPDATE events SET user_id = ? WHERE device_id = ? AND user_id IS NULL AND ts >= ?",
+            (user, device, since.timestamp()),
+        )
+        return cursor.rowcount
+
+    def get(self, event_id: str, viewer: Viewer = EVERYONE) -> Event | None:
+        clause, args = _visible(viewer)
+        where = f" AND {clause}" if clause else ""
+        row = self._conn.execute(f"SELECT * FROM events WHERE id = ?{where}", (event_id, *args)).fetchone()
         return None if row is None else _event(row)
 
     def search(
@@ -56,11 +95,17 @@ class EventLog:
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 20,
+        viewer: Viewer = EVERYONE,
     ) -> list[Event]:
         """Newest first. With `text`, only events whose summary, type or
-        entity has every word, still newest first."""
+        entity has every word, still newest first. `viewer` limits it to
+        what that user may see."""
         where: list[str] = []
         args: list[Any] = []
+        visible, visible_args = _visible(viewer, "e.user_id")
+        if visible:
+            where.append(visible)
+            args.extend(visible_args)
         if source:
             where.append("e.source = ?")
             args.append(source)
@@ -86,13 +131,14 @@ class EventLog:
         ).fetchall()
         return [_event(r) for r in rows]
 
-    def digest(self, start: datetime, end: datetime) -> dict[str, Any]:
-        """A rollup of everything between `start` and `end`: per event type,
-        how many, the first and last, and a few summaries; and per hour, how
-        many events of any type."""
+    def digest(self, start: datetime, end: datetime, viewer: Viewer = EVERYONE) -> dict[str, Any]:
+        """A rollup of everything between `start` and `end` that `viewer` may
+        see: per event type, how many, the first and last, and a few
+        summaries; and per hour, how many events of any type."""
+        visible, visible_args = _visible(viewer)
         rows = self._conn.execute(
-            "SELECT type, at, summary FROM events WHERE ts >= ? AND ts < ? ORDER BY ts",
-            (start.timestamp(), end.timestamp()),
+            f"SELECT type, at, summary FROM events WHERE ts >= ? AND ts < ?{' AND ' + visible if visible else ''} ORDER BY ts",
+            (start.timestamp(), end.timestamp(), *visible_args),
         ).fetchall()
         by_type: dict[str, dict[str, Any]] = {}
         hours: dict[str, int] = {}
@@ -143,4 +189,6 @@ def _event(row: sqlite3.Row) -> Event:
         refs=loads(row["refs"]),
         data=loads(row["data"]),
         labels=loads(row["labels"]),
+        user=row["user_id"],
+        device=row["device_id"],
     )

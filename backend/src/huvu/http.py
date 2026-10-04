@@ -1,8 +1,8 @@
 """The HTTP server: the frontend's API, the MCP endpoint, and media.
 
-The frontend contract is in docs/frontend-contract.md. `POST /api/chat`
-takes a conversation, an ask and what the owner did in the app since the
-last one, and answers with an SSE stream of turn events.
+The frontend contract is in docs/frontend-contract.md. Every device has one
+conversation. `POST /api/chat` takes an ask and what the user did in the
+app since the last one, and answers with an SSE stream of turn events.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import secrets
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -21,37 +20,64 @@ from pydantic import BaseModel, Field
 from starlette.routing import Route
 
 from . import mcp_server
-from .auth import McpAuth, require_owner
+from .accounts import AuthError, Device
+from .auth import McpAuth, bearer, device_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
 from .kernel import Kernel
-from .policy import Caller
 from .push import api_json, sse
 from .source import SourceError
+from .spec import Caller
 from .times import for_model
 from .tools import ToolError
+from .triggers import TriggerError
 
 log = logging.getLogger("huvu.http")
 
 KEEPALIVE = 15.0
-DEFAULT_CONVERSATION = "default"
 
 
 class Ask(BaseModel):
-    conversation: str = DEFAULT_CONVERSATION
     ask: str
     # The client names its turn, so it can stop or rewind it by an id it
     # already has. The backend picks one when this is left out.
     id: str | None = Field(default=None, pattern=r"^[\w-]{1,64}$")
     # The turn this ask replaces, with everything after it (edit and retry).
     replaces: str | None = None
-    # What the owner did in the app since the last ask. Context for the
+    # What the user did in the app since the last ask. Context for the
     # model, never a request.
     actions: list[Action] = Field(default_factory=list)
 
 
+class NewDevice(BaseModel):
+    name: str = Field(max_length=60)
+    kind: str
+
+
+class Login(BaseModel):
+    username: str
+    password: str
+    device: NewDevice
+
+
+class PairCode(BaseModel):
+    code: str
+
+
 class Answer(BaseModel):
     approve: bool
+
+
+class ClaimAnswer(BaseModel):
+    number: int
+
+
+class Identify(BaseModel):
+    user: str
+
+
+class IdentifyAnswer(BaseModel):
+    yes: bool
 
 
 class Situation(BaseModel):
@@ -60,8 +86,10 @@ class Situation(BaseModel):
 
 def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     kernel = kernel or Kernel(config)
+    accounts = kernel.accounts
     mcp = mcp_server.build(kernel)
-    owner = Depends(require_owner(config))
+    device = Depends(device_auth(config, accounts))
+    phone = Depends(phone_auth(config, accounts))
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -80,33 +108,141 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         # WHEP clients read their session's URL from Location.
         expose_headers=["Location"],
     )
-    app.router.routes.append(Route("/mcp", endpoint=McpAuth(mcp.handle_request, config.mcp_token), methods=["GET", "POST", "DELETE"]))
+    app.router.routes.append(Route("/mcp", endpoint=McpAuth(mcp.handle_request, config, accounts), methods=["GET", "POST", "DELETE"]))
+
+    @app.exception_handler(AuthError)
+    async def auth_error(request: Request, err: AuthError) -> JSONResponse:
+        return JSONResponse({"detail": str(err)}, status_code=403)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"ok": True, "sources": kernel.registry.names, "clients": kernel.push.clients}
 
-    @app.post("/api/chat", dependencies=[owner])
-    async def chat(ask: Ask) -> StreamingResponse:
-        live = await _ask(kernel, ask)
+    # Devices
+
+    @app.post("/api/login")
+    async def login(body: Login) -> JSONResponse:
+        """A personal device (phone, web) logs in with its user's password."""
+        try:
+            new, token = accounts.login(body.username, body.password, body.device.name, body.device.kind)
+        except AuthError as err:
+            raise HTTPException(401, str(err)) from err
+        return JSONResponse(api_json({"token": token, "device": new.public()}))
+
+    @app.post("/api/pair")
+    async def pair(body: NewDevice) -> JSONResponse:
+        """A household device (TV, speaker) asks to pair. It shows `code`,
+        and polls GET /api/pair/{pairing} until a phone confirms it."""
+        try:
+            pairing = accounts.start_pairing(body.name, body.kind)
+        except AuthError as err:
+            raise HTTPException(400, str(err)) from err
+        return JSONResponse(api_json({"pairing": pairing.id, "code": f"{pairing.code[:4]}-{pairing.code[4:]}", "expires_at": pairing.expires_at}))
+
+    @app.get("/api/pair/{pairing_id}")
+    async def pairing(pairing_id: str) -> JSONResponse:
+        try:
+            collected = accounts.collect_pairing(pairing_id)
+        except AuthError as err:
+            raise HTTPException(410, str(err)) from err
+        body: dict[str, Any] = {"status": "waiting"}
+        status = 202
+        if collected is not None:
+            paired, token = collected
+            body = {"status": "paired", "token": token, "device": paired.public()}
+            status = 200
+        return JSONResponse(api_json(body), status_code=status)
+
+    @app.post("/api/pair/confirm")
+    async def confirm(body: PairCode, by: Device = phone) -> JSONResponse:
+        return JSONResponse(api_json(accounts.confirm_pairing(body.code, by).public()))
+
+    @app.get("/api/me")
+    async def me(me: Device = device) -> JSONResponse:
+        user = accounts.user(me.user) if me.user else None
+        return JSONResponse(api_json({"device": me.public(), "user": user.public() if user else None}))
+
+    @app.get("/api/devices")
+    async def devices(me: Device = device) -> JSONResponse:
+        """A user's own devices and the household's. On a household device,
+        only itself."""
+        listed = accounts.devices(me.user, household=True) if me.user else [me]
+        return JSONResponse(api_json([d.public() for d in listed]))
+
+    @app.delete("/api/devices/{device_id}")
+    async def revoke(device_id: str, me: Device = device) -> dict[str, bool]:
+        """Logs a device out: one's own, or a household device. A household
+        device can only unpair itself."""
+        target = accounts.device(device_id)
+        allowed = target is not None and (target.id == me.id or (me.user is not None and target.user in (None, me.user)))
+        if target is None or not allowed:
+            raise HTTPException(404, f"no device {device_id!r}")
+        accounts.revoke(device_id)
+        return {"ok": True}
+
+    # Who is at a shared device
+
+    @app.get("/api/people", dependencies=[device])
+    async def people() -> JSONResponse:
+        """The family, for a shared device's "who's this?" picker."""
+        return JSONResponse([u.public() for u in accounts.users()])
+
+    @app.get("/api/attendance")
+    async def attendance(me: Device = device) -> JSONResponse:
+        """Who is recognized at this device. A personal device answers with
+        its own user."""
+        user = me.user or kernel.attendance.holder(me.id)
+        named = accounts.user(user) if user else None
+        return JSONResponse({"user": named.public() if named else None})
+
+    @app.post("/api/attendance")
+    async def identify(body: Identify, me: Device = device) -> JSONResponse:
+        """A shared device asks: is this person here? Their phones get the
+        question."""
+        check = await kernel.attendance.ask(me.id, body.user, "device")
+        return JSONResponse(api_json(check.public(me.name)))
+
+    @app.delete("/api/attendance/{device_id}")
+    async def release(device_id: str, me: Device = device) -> dict[str, bool]:
+        """Ends who is recognized at a device: from the device itself, or the
+        recognized person's phone."""
+        ended = await kernel.attendance.release(device_id, me, "released from the app")
+        return {"ok": ended is not None}
+
+    @app.get("/api/identify")
+    async def questions(by: Device = phone) -> JSONResponse:
+        return JSONResponse(api_json(kernel.attendance.pending_for(by.user)))
+
+    @app.post("/api/identify/{check_id}")
+    async def answer_identify(check_id: str, body: IdentifyAnswer, by: Device = phone) -> JSONResponse:
+        check = await kernel.attendance.answer(check_id, body.yes, by)
+        return JSONResponse(api_json({"id": check.id, "status": check.status}))
+
+    # The conversation
+
+    @app.post("/api/chat")
+    async def chat(ask: Ask, me: Device = device) -> StreamingResponse:
+        live = await _ask(kernel, ask, me)
         events = kernel.conversations.subscribe(live)
         return StreamingResponse(_sse_stream(events), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
-    @app.post("/api/turns/{turn_id}/stop", dependencies=[owner])
-    async def stop(turn_id: str) -> dict[str, bool]:
+    @app.post("/api/turns/{turn_id}/stop")
+    async def stop(turn_id: str, me: Device = device) -> dict[str, bool]:
+        if not kernel.conversations.owns(me.id, turn_id):
+            raise HTTPException(404, f"no turn {turn_id!r}")
         await kernel.conversations.stop(turn_id)
         return {"ok": True}
 
-    @app.get("/api/conversations/{conversation_id}", dependencies=[owner])
-    async def conversation(conversation_id: str) -> JSONResponse:
-        return JSONResponse(api_json([t.public() for t in kernel.conversations.turns(conversation_id)]))
+    @app.get("/api/conversation")
+    async def conversation(me: Device = device) -> JSONResponse:
+        return JSONResponse(api_json([t.public() for t in kernel.conversations.turns(me.id)]))
 
-    @app.get("/api/push", dependencies=[owner])
-    async def push(client: str | None = None, kind: str = "web") -> StreamingResponse:
-        events = kernel.push.subscribe(client or secrets.token_hex(4), kind)
+    @app.get("/api/push")
+    async def push(me: Device = device) -> StreamingResponse:
+        events = kernel.push.subscribe(me.id)
         return StreamingResponse(_sse_stream(events, forever=True), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
-    @app.get("/api/feeds", dependencies=[owner])
+    @app.get("/api/feeds", dependencies=[device])
     async def feeds() -> JSONResponse:
         return JSONResponse([f.model_dump() for f in await kernel.feeds()])
 
@@ -118,48 +254,76 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(404, str(err)) from err
         return Response(blob.content, media_type=blob.content_type, headers={"Cache-Control": "private, max-age=86400"})
 
-    @app.get("/api/approvals", dependencies=[owner])
-    async def approvals() -> JSONResponse:
-        return JSONResponse(api_json([a.public() for a in kernel.policy.pending()]))
+    # What waits on a phone
 
-    @app.post("/api/approvals/{approval_id}", dependencies=[owner])
-    async def answer(approval_id: str, body: Answer) -> JSONResponse:
+    @app.get("/api/approvals")
+    async def approvals(by: Device = phone) -> JSONResponse:
+        return JSONResponse(api_json([a.public() for a in kernel.policy.pending() if a.answerable_by(by)]))
+
+    @app.post("/api/approvals/{approval_id}")
+    async def answer(approval_id: str, body: Answer, by: Device = phone) -> JSONResponse:
         try:
-            approval = await kernel.policy.resolve(approval_id, body.approve)
+            approval = await kernel.policy.resolve(approval_id, body.approve, by)
         except SourceError as err:
             raise HTTPException(409, str(err)) from err
         return JSONResponse(api_json(approval.public()))
 
-    @app.post("/api/actions/{source}/{action}", dependencies=[owner])
-    async def act(source: str, action: str, request: Request) -> JSONResponse:
-        """The owner's own taps. The tap is the approval, so these run at once."""
-        args = await request.json() if await request.body() else {}
+    @app.get("/api/claims", dependencies=[phone])
+    async def claims() -> JSONResponse:
+        return JSONResponse(api_json(kernel.triggers.claims()))
+
+    @app.post("/api/claims/{trigger_id}")
+    async def claim(trigger_id: str, body: ClaimAnswer, by: Device = phone) -> JSONResponse:
         try:
-            result = await kernel.policy.request(source, action, args, Caller(kind="frontend"), reason="the owner tapped it")
+            trigger = await kernel.triggers.claim(trigger_id, body.number, by)
+        except TriggerError as err:
+            raise HTTPException(409, str(err)) from err
+        return JSONResponse(api_json(trigger.public()))
+
+    @app.post("/api/actions/{source}/{action}")
+    async def act(source: str, action: str, request: Request, me: Device = device) -> JSONResponse:
+        """Taps in the app. On a personal device the tap is the approval, so
+        it runs at once. On a household device it goes through the policy."""
+        args = await request.json() if await request.body() else {}
+        caller = Caller(kind="frontend", user=me.user or kernel.attendance.holder(me.id), device=me.id)
+        try:
+            result = await kernel.policy.request(source, action, args, caller, reason=f"tapped on {me.name}")
         except (SourceError, ToolError) as err:
             raise HTTPException(400, str(err)) from err
         return JSONResponse(api_json(result.data))
 
+    # For the huvu Hermes plugin
+
     @app.post("/api/situation")
     async def situation(request: Request, body: Situation) -> dict[str, str]:
         """The situation block for the huvu Hermes plugin: chosen values,
-        readable. Which values go in is Hermes's choice; the plugin sends
-        them."""
-        if config.mcp_token and request.headers.get("authorization", "") != f"Bearer {config.mcp_token}":
+        readable, and what waits on the profile's user. Which values go in
+        is Hermes's choice; the plugin sends them."""
+        known, user = mcp_caller(config, accounts, bearer(request))
+        if not known:
             raise HTTPException(401, "unauthorized")
         readings = for_model(await kernel.state.get(body.values), kernel.now())
         lines = [f"Now: {kernel.now():%a %Y-%m-%d %H:%M}"]
+        if user:
+            named = accounts.user(user)
+            lines.append(f"You are helping: {named.name if named else user}")
+        else:
+            family = ", ".join(f"{u.name} ({u.id})" for u in accounts.users())
+            lines.append(
+                "You are serving the household from a shared device; nobody in particular is speaking. "
+                f"The family: {family}. If someone says who they are, call people_identify."
+            )
         lines += [f"{key} = {r.get('value', r.get('reason'))} ({r.get('at', 'no time')})" for key, r in readings.items()]
-        pending = kernel.policy.pending()
+        pending = kernel.policy.pending_for(user)
         lines.append(f"Pending approvals: {len(pending)}" if pending else "Pending approvals: none")
         return {"text": "\n".join(lines)}
 
     return app
 
 
-async def _ask(kernel: Kernel, ask: Ask):
+async def _ask(kernel: Kernel, ask: Ask, me: Device):
     try:
-        live = await kernel.conversations.ask(ask.conversation, ask.ask, ask.replaces, actions=ask.actions, turn_id=ask.id)
+        live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, actions=ask.actions, turn_id=ask.id)
     except KeyError as err:
         raise HTTPException(404, str(err)) from err
     except ValueError as err:

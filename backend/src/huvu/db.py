@@ -3,7 +3,7 @@ conversations and the built-in source's state. Sources keep their own data
 elsewhere.
 
 One connection, used from the event loop. Every statement here is small,
-and one owner on one machine never queues enough of them for blocking
+and one family on one machine never queues enough of them for blocking
 to matter. WAL lets a second process (a backup, sqlite3 in a shell) read
 while the kernel writes.
 """
@@ -29,9 +29,14 @@ CREATE TABLE IF NOT EXISTS events (
     summary TEXT NOT NULL,
     refs TEXT NOT NULL,
     data TEXT NOT NULL,
-    labels TEXT NOT NULL
+    labels TEXT NOT NULL,
+    -- Whose event it is. NULL is the household's, which everyone sees.
+    user_id TEXT,
+    -- The device whose conversation it came from, if any.
+    device_id TEXT
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+CREATE INDEX IF NOT EXISTS events_device_ts ON events (device_id, ts);
 CREATE INDEX IF NOT EXISTS events_type_ts ON events (type, ts);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5 (
@@ -41,6 +46,29 @@ CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
     INSERT INTO events_fts (rowid, summary, type, entity) VALUES (new.rowid, new.summary, new.type, new.entity);
 END;
 
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    -- scrypt, see accounts.py.
+    password TEXT NOT NULL,
+    -- The API key of the user's Hermes profile.
+    hermes_key TEXT NOT NULL,
+    -- SHA-256 of the token the user's Hermes profile sends to /mcp.
+    mcp_token TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    -- NULL on a household device.
+    user_id TEXT REFERENCES users (id) ON DELETE CASCADE,
+    -- SHA-256 of the device's bearer token.
+    token TEXT UNIQUE,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS triggers (
     id TEXT PRIMARY KEY,
     spec TEXT NOT NULL,
@@ -48,6 +76,10 @@ CREATE TABLE IF NOT EXISTS triggers (
     armed INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     created_by TEXT,
+    -- NULL while a trigger from a household device waits to be claimed.
+    user_id TEXT,
+    -- The claim's number and choices, as JSON, while unclaimed.
+    claim TEXT,
     last_fired_at TEXT,
     fire_count INTEGER NOT NULL DEFAULT 0
 );
@@ -59,6 +91,8 @@ CREATE TABLE IF NOT EXISTS approvals (
     args TEXT NOT NULL,
     reason TEXT,
     caller TEXT NOT NULL,
+    -- Whose phones answer it. NULL sends it to every user's phones.
+    user_id TEXT,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     deadline TEXT NOT NULL,
@@ -73,8 +107,10 @@ CREATE TABLE IF NOT EXISTS kv (
     PRIMARY KEY (namespace, key)
 );
 
+-- One conversation per device, keyed by the device's id.
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
+    user_id TEXT,
     hermes_session TEXT,
     created_at TEXT NOT NULL
 );
@@ -95,10 +131,28 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 CREATE INDEX IF NOT EXISTS turns_conversation ON turns (conversation_id, seq);
 
+-- Who is at a household device: a question to a user's phone, and, once
+-- they say yes, their stay there. See attendance.py.
+CREATE TABLE IF NOT EXISTS attendance (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    asked_by TEXT NOT NULL,
+    status TEXT NOT NULL,
+    asked_at TEXT NOT NULL,
+    confirmed_at TEXT,
+    ended_at TEXT,
+    last_active_at TEXT
+);
+CREATE INDEX IF NOT EXISTS attendance_device ON attendance (device_id, status);
+
 CREATE TABLE IF NOT EXISTS hermes_sessions (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
-    conversation_id TEXT,
+    -- NULL for the household.
+    user_id TEXT,
+    -- The device whose conversation this is. NULL for wakes.
+    device_id TEXT,
     trigger_id TEXT,
     created_at TEXT NOT NULL
 );

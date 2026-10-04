@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from huvu.names import UnknownName
+from huvu.spec import Caller
 from huvu.times import format_time, parse_when
 
 
@@ -78,7 +79,7 @@ async def test_state_reads_pushed_values_with_their_age(kernel, clock):
 
 
 async def test_state_search_finds_aliases_first(kernel):
-    await kernel.huvu.act("set_alias", {"alias": "hall light", "value": "home.light[light.light_3]"})
+    await kernel.huvu.act("set_alias", {"alias": "hall light", "value": "home.light[light.light_3]"}, Caller(kind="kernel"))
     results = await kernel.state.search("hall light")
     assert results[0].value == "home.light[light.light_3]"
     porch = await kernel.state.search("porch")

@@ -4,10 +4,15 @@ import asyncio
 
 import pytest
 
-from huvu.policy import Caller
+from huvu.accounts import AuthError
+from huvu.spec import Caller
 from huvu.triggers import TriggerError, TriggerSpec, compare
 
-OWNER = Caller(kind="hermes", session="s1")
+OWNER = Caller(kind="hermes", session="s1", user="me")
+HOUSEHOLD = Caller(kind="hermes", session="s-tv")
+
+# Wakes run in their user's Hermes profile, so the users must exist.
+pytestmark = pytest.mark.usefixtures("family")
 
 PORCH = {
     "note": "Turn on the porch light.",
@@ -138,7 +143,7 @@ async def test_once_triggers_end_and_get_a_default_expiry(kernel, hermes):
     await home.emit("doorbell", "ding")
     await settle(kernel)
     assert len(wakes(hermes)) == 1
-    assert kernel.triggers.list() == []
+    assert kernel.triggers.list("me") == []
 
 
 async def test_validation_errors_name_the_fix(kernel):
@@ -172,7 +177,7 @@ async def test_triggers_survive_a_restart(kernel, tmp_path, clock, home, hermes)
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": type(home)()}, clock=clock)
     await again.triggers.load()
-    assert [t.spec.note for t in again.triggers.list()] == ["Doorbell."]
+    assert [t.spec.note for t in again.triggers.list("me")] == ["Doorbell."]
     again.db.close()
 
 
@@ -180,7 +185,89 @@ async def test_test_reports_each_check(kernel):
     home = kernel.registry.get("home").ctx
     await home.update("eta_min", 25)
     await tick_clock(kernel)
-    report = await kernel.triggers.test(TriggerSpec.model_validate(PORCH))
+    report = await kernel.triggers.test(TriggerSpec.model_validate(PORCH), "me")
     by_value = {c["value"]: c["holds"] for c in report["checks"]}
     assert by_value["home.eta_min"] is False
     assert report["values_hold"] is False
+
+
+async def test_wakes_run_in_the_triggers_users_profile(kernel, hermes):
+    home = kernel.registry.get("home").ctx
+    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+    await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
+    await home.emit("doorbell", "ding")
+    await settle(kernel)
+    [session] = [s for s in hermes.sessions if s.startswith("wake-")]
+    assert hermes.profiles[session] == "me"
+    assert kernel.sessions.owner(session).user == "me"
+    assert kernel.sessions.owner(session).device is None
+
+
+async def test_triggers_are_scoped_to_their_user(kernel):
+    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
+    assert kernel.triggers.list("mom") == []
+    with pytest.raises(TriggerError):
+        await kernel.triggers.remove(trigger.id, "mom")
+    await kernel.triggers.remove(trigger.id, "me")
+
+
+async def push_events(kernel, device: str) -> tuple[list[tuple[str, dict]], asyncio.Task]:
+    """Opens a push stream for a device, and returns what it has received
+    so far each time it is awaited again."""
+    received: list[tuple[str, dict]] = []
+
+    async def listen() -> None:
+        async for item in kernel.push.subscribe(device):
+            received.append(item)
+
+    task = asyncio.create_task(listen())
+    await asyncio.sleep(0)
+    return received, task
+
+
+async def test_a_household_trigger_waits_for_the_right_number(kernel, family, hermes):
+    mine, mine_task = await push_events(kernel, family.me_phone.id)
+    tv, tv_task = await push_events(kernel, family.tv.id)
+    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), HOUSEHOLD)
+    await asyncio.sleep(0)
+    assert trigger.status == "unclaimed" and trigger.user is None
+    number = trigger.public()["claim"]
+    [(name, offer)] = mine
+    assert name == "claim" and number in offer["choices"] and "claim" not in offer
+    assert tv == []
+    # Unclaimed, it doesn't fire.
+    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
+    await settle(kernel)
+    assert wakes(hermes) == []
+    # Only a phone claims it, and the claim makes it that user's.
+    with pytest.raises(AuthError):
+        await kernel.triggers.claim(trigger.id, number, family.me_web)
+    claimed = await kernel.triggers.claim(trigger.id, number, family.mom_phone)
+    assert claimed.status == "active" and claimed.user == "mom"
+    assert kernel.triggers.list("mom") == [claimed]
+    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
+    await settle(kernel)
+    [session] = [s for s in hermes.sessions if s.startswith("wake-")]
+    assert hermes.profiles[session] == "mom"
+    mine_task.cancel()
+    tv_task.cancel()
+
+
+async def test_a_wrong_number_drops_the_trigger(kernel, family):
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), HOUSEHOLD)
+    wrong = next(n for n in range(10, 100) if n != trigger.claim.number)
+    with pytest.raises(TriggerError, match="dropped"):
+        await kernel.triggers.claim(trigger.id, wrong, family.me_phone)
+    assert kernel.triggers.claims() == []
+    with pytest.raises(TriggerError):
+        await kernel.triggers.claim(trigger.id, trigger.claim.number, family.me_phone)
+
+
+async def test_unclaimed_triggers_expire(kernel, clock):
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), HOUSEHOLD)
+    assert len(kernel.triggers.claims()) == 1
+    clock.advance(minutes=11)
+    await kernel.triggers.expire()
+    assert kernel.triggers.claims() == []

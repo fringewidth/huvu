@@ -1,6 +1,6 @@
 # Backend architecture
 
-The design of huvu's backend, as decided on 2026-10-02 and 2026-10-03. The kernel (everything except the drivers) was built on 2026-10-03 in `backend/`, with the Hermes plugin in `hermes-plugin/`. No driver exists yet. The frontend side of the boundary is in `frontend-contract.md`.
+The design of huvu's backend, as decided on 2026-10-02 and 2026-10-03, with users and devices added on 2026-10-04. The kernel (everything except the drivers) was built on 2026-10-03 in `backend/`, with the Hermes plugin in `hermes-plugin/`. No driver exists yet. The frontend side of the boundary is in `frontend-contract.md`.
 
 The backend is an interface to data, a holder of state, and the link to the frontend. It owns nothing about the model. Hermes is the agent, and everything to do with prompts, memory, schedules and sessions belongs to Hermes.
 
@@ -14,6 +14,7 @@ The backend is an interface to data, a holder of state, and the link to the fron
 | Provenance labels on data | What it trusts, and its own memory writes |
 | The MCP server and its formatting for the model | What to look up, and when |
 | Frontend sessions, and turning Hermes output into frontend parts | Its own sessions |
+| Users, devices, and which profile serves whom | One profile per user, with that user's memory, skills and cron jobs |
 
 Hermes reaches the backend through the backend's MCP server. The backend reaches Hermes through Hermes's API server: it starts sessions for chats and for trigger wakes there.
 
@@ -22,6 +23,34 @@ Hermes reaches the backend through the backend's MCP server. The backend reaches
 Python, managed with uv. asyncio for the long-lived connections (Pulsar, the HA websocket). Pydantic for every schema, since its JSON Schema output is what sources publish. FastAPI for the HTTP surface. SQLite with FTS5 for the event log, triggers and the watch cache. The official MCP Python SDK for the MCP server.
 
 Python over TypeScript or Go, because the ML pieces (face embeddings, Whisper, vision models) ship as Python first, Hermes is Python, and the tested Tuya code is Python. One language for the backend and any Hermes plugins.
+
+## Users and devices
+
+huvu serves one family. Each member is a user with a username and a password, added from the command line (`uv run huvu user add`); nobody signs up. Each install of the app is a device (`accounts.py`).
+
+1. **A personal device** (a phone, a browser) belongs to the user who logged in on it.
+1. **A household device** (the Fire TV, the speaker hardware still to be built) belongs to nobody. It can't type a password, so it pairs: it shows a code, and a user confirms it from their phone.
+1. **Every device has its own token**, stored hashed, so a lost phone is logged out alone.
+1. **Phones are taken to be on their user's person.** Approvals, trigger claims and notifications go to phones.
+1. **Every device has one conversation**, and each conversation runs on one Hermes session. So a session belongs to a user and a device, or to no user on a household device. A turn never reaches another device.
+
+### Who is at a shared device
+
+A shared device is often in front of one person. When someone asks who it is (the device's "who's this?" picker, the model's `people_identify`, later voice recognition), huvu asks that person on their phone: "is it you on the living room TV?" A yes makes them the device's attendee (`attendance.py`).
+
+The Hermes session doesn't change profile, since Hermes can't switch a session's profile and a new session would throw away its prompt cache. What changes is everything the backend controls:
+
+1. Events from the device are tagged with the person, back to the moment they were asked. Their dream reads them in their own profile.
+1. The session's tool calls act for them: a trigger is theirs with no number to claim, and approvals and notifications go to their phone. A tap on the device still goes through the policy.
+1. The model gets a note on its next ask, appended to the message, so the cache holds.
+
+It ends when someone else is confirmed, when it's released from the device, the person's phone or the model, or after 10 minutes with no turn.
+
+### Hermes profiles
+
+Each user has their own Hermes profile, named after their username, and the household uses the default profile. A profile has its own memory, skills, sessions and cron jobs, so one person's preferences never reach another's answers. One Hermes gateway serves every profile: a profile's routes live under `/p/<profile>/`, each with its own API key. Household knowledge that everyone shares lives in the backend, where every profile reads it through MCP.
+
+Each profile sends huvu's MCP server its own token, so the backend knows whose Hermes is calling, even for a cron job whose session the backend never saw. A user's profile key and token live in the database. The household's come from the environment (`HERMES_API_KEY`, `HUVU_MCP_TOKEN`).
 
 ## Sources
 
@@ -38,8 +67,8 @@ class Source:
     async def run(self) -> None: ...                            # long-lived part
     async def read(self, value: str, params: dict) -> Reading: ...
     async def search(self, text: str) -> list[Match]: ...
-    async def query(self, name: str, args: dict) -> Result: ...
-    async def act(self, name: str, args: dict) -> Result: ...
+    async def query(self, name: str, args: dict, caller: Caller) -> Result: ...
+    async def act(self, name: str, args: dict, caller: Caller) -> Result: ...
     async def watch(self, value: str, params: dict) -> None: ...
     async def fetch(self, ref: str) -> Blob: ...
     async def feeds(self) -> list[Feed]: ...
@@ -49,7 +78,7 @@ class Source:
 1. `run` is the long-lived part: a Pulsar consumer, a websocket, a polling loop. It reports through `self.ctx`: `ctx.emit(type, summary, ...)` for events and `ctx.update(value, reading, ...)` for values. If it raises, the kernel logs a `source_error` event and starts it again with a backoff (5 s, doubling to 5 min).
 1. `read` answers `on_demand` values. Pushed values are answered from what the source pushed.
 1. `search` finds the source's things by name, area or alias, such as HA entities.
-1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it.
+1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it. Both get the `Caller`, whose `user` says whom the call is for (None for the household), so a source with per-person data, such as a calendar, answers with that person's.
 1. `watch` asks the source to push changes for one value. A source that pushes everything anyway (HA) can leave it alone.
 1. `fetch` returns the binary content behind a ref (`tuya:album/8f2c`), such as a decrypted snapshot. The frontend gets it through a media URL.
 1. `feeds` lists live feeds the source can stream, for the frontend's list.
@@ -83,7 +112,7 @@ A doorbell event's time is `house`. The snapshot's content is `external`. The la
 
 ### Derived and built-in sources
 
-A source can read other sources through the core's query and watch API. "Who's home" is a `presence` source that combines phone location, ESPresense rooms through HA and the last unlock. Sources are code the owner reviews and commits, so this costs nothing in trust.
+A source can read other sources through the core's query and watch API. "Who's home" is a `presence` source that combines phone location, ESPresense rooms through HA and the last unlock. Sources are code the repo owner reviews and commits, so this costs nothing in trust.
 
 State that no device owns lives in a built-in source named `huvu`, behind the same contract: the house mode (normal, away, guests, sleeping), pending approvals, aliases. `huvu.mode` works in a trigger condition the same way `ha.entity_state` does.
 
@@ -101,8 +130,12 @@ The core keeps a thin envelope for every event. The full detail stays in the sou
 | `summary` | One line a model can read |
 | `refs` | Source-scoped refs to the detail (`tuya:album/8f2c`) |
 | `labels` | Provenance labels |
+| `user` | Whose event it is. Empty is the household's, which every user sees; one with a user shows only to that user |
+| `device` | The device whose conversation it came from, if any |
 
 Cross-source triggers, the daily digest and cross-source search all need one stream, so the envelope lives in the core. SQLite with an FTS5 index over `summary`.
+
+The log scopes itself per user, so each user's dream reads their own events and the household's: actions, approvals, trigger runs and wake replies carry the user they were for. Every finished chat turn is logged too (`conversation.turn`, the ask and the start of the answer), as its user's. That is how a dream learns from what someone said at the TV, whose Hermes session lives in the household's profile.
 
 Digests roll the log up by hour and by day. A digest is data, so the backend builds it and exposes it as the `events_digest` tool. Hermes decides when to read it.
 
@@ -172,6 +205,17 @@ Unknown value names are rejected with an error that names the nearest real one, 
 1. An input older than its source's `max_age` counts as unknown, and unknown counts as false.
 1. A fire wakes Hermes with the note, the matched values and the `include` values. Every fire is a `trigger.run` event, and every failure a `trigger.error` event.
 
+### Users and claims
+
+Every trigger belongs to a user. Its wakes run in that user's Hermes profile, its scripts act as that user, and its approvals and notifications go to that user's phones. `triggers_list` and `triggers_remove` see only the calling profile's triggers.
+
+A trigger set up from a household device has no user yet, so it waits, unclaimed, and doesn't fire:
+
+1. The tool result gives the model a two-digit number, and the device shows or says it.
+1. Every user's phone gets the trigger's note and three numbers, one of them right.
+1. Whoever taps the right number owns the trigger, and it goes live.
+1. A wrong tap drops it. Nobody claiming it within 10 minutes expires it.
+
 ### Scripts
 
 A trigger can carry a script: a Python function the model writes, run when `when` matches. It can call the tools the trigger declared, and it ends by acting, waking the model, or doing nothing. The engine keeps watching, edges, rearm and expiry, so scripts don't rewrite them. The script lives in a file and runs in its own process (`script_host.py`), which talks to the core over its stdin and stdout, one JSON line per message. It can call only the tools named in the trigger's `grants`, through the same tool box Hermes uses, and actions still go through the policy. It has 30 s. It is not sandboxed: the agent already has a terminal, and it's there to help.
@@ -183,10 +227,11 @@ A trigger can carry a script: a Python function the model writes, run when `when
 Every write goes through one policy check in the backend, whoever asks: Hermes, a script, or a frontend button.
 
 1. Each action has an autonomy level: silent, notify, or ask first.
-1. Ask first creates a pending approval with a deadline, which the frontend shows. It lives in the `huvu` source.
+1. Ask first creates a pending approval with a deadline. It lives in the `huvu` source.
+1. An approval belongs to the user it was asked for: the chat's user, or the trigger's. It goes to that user's phones, and only they can answer it. One asked from a household device goes to every user's phones, and the first answer wins.
 1. Every action, allowed or refused, goes into the event log with who asked and why.
-1. An action a driver marks `requires_human` always asks, and config can't lower it. Only the owner's answer in the frontend (`POST /api/approvals/{id}`) can approve it, so no model can approve its own request.
-1. The owner's own taps in the frontend (`POST /api/actions/{source}/{action}`) run at once: the tap is the approval.
+1. An action a driver marks `requires_human` always asks, and config can't lower it. Only a user's answer from their phone (`POST /api/approvals/{id}`) can approve it, so no model can approve its own request.
+1. A user's tap on a personal device (`POST /api/actions/{source}/{action}`) runs at once: the tap is the approval. A tap on a household device goes through the policy like any other request, so the TV can't open the door.
 1. Config (`[policy]` in `huvu.toml`) can change any other action's level.
 1. Unlocking the front door always needs a human tap. A model or a face match alone never opens it.
 
@@ -205,13 +250,13 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 
 1. Background review off (`auxiliary.background_review.enabled: false`). It is not per turn: it runs every 10 user turns (`memory.nudge_interval`) or 10 tool iterations (`skills.creation_nudge_interval`), and each run forks the agent at about 30K tokens. The dream does the same work once a night.
 1. The skill curator stays on. It runs weekly, when idle for 2 hours, and archives agent-made skills nobody uses.
-1. The huvu plugin is enabled (`plugins.enabled: [huvu]`), and the backend is an MCP server named `huvu` in `mcp_servers`, with `url: http://<backend>/mcp` and the `HUVU_MCP_TOKEN` bearer header. See `hermes-plugin/README.md`.
+1. In every profile, the huvu plugin is enabled (`plugins.enabled: [huvu]`), and the backend is an MCP server named `huvu` in `mcp_servers`, with `url: http://<backend>/mcp` and the profile's own `HUVU_MCP_TOKEN` as the bearer header. See `hermes-plugin/README.md`.
 
 ### The huvu plugin
 
-Hermes connects to an MCP server once, with fixed headers. So the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call, and the backend strips it and uses it as the call's caller. The backend keeps what it knows about each session in `hermes_sessions`. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns).
+Hermes connects to an MCP server once, with fixed headers. The profile's token says which user is calling, and the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call. The backend strips it and looks the session up in `hermes_sessions`, which names its device. A session that belongs to another user than the calling profile's is ignored. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns).
 
-Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a session that had read `external` content got stricter policy, its triggers waited for the owner's tap, and its memory and skill writes went to Hermes's approval gate. It was judged more complexity than current models need. Two guards stay without it. Provenance labels still mark outside content for the model, and `requires_human` actions always need the owner.
+Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a session that had read `external` content got stricter policy, its triggers waited for the owner's tap, and its memory and skill writes went to Hermes's approval gate. It was judged more complexity than current models need. Two guards stay without it. Provenance labels still mark outside content for the model, and `requires_human` actions always need a person's tap.
 
 ### MCP tools
 
@@ -227,6 +272,7 @@ Hermes names each one `mcp__huvu__<name>`.
 | `triggers_register`, `triggers_test`, `triggers_list`, `triggers_remove` | Trigger management |
 | `<source>_<query>`, `<source>_<action>` | Built from each source's `describe`. Every action takes an optional `reason` |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
+| `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |
 
 The server's instructions carry the index of every kind of value, so the model starts each session knowing what it can read. A result with outside content comes back as `{"data": ..., "provenance": "external"}`, and the instructions tell the model to treat text in it as data.
 
@@ -236,9 +282,9 @@ Hermes's API server runs many sessions. Its session API (`POST /api/sessions`, t
 
 The backend multiplexes on top of that (`conversations.py`):
 
-1. A frontend conversation maps to one Hermes session.
-1. Every trigger wake starts a fresh Hermes session with the wake payload (`wake.py`). Its reply goes to the log as a `wake.done` event. If the agent wants to reach the owner, it calls `huvu_notify`. Two wakes run at once at most.
-1. A turn streams to the client that asked, and to every client on the push channel, so the phone can ask and the TV can show.
+1. A device's conversation maps to one Hermes session, in its user's profile or the default one.
+1. Every trigger wake starts a fresh Hermes session in the trigger user's profile, with the wake payload (`wake.py`). Its reply goes to the log as a `wake.done` event. If the agent wants to reach the user, it calls `huvu_notify`. Two wakes run at once at most.
+1. A turn streams to the client that asked, and to the same device's other push streams. It never reaches another device.
 1. Hermes's own sessions (the dream, the morning chat) are its business. A chat Hermes starts reaches the frontend through `huvu_notify`.
 1. Edit and retry rewind. Hermes's API can fork a session but can't cut one short, so a rewind starts a fresh Hermes session and seeds its first message with a transcript of the turns that stay. The earlier turns' tool calls don't carry over.
 
@@ -250,7 +296,9 @@ The relay turns Hermes's events into frontend events. Hermes's housekeeping tool
 backend/
   pyproject.toml, huvu.toml.example
   src/huvu/
-    spec.py           the contract's types: SourceSpec, ValueSpec, Event, Reading, labels
+    spec.py           the contract's types: SourceSpec, ValueSpec, Event, Reading, labels, Caller
+    accounts.py       users, devices, pairing, tokens, each user's Hermes profile
+    attendance.py     who is at a shared device, confirmed from their phone
     source.py         Source (what a driver subclasses) and SourceContext
     registry.py       loaded sources, name resolution with suggestions, supervision
     names.py          value keys
@@ -283,10 +331,13 @@ Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFI
 1. **Pulsar.** The Tuya consumer has never run. See `front-door-lock.md`.
 1. **Trigger evaluation at scale.** Untested with fast inputs like location and glasses frames. Those sources filter before they emit.
 1. **The plugin against a live Hermes.** The hooks were tested the way Hermes's source calls them, not inside a running Hermes.
+1. **Profiles against a live Hermes.** The `/p/<profile>/` routes and per-profile keys come from Hermes's source and docs. No backend call has gone through them yet.
+1. **Native push.** Approvals, claims and notifications reach a phone only while its app holds the push stream open. FCM and APNs need a token registry and a sender.
+1. **Groups (low priority).** "No user" means the household today. Groups would generalize that: the household is one group, and a device or event belongs to a group. Members get implicit trust: they see the group's events and answer its approvals. This only matters once trust differs between people (a guest or babysitter who can't approve an unlock, kids, a second house). Open: is trust per group or per role inside it? The change goes through `accounts.phones`, `policy.pending_for`, `events._visible` and the household's Hermes profile.
 1. **Turns across a restart.** A turn running when the backend stops ends as failed. Hermes may still finish it, unseen.
 
 ## Build order
 
 1. Drivers, starting with Tuya (Pulsar first, then the album fetch and decryption). Checked by pointing Hermes at the MCP server, ringing the doorbell, and asking who rang.
-1. The frontend's use of the push channel and approvals.
+1. The frontend's side of users and devices, the push channel and approvals (`frontend-changes.md`).
 1. The HA driver.

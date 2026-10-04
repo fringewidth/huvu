@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .db import dumps
-from .policy import Caller
 from .registry import suggest
+from .spec import Caller
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -67,7 +67,7 @@ class ScriptRunner:
         real, while actions and wakes are recorded and skipped."""
         path = self._dir / f"{trigger.id}.py"
         path.write_text(trigger.spec.script or "")
-        caller = Caller(kind="script", trigger=trigger.id)
+        caller = Caller(kind="script", trigger=trigger.id, user=trigger.user)
         report: dict[str, Any] = {"dry_run": dry, "calls": [], "wakes": [], "error": None, "log": ""}
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -108,16 +108,16 @@ class ScriptRunner:
 
     async def _answer(self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], caller: Caller, dry: bool, report: dict[str, Any]) -> dict[str, Any]:
         if "wake" in message:
-            reply = await self._wake(message, payload, dry, report)
+            reply = await self._wake(message, trigger, payload, dry, report)
         else:
             reply = await self._call(message, trigger, caller, dry, report)
         return reply
 
-    async def _wake(self, message: dict[str, Any], payload: dict[str, Any], dry: bool, report: dict[str, Any]) -> dict[str, Any]:
+    async def _wake(self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], dry: bool, report: dict[str, Any]) -> dict[str, Any]:
         wake = {"text": message["wake"], "data": message.get("data")}
         report["wakes"].append(wake)
         if not dry:
-            await self._kernel.waker.wake({**payload, "script": wake})
+            await self._kernel.waker.wake({**payload, "script": wake}, trigger.user)
         return {"result": {"woke": not dry}}
 
     async def _call(self, message: dict[str, Any], trigger: Trigger, caller: Caller, dry: bool, report: dict[str, Any]) -> dict[str, Any]:
@@ -145,6 +145,7 @@ class ScriptRunner:
                 "trigger.error",
                 f"trigger {trigger.id}'s script failed: {report['error']}",
                 entity=trigger.id,
+                user=trigger.user,
                 data={"log": report["log"][-500:]},
             )
         else:
@@ -153,6 +154,7 @@ class ScriptRunner:
                 "trigger.script",
                 f"trigger {trigger.id}'s script called {calls} and woke the model {len(report['wakes'])} times",
                 entity=trigger.id,
+                user=trigger.user,
             )
 
     def remove(self, trigger_id: str) -> None:

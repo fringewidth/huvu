@@ -1,7 +1,8 @@
 # Copy to huvu.toml (gitignored). Secrets come from the environment:
-#   HUVU_JWT_SECRET  signs the frontend's tokens (auth.mode = "jwt")
-#   HUVU_MCP_TOKEN   the bearer token Hermes sends to /mcp
-#   HERMES_API_KEY   Hermes's API_SERVER_KEY
+#   HERMES_API_KEY   the API_SERVER_KEY of Hermes's default profile, the household's
+#   HUVU_MCP_TOKEN   the token the default profile sends to /mcp
+# Users, devices, and each user's profile key and token live in the database.
+# Add users with `uv run huvu user add <name>`.
 
 data_dir = "data"
 public_url = "http://localhost:3001"
@@ -10,8 +11,10 @@ port = 3001
 cors_origins = ["*"]
 
 [auth]
-mode = "off"
-# owner = "you@example.com"
+mode = "on"
+# With mode = "off", for development on localhost only, a request without a
+# token comes from a development phone owned by this user.
+# dev_user = "you"
 
 [hermes]
 url = "http://localhost:8642"

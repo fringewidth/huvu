@@ -1,8 +1,16 @@
-"""What the kernel knows about Hermes sessions: what each one is for."""
+"""What the kernel knows about Hermes sessions: what each one is for, and
+whose it is.
+
+A chat session belongs to a user and the device it runs on, or to no user on
+a household device. A wake session belongs to its trigger's user and to no
+device. Hermes's own cron jobs start sessions the kernel never hears of;
+their tool calls still carry the user, from the profile's MCP token.
+"""
 
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -11,20 +19,26 @@ from .db import iso
 Kind = Literal["chat", "wake"]
 
 
+@dataclass(frozen=True)
+class SessionOwner:
+    user: str | None
+    device: str | None
+
+
 class SessionBook:
     def __init__(self, conn: sqlite3.Connection, now) -> None:
         self._conn = conn
         self._now = now
 
-    def record(self, session_id: str, kind: Kind, *, conversation_id: str | None = None, trigger_id: str | None = None) -> None:
+    def record(self, session_id: str, kind: Kind, *, user: str | None, device: str | None = None, trigger_id: str | None = None) -> None:
         self._conn.execute(
-            "INSERT INTO hermes_sessions (id, kind, conversation_id, trigger_id, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
-            (session_id, kind, conversation_id, trigger_id, iso(self._now())),
+            "INSERT INTO hermes_sessions (id, kind, user_id, device_id, trigger_id, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
+            (session_id, kind, user, device, trigger_id, iso(self._now())),
         )
 
-    def conversation_of(self, session_id: str | None) -> str | None:
-        row = self._conn.execute("SELECT conversation_id FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone() if session_id else None
-        return row["conversation_id"] if row else None
+    def owner(self, session_id: str | None) -> SessionOwner | None:
+        row = self._conn.execute("SELECT user_id, device_id FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone() if session_id else None
+        return SessionOwner(user=row["user_id"], device=row["device_id"]) if row else None
 
     def created(self, session_id: str) -> datetime | None:
         row = self._conn.execute("SELECT created_at FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone()
