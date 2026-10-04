@@ -1,9 +1,11 @@
 """State: the values sources declare, read through one place.
 
-The kernel holds no copy of state beyond what sources push and triggers
-watch. A pushed value is answered from the last reading; an `on_demand`
-value is asked of its source each time. Every reading carries its time, so
-the model and the trigger engine can see how old it is.
+The kernel keeps the last reading of every pushed value, in memory and in
+the database, so a restart forgets nothing: a lock battery that only
+reports when the lock wakes is still known after it, with its old time. An
+`on_demand` value is asked of its source each time. Every reading carries
+its time, so the model and the trigger engine can see how old it is, and a
+value's max age still applies across a restart.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from .db import dumps, loads
 from .names import UnknownName, ValueRef
 from .source import SourceError
 from .spec import Match, Reading, ValueSpec
@@ -33,9 +36,27 @@ class StateService:
         self._cache: dict[ValueRef, Reading] = {}
         self._watchers: dict[ValueRef, list[Watcher]] = {}
 
+    def load(self) -> None:
+        """Takes back the readings from before a restart. One whose value no
+        longer exists (a driver was removed or renamed) is dropped."""
+        db = self._kernel.db
+        for row in db.execute("SELECT * FROM readings").fetchall():
+            ref = ValueRef(row["source"], row["name"], tuple(tuple(p) for p in loads(row["params"])))
+            try:
+                self._kernel.registry.resolve_value(ref.key)
+            except (UnknownName, SourceError):
+                db.execute("DELETE FROM readings WHERE source = ? AND name = ? AND params = ?", (row["source"], row["name"], row["params"]))
+                continue
+            self._cache[ref] = Reading.model_validate(loads(row["reading"]))
+
     async def update(self, source: str, value: str, params: dict[str, Any], reading: Reading) -> None:
         ref, _ = self._kernel.registry.resolve_value(f"{source}.{value}", params)
         self._cache[ref] = reading
+        self._kernel.db.execute(
+            "INSERT INTO readings (source, name, params, reading) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (source, name, params) DO UPDATE SET reading = excluded.reading",
+            (ref.source, ref.name, dumps([list(p) for p in ref.params]), dumps(reading.model_dump())),
+        )
         for watcher in list(self._watchers.get(ref, [])):
             try:
                 await watcher(ref, reading)

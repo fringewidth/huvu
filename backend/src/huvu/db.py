@@ -131,6 +131,18 @@ CREATE TABLE IF NOT EXISTS approvals (
     result TEXT
 );
 
+-- The last reading of every pushed value, so a restart doesn't forget a
+-- value that only updates when its device wakes, and triggers don't see
+-- every input go unknown at once. See state.py.
+CREATE TABLE IF NOT EXISTS readings (
+    source TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- The value's params as a JSON list of [name, value] pairs.
+    params TEXT NOT NULL,
+    reading TEXT NOT NULL,
+    PRIMARY KEY (source, name, params)
+);
+
 CREATE TABLE IF NOT EXISTS kv (
     namespace TEXT NOT NULL,
     key TEXT NOT NULL,

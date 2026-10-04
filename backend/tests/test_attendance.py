@@ -136,3 +136,18 @@ async def test_asking_twice_asks_once(kernel, family):
     await kernel.attendance.answer(first.id, True, family.mom_phone)
     with pytest.raises(AuthError, match="already answered|no open question"):
         await kernel.attendance.answer(first.id, True, family.mom_phone)
+
+
+async def test_notes_for_the_model_survive_a_restart(kernel, family, hermes, tmp_path, clock):
+    from huvu.config import Config
+    from huvu.kernel import Kernel
+
+    from .fakes import HomeSource
+
+    await recognize(kernel, family, family.mom_phone)
+    again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": HomeSource()}, clock=clock)
+    live = await again.conversations.ask(family.tv.id, "hi", user=None, group="home")
+    await collect(again, live)
+    assert "Mom was recognized" in hermes.messages[-1][1]
+    await again.conversations.close()
+    again.db.close()

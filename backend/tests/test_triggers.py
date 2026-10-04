@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
@@ -279,3 +280,66 @@ async def test_unanswered_questions_drop_it(kernel, family, clock):
 async def test_a_trigger_needs_someone_to_ask(kernel, family):
     with pytest.raises(TriggerError, match="belongs to a person"):
         await kernel.triggers.register(TriggerSpec.model_validate(DOORBELL), Caller(kind="hermes", group="home"))
+
+
+def restarted(kernel, tmp_path, clock, hermes):
+    """A second kernel on the same database: the backend after a restart."""
+    from huvu.config import Config
+    from huvu.kernel import Kernel
+
+    from .fakes import HomeSource
+
+    return Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": HomeSource()}, clock=clock)
+
+
+async def test_readings_survive_a_restart(kernel, tmp_path, clock, hermes):
+    await kernel.registry.get("home").ctx.update("battery", 70)
+    await kernel.registry.get("home").ctx.update("light", "off", params={"entity_id": "light.porch"})
+    clock.advance(hours=3)
+    again = restarted(kernel, tmp_path, clock, hermes)
+    readings = await again.state.get(["home.battery", "home.light[light.porch]"])
+    assert readings["home.battery"].value == 70 and readings["home.light[light.porch]"].value == "off"
+    assert clock.now - readings["home.battery"].at >= timedelta(hours=3)
+    again.db.close()
+
+
+async def test_a_restart_doesnt_fire_a_trigger_twice(kernel, tmp_path, clock, hermes):
+    home = kernel.registry.get("home").ctx
+    spec = {"note": "Light went off.", "when": [{"value": "home.light[light.porch]", "op": "==", "arg": "off"}], "repeat": "yes"}
+    await home.update("light", "off", params={"entity_id": "light.porch"})
+    await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1
+    again = restarted(kernel, tmp_path, clock, hermes)
+    await again.triggers.load()
+    await again.registry.get("home").ctx.update("light", "off", params={"entity_id": "light.porch"})
+    await settle(again)
+    assert len(wakes(hermes)) == 1
+    await again.triggers.stop()
+    again.db.close()
+
+
+async def test_an_input_going_unknown_doesnt_rearm(kernel, clock, hermes):
+    home = kernel.registry.get("home").ctx
+    spec = {
+        "note": "Close by with the light off.",
+        "when": [{"value": "home.eta_min", "op": "<=", "arg": 10}, {"value": "home.light[light.porch]", "op": "==", "arg": "off"}],
+        "repeat": "yes",
+    }
+    await home.update("eta_min", 8)
+    await home.update("light", "off", params={"entity_id": "light.porch"})
+    await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1
+    # 40 minutes on, eta is past its 30 minute max age: unknown. The light
+    # reporting again makes the trigger look while eta is unknown.
+    clock.advance(minutes=40)
+    await home.update("light", "off", params={"entity_id": "light.porch"})
+    await home.update("eta_min", 7)
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1
+    # Going false for real rearms it.
+    await home.update("eta_min", 25)
+    await home.update("eta_min", 6)
+    await settle(kernel)
+    assert len(wakes(hermes)) == 2

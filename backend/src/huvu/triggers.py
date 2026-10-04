@@ -428,14 +428,19 @@ class TriggerEngine:
 
     async def _evaluate(self, trigger: Trigger) -> None:
         async with self._lock:
-            holds, _, _ = await self._holds(trigger.checks)
-            self._rearm(trigger, holds)
+            holds, readings, _ = await self._holds(trigger.checks)
+            # Unknown counts as false for firing, but not for rearming: an
+            # input nobody has reported (after a driver restarts, say) hasn't
+            # turned the condition false.
+            now = self._kernel.now()
+            known = all(is_fresh(readings[c.ref.key], c.spec, now) for c in trigger.checks)
+            self._rearm(trigger, holds if (holds or known) else None)
             if holds and trigger.armed:
                 await self._fire(trigger, None)
 
     def _rearm(self, trigger: Trigger, holds: bool | None) -> None:
         """Sets `armed` from the repeat mode. `holds` is the condition now,
-        or None when it doesn't apply (event triggers)."""
+        or None when it doesn't apply (event triggers) or isn't known."""
         if trigger.armed or trigger.spec.repeat == "no":
             return
         now = self._kernel.now()

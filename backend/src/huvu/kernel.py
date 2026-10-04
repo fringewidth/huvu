@@ -88,6 +88,7 @@ class Kernel:
         for name, source in (sources or {}).items():
             self.registry.add(name, source)
         self.tools.build()
+        self.state.load()
 
     def now(self) -> datetime:
         return self._clock() if self._clock else datetime.now().astimezone()

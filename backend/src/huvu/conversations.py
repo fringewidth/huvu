@@ -134,14 +134,28 @@ class ConversationHub:
     def __init__(self, kernel: Kernel) -> None:
         self._kernel = kernel
         self._live: dict[str, LiveTurn] = {}
-        # What huvu tells the model on a device's next ask, such as who was
-        # recognized there. Appended to the message, so the session's
-        # prompt cache holds.
-        self._notes: dict[str, list[Action]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
 
     def note(self, conversation_id: str, text: str) -> None:
-        self._notes.setdefault(conversation_id, []).append(Action(text=text, at=self._kernel.now()))
+        """Something huvu tells the model on the device's next ask, such as
+        who was recognized there. Appended to that ask's message, so the
+        session's prompt cache holds. Kept in the database, so a restart
+        doesn't lose it."""
+        notes = self._notes(conversation_id)
+        notes.append(Action(text=text, at=self._kernel.now()))
+        self._db.execute(
+            "INSERT INTO kv (namespace, key, value) VALUES ('notes', ?, ?) ON CONFLICT (namespace, key) DO UPDATE SET value = excluded.value",
+            (conversation_id, dumps([n.model_dump() for n in notes])),
+        )
+
+    def _notes(self, conversation_id: str) -> list[Action]:
+        row = self._db.execute("SELECT value FROM kv WHERE namespace = 'notes' AND key = ?", (conversation_id,)).fetchone()
+        return [Action.model_validate(n) for n in loads(row["value"])] if row else []
+
+    def _take_notes(self, conversation_id: str) -> list[Action]:
+        notes = self._notes(conversation_id)
+        self._db.execute("DELETE FROM kv WHERE namespace = 'notes' AND key = ?", (conversation_id,))
+        return notes
 
     @property
     def _db(self):
@@ -181,7 +195,7 @@ class ConversationHub:
         actions = actions or []
         tz = self._kernel.now().tzinfo
         self._kernel.attendance.touch(conversation_id)
-        notes = self._notes.pop(conversation_id, [])
+        notes = self._take_notes(conversation_id)
         message = _with_notes(_with_actions(text, actions, tz), notes, tz)
         if replaces is not None:
             index = next((i for i, t in enumerate(kept) if t.id == replaces), None)

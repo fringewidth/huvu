@@ -20,7 +20,7 @@ Hermes reaches the backend through the backend's MCP server. The backend reaches
 
 ## Stack
 
-Python, managed with uv. asyncio for the long-lived connections (Pulsar, the HA websocket). Pydantic for every schema, since its JSON Schema output is what sources publish. FastAPI for the HTTP surface. SQLite with FTS5 for the event log, triggers and the watch cache. The official MCP Python SDK for the MCP server.
+Python, managed with uv. asyncio for the long-lived connections (Pulsar, the HA websocket). Pydantic for every schema, since its JSON Schema output is what sources publish. FastAPI for the HTTP surface. SQLite with FTS5 for the event log, triggers and the last reading of every pushed value. The official MCP Python SDK for the MCP server.
 
 Python over TypeScript or Go, because the ML pieces (face embeddings, Whisper, vision models) ship as Python first, Hermes is Python, and the tested Tuya code is Python. One language for the backend and any Hermes plugins.
 
@@ -164,7 +164,7 @@ State is the set of values the sources declare. The model reads any value throug
 }
 ```
 
-The core passes each name to its source, or answers from the watch cache when it holds a fresh copy. Every answer carries `at`, the time of the reading. A source that can't give a value returns `null` with a `reason`.
+The core passes each name to its source, or answers from the last reading the source pushed. Those readings are kept in SQLite too, so a restart forgets nothing: a lock battery that only reports when the lock wakes is still known after one, with its old time, and its max age still applies. Every answer carries `at`, the time of the reading. A source that can't give a value returns `null` with a `reason`.
 
 The model finds values in two steps. The kinds of value are few, so the core joins every source's `describe` into a short index for the model. The things they apply to (hundreds of HA entities) are too many, so the model searches with `state_search`. Aliases from the `huvu` source come first. Each source answers for its own things, matching names, areas and aliases, and each result carries its current value.
 
@@ -209,10 +209,10 @@ Unknown value names are rejected with an error that names the nearest real one, 
 ### Evaluation
 
 1. On registration, the engine collects the trigger's inputs and calls `watch` on each source. The clock source pushes every minute, which opens and closes time windows.
-1. It keeps the last value of each input with the time it arrived. This is a cache of what live triggers need, not a copy of all state.
+1. It reads each input's last value, with the time it arrived, from the state's readings, which survive a restart. So a restart doesn't make every input unknown at once, and doesn't fire a trigger a second time when the values come back.
 1. When any input changes, it checks the whole condition and fires when the result goes from false to true. Which part became true last doesn't matter. A condition that already holds at registration fires at once: the state before registration counts as false.
 1. A trigger with an event check fires when that event arrives, if every value check holds then. It can have one event check at most.
-1. An input older than its source's `max_age` counts as unknown, and unknown counts as false.
+1. An input older than its source's `max_age` counts as unknown, and unknown counts as false for firing. It doesn't count as the condition turning false, though: a `repeat: "yes"` trigger rearms only when every input is known and the condition is false.
 1. A fire wakes Hermes with the note, the matched values and the `include` values. Every fire is a `trigger.run` event, and every failure a `trigger.error` event.
 
 ### Whose a trigger is
