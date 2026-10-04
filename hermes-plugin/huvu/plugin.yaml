@@ -1,0 +1,8 @@
+name: huvu
+version: "0.0.0"
+description: "Connects Hermes sessions to the huvu backend: tells huvu which session made each tool call, tracks session taint, holds memory and skill writes from tainted sessions for approval, and adds the situation block at the start of a session."
+author: "huvu"
+provides_hooks:
+  - pre_tool_call
+  - transform_tool_result
+  - pre_llm_call

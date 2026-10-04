@@ -39,7 +39,7 @@ const SEED: (Pick<Turn, "ask" | "answer"> & { parts?: RichPart[] })[] = [
     answer: "Smile Studio on 12th Main. Kindest reviews, two Saturday slots left.",
     parts: [
       tool("seed-search", "web_search", { query: "dentist indiranagar saturday" }, { sources: [1, 2, 3, 4, 5, 6] }),
-      // The mock backend streams a test pattern here.
+      // No server answers this yet, so the panel shows its failed state.
       tool("seed-feed", "video_feed", {
         src: `${BACKEND}/api/feed/browser`,
         label: "huvu's browser",

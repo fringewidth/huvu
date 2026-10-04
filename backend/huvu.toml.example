@@ -1,0 +1,27 @@
+# Copy to huvu.toml (gitignored). Secrets come from the environment:
+#   HUVU_JWT_SECRET  signs the frontend's tokens (auth.mode = "jwt")
+#   HUVU_MCP_TOKEN   the bearer token Hermes sends to /mcp
+#   HERMES_API_KEY   Hermes's API_SERVER_KEY
+
+data_dir = "data"
+public_url = "http://localhost:3001"
+host = "0.0.0.0"
+port = 3001
+cors_origins = ["*"]
+
+[auth]
+mode = "off"
+# owner = "you@example.com"
+
+[hermes]
+url = "http://localhost:8642"
+
+# Autonomy per action, over each driver's default: silent, notify or ask.
+# An action a driver marks requires_human always asks, whatever this says.
+[policy]
+# "ha.turn_on" = "silent"
+
+# [[sources]]
+# name = "tuya"
+# driver = "huvu_drivers.tuya:TuyaSource"
+# options = { env_file = "~/.tuya.env" }
