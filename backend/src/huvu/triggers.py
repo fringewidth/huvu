@@ -42,13 +42,11 @@ log = logging.getLogger("huvu.triggers")
 
 Op = Literal["==", "!=", "<", "<=", ">", ">=", "between", "in", "contains"]
 Repeat = Literal["no", "yes", "daily"]
-Status = Literal["active", "pending_approval", "done", "expired", "removed"]
+Status = Literal["active", "done", "expired", "removed"]
 
 # A trigger that fires once and names no expiry gets this one, so a
 # condition that never comes true doesn't stay forever.
 DEFAULT_EXPIRY = timedelta(days=7)
-# How long the owner has to approve a trigger from a tainted session.
-APPROVAL_TTL = timedelta(hours=12)
 # How many past events a test replays.
 REPLAY = 5
 
@@ -106,7 +104,6 @@ class Trigger:
     armed: bool
     created_at: datetime
     created_by: str | None
-    tainted: bool
     expires_at: datetime | None
     last_fired_at: datetime | None = None
     fire_count: int = 0
@@ -187,7 +184,7 @@ class TriggerEngine:
 
     async def load(self) -> None:
         """Reloads stored triggers and activates the live ones."""
-        rows = self._db.execute("SELECT * FROM triggers WHERE status IN ('active', 'pending_approval')").fetchall()
+        rows = self._db.execute("SELECT * FROM triggers WHERE status = 'active'").fetchall()
         for row in rows:
             trigger = Trigger(
                 id=row["id"],
@@ -196,7 +193,6 @@ class TriggerEngine:
                 armed=bool(row["armed"]),
                 created_at=from_iso(row["created_at"]),
                 created_by=row["created_by"],
-                tainted=bool(row["tainted"]),
                 expires_at=from_iso(loads(row["spec"]).get("expires")),
                 last_fired_at=from_iso(row["last_fired_at"]),
                 fire_count=row["fire_count"],
@@ -208,8 +204,7 @@ class TriggerEngine:
                 await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} no longer resolves: {err}", entity=trigger.id)
                 continue
             self._triggers[trigger.id] = trigger
-            if trigger.status == "active":
-                await self._activate(trigger)
+            await self._activate(trigger)
 
     async def stop(self) -> None:
         for task in list(self._tasks):
@@ -227,7 +222,6 @@ class TriggerEngine:
             armed=True,
             created_at=self._kernel.now(),
             created_by=None,
-            tainted=False,
             expires_at=None,
         )
         self._resolve(trigger)
@@ -279,40 +273,21 @@ class TriggerEngine:
         trigger = Trigger(
             id=f"tr_{secrets.token_hex(4)}",
             spec=spec,
-            status="pending_approval" if caller.tainted else "active",
+            status="active",
             armed=True,
             created_at=now,
             created_by=caller.session,
-            tainted=caller.tainted,
             expires_at=from_iso(spec.expires),
         )
         self._resolve(trigger)
         self._db.execute(
-            "INSERT INTO triggers (id, spec, status, armed, created_at, created_by, tainted, fire_count) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-            (trigger.id, dumps(spec.model_dump()), trigger.status, 1, iso(now), caller.session, int(caller.tainted)),
+            "INSERT INTO triggers (id, spec, status, armed, created_at, created_by, fire_count) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (trigger.id, dumps(spec.model_dump()), trigger.status, 1, iso(now), caller.session),
         )
         self._triggers[trigger.id] = trigger
-        await self._kernel.kernel_event(
-            "trigger.registered", f"trigger {trigger.id} registered ({trigger.status}): {spec.note}", entity=trigger.id
-        )
-        if trigger.status == "pending_approval":
-            await self._kernel.policy.hold_kernel(
-                "activate_trigger",
-                {"trigger": trigger.id},
-                caller,
-                f"a session that read outside content registered a trigger: {spec.note}",
-                APPROVAL_TTL,
-            )
-        else:
-            await self._activate(trigger)
-        return trigger
-
-    async def approve(self, trigger_id: str) -> dict[str, Any]:
-        trigger = self._get(trigger_id)
-        trigger.status = "active"
-        self._save(trigger)
+        await self._kernel.kernel_event("trigger.registered", f"trigger {trigger.id} registered: {spec.note}", entity=trigger.id)
         await self._activate(trigger)
-        return trigger.public()
+        return trigger
 
     async def remove(self, trigger_id: str) -> Trigger:
         trigger = self._get(trigger_id)
@@ -320,7 +295,7 @@ class TriggerEngine:
         return trigger
 
     def list(self) -> list[Trigger]:
-        return [t for t in self._triggers.values() if t.status in ("active", "pending_approval")]
+        return [t for t in self._triggers.values() if t.status == "active"]
 
     def _get(self, trigger_id: str) -> Trigger:
         trigger = self._triggers.get(trigger_id)
@@ -478,9 +453,7 @@ class TriggerEngine:
     async def expire(self) -> None:
         now = self._kernel.now()
         for trigger in list(self._triggers.values()):
-            if trigger.status == "pending_approval" and now - trigger.created_at > APPROVAL_TTL:
-                await self._end(trigger, "expired", f"trigger {trigger.id} was never approved")
-            elif trigger.expires_at and now > trigger.expires_at:
+            if trigger.expires_at and now > trigger.expires_at:
                 await self._end(trigger, "expired", f"trigger {trigger.id} expired: {trigger.spec.note}")
 
     async def test(self, spec: TriggerSpec) -> dict[str, Any]:
@@ -495,7 +468,6 @@ class TriggerEngine:
             armed=True,
             created_at=self._kernel.now(),
             created_by=None,
-            tainted=False,
             expires_at=from_iso(spec.expires),
         )
         self._resolve(trigger)

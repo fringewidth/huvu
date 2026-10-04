@@ -1,17 +1,11 @@
 """huvu's Hermes plugin: the Hermes side of the boundary.
 
 Hermes connects to an MCP server once, with fixed headers, so the backend
-can't tell which session a tool call came from. This plugin fills that in
-and keeps session taint, which is Hermes's to track:
+can't tell which session a tool call came from. This plugin fills that in:
 
-1. Every huvu tool call gets `_session` (the Hermes session) and `_tainted`
-   (whether the session has read outside content). The backend strips both.
-2. A session is tainted from the moment a tool result carries outside
-   content: a huvu result marked `"taint": "external"`, or one of Hermes's
-   own tools that reads the outside world (web search, the browser).
-3. In a tainted session, memory and skill writes go to the human-approval
-   gate, so text a stranger wrote can't become a lasting memory.
-4. At the start of a session, the situation block (time, chosen values,
+1. Every huvu tool call gets `_session` (the Hermes session). The backend
+   strips it.
+2. At the start of a session, the situation block (time, chosen values,
    pending approvals) is added to the context, fetched from the backend.
 
 Settings come from the environment Hermes runs in:
@@ -26,8 +20,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
-import threading
 import urllib.request
 from typing import Any
 
@@ -39,51 +31,11 @@ URL = os.environ.get("HUVU_URL", "http://localhost:3001").rstrip("/")
 TOKEN = os.environ.get("HUVU_MCP_TOKEN", "")
 SITUATION = [v.strip() for v in os.environ.get("HUVU_SITUATION", "huvu.mode").split(",") if v.strip()]
 
-# Hermes's own tools whose results come from outside the house.
-OUTSIDE_TOOLS = {"web_search", "web_extract", "vision_analyze"}
-OUTSIDE_PREFIXES = ("browser_",)
-# Writes that last past the session.
-LASTING_WRITES = {"memory", "skill_manage"}
-
-# Hermes may wrap the backend's JSON in its own, escaping the quotes.
-TAINT_RE = re.compile(r'\\?"taint\\?"\s*:\s*\\?"external')
-
-_tainted: set[str] = set()
-_lock = threading.Lock()
-
-
-def _is_tainted(session_id: str) -> bool:
-    with _lock:
-        return session_id in _tainted
-
-
-def _taint(session_id: str) -> None:
-    if session_id:
-        with _lock:
-            _tainted.add(session_id)
-
 
 def _on_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "", **_: Any) -> dict[str, Any] | None:
-    directive: dict[str, Any] | None = None
-    if tool_name.startswith(PREFIX):
-        directive = {"action": "modify", "args": {"_session": session_id, "_tainted": _is_tainted(session_id)}}
-    elif tool_name in LASTING_WRITES and _is_tainted(session_id):
-        directive = {
-            "action": "approve",
-            "message": f"This session read content from outside the house. Allow this {tool_name} write?",
-            "rule_key": f"huvu-tainted-{tool_name}",
-        }
-    return directive
-
-
-def _on_transform_tool_result(tool_name: str = "", result: Any = None, session_id: str = "", **_: Any) -> None:
-    """Only watches; returning None leaves the result as it is."""
-    outside = tool_name in OUTSIDE_TOOLS or tool_name.startswith(OUTSIDE_PREFIXES)
-    if tool_name.startswith(PREFIX) and isinstance(result, str):
-        outside = bool(TAINT_RE.search(result))
-    if outside:
-        _taint(session_id)
-    return None
+    if not tool_name.startswith(PREFIX):
+        return None
+    return {"action": "modify", "args": {"_session": session_id}}
 
 
 def _on_pre_llm_call(session_id: str = "", is_first_turn: bool = False, **_: Any) -> dict[str, str] | None:
@@ -112,5 +64,4 @@ def _situation() -> str:
 
 def register(ctx) -> None:
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)
-    ctx.register_hook("transform_tool_result", _on_transform_tool_result)
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)

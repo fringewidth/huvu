@@ -14,7 +14,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Where a piece of data came from. The labels are facts about the data, so
-# the backend owns them. Session taint is built from them (see policy.py).
+# the backend owns them. A tool result with `external` in it reaches the
+# model marked as such (see mcp_server.py).
 #   owner:    something the owner said or did
 #   house:    device and sensor data, like event times and device states
 #   external: content a stranger controls, like what a doorbell snapshot
@@ -27,13 +28,11 @@ Label = Literal["owner", "house", "external"]
 #   on_demand: the kernel asks the source each time someone reads it
 Updates = Literal["pushed", "on_wake", "on_demand"]
 
-# What an action may do without the owner, before taint and hard rules.
+# What an action may do without the owner, before hard rules.
 #   silent: run it
 #   notify: run it, then tell the owner
 #   ask:    hold it as a pending approval until the owner answers
 Autonomy = Literal["silent", "notify", "ask"]
-
-AUTONOMY_ORDER: dict[Autonomy, int] = {"silent": 0, "notify": 1, "ask": 2}
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*$")
 MEMBER_RE = re.compile(r"^[a-z][a-z0-9_]*$")

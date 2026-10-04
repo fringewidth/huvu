@@ -41,9 +41,8 @@ class Waker:
         now = self._kernel.now()
         trigger = payload.get("trigger", "manual")
         session = f"wake-{trigger}-{now:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
-        tainted = "external" in payload.get("labels", [])
         await self._kernel.hermes.create_session(session, title=f"wake {trigger}: {payload.get('note', '')[:60]}", source="huvu-trigger")
-        self._kernel.sessions.record(session, "wake", trigger_id=trigger, tainted=tainted)
+        self._kernel.sessions.record(session, "wake", trigger_id=trigger)
         reply = ""
         try:
             async for event in self._kernel.hermes.chat(session, render(payload, now)):

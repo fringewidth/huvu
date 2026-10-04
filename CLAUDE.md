@@ -77,7 +77,7 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
     src/huvu_drivers/       the drivers, one module per data source; empty so far
     tests/                  pytest, with a fake house source and a scripted Hermes
     huvu.toml.example       config; secrets come from the environment
-  hermes-plugin/huvu/       Hermes plugin: session ids on huvu tool calls, session taint, memory-write gating, the situation block
+  hermes-plugin/huvu/       Hermes plugin: session ids on huvu tool calls, the situation block
 ```
 
 ## Known gaps / not yet done

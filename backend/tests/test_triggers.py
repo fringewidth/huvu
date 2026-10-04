@@ -153,21 +153,6 @@ async def test_validation_errors_name_the_fix(kernel):
         await kernel.triggers.register(TriggerSpec.model_validate(bad_field), OWNER)
 
 
-async def test_tainted_sessions_need_the_owner_to_approve_a_trigger(kernel, hermes):
-    home = kernel.registry.get("home").ctx
-    spec = {"note": "Unlock for blue uniforms.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), Caller(kind="hermes", session="s2", tainted=True))
-    assert trigger.status == "pending_approval"
-    await home.emit("doorbell", "ding")
-    await settle(kernel)
-    assert wakes(hermes) == []
-    [approval] = kernel.policy.pending()
-    await kernel.policy.resolve(approval.id, approve=True)
-    await home.emit("doorbell", "ding")
-    await settle(kernel)
-    assert len(wakes(hermes)) == 1
-
-
 async def test_expired_triggers_stop(kernel, clock, hermes):
     home = kernel.registry.get("home").ctx
     spec = {"note": "Doorbell within the hour.", "when": [{"event": "home.doorbell"}], "expires": "1h"}

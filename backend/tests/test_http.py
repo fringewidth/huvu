@@ -77,7 +77,7 @@ async def test_hermes_side_over_mcp(server):
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    base, kernel, _ = server
+    base, _, _ = server
     async with streamable_http_client(f"{base}/mcp") as streams:
         read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
@@ -88,8 +88,7 @@ async def test_hermes_side_over_mcp(server):
             result = await session.call_tool("state_get", {"values": ["clock.time"], "_session": "hs1"})
             body = json.loads(result.content[0].text)
             assert "just now" in body["clock.time"]["at"]
-            tainting = await session.call_tool("home_snapshot", {"_session": "hs1"})
-            assert json.loads(tainting.content[0].text)["taint"] == "external"
-            assert kernel.sessions.is_tainted("hs1")
+            outside = await session.call_tool("home_snapshot", {"_session": "hs1"})
+            assert json.loads(outside.content[0].text)["provenance"] == "external"
             bad = await session.call_tool("state_gte", {})
             assert bad.is_error and "Did you mean state_get" in bad.content[0].text

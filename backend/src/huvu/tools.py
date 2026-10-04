@@ -106,8 +106,6 @@ class ToolBox:
             result = await tool.handler(args, caller)
         except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError) as err:
             raise ToolError(str(err)) from err
-        if "external" in result.labels and caller.session:
-            self._kernel.sessions.mark_tainted(caller.session)
         return result
 
     def _query_handler(self, source: str, name: str) -> Handler:

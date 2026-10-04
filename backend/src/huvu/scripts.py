@@ -67,7 +67,7 @@ class ScriptRunner:
         real, while actions and wakes are recorded and skipped."""
         path = self._dir / f"{trigger.id}.py"
         path.write_text(trigger.spec.script or "")
-        caller = Caller(kind="script", trigger=trigger.id, tainted="external" in payload.get("labels", []))
+        caller = Caller(kind="script", trigger=trigger.id)
         report: dict[str, Any] = {"dry_run": dry, "calls": [], "wakes": [], "error": None, "log": ""}
         proc = await asyncio.create_subprocess_exec(
             sys.executable,

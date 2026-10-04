@@ -1,6 +1,6 @@
 # huvu's Hermes plugin
 
-The Hermes side of the boundary with huvu's backend. What it does and why is in `docs/backend-architecture.md`, under Session taint.
+The Hermes side of the boundary with huvu's backend. What it does and why is in `docs/backend-architecture.md`, under The huvu plugin.
 
 ## Setup
 

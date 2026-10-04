@@ -20,11 +20,9 @@ async def test_silent_actions_run_and_are_audited(kernel, home):
     assert "action.requested" in audit and "action.ran" in audit
 
 
-async def test_tainted_callers_get_ask_in_place_of_notify(kernel, home):
-    clean = await kernel.policy.request("home", "announce", {}, Caller(kind="hermes"))
-    assert clean.data == {"done": "announce"}
-    held = await kernel.policy.request("home", "announce", {}, Caller(kind="hermes", tainted=True))
-    assert held.data["status"] == "pending_approval"
+async def test_notify_actions_run_at_once(kernel, home):
+    result = await kernel.policy.request("home", "announce", {}, Caller(kind="hermes"))
+    assert result.data == {"done": "announce"}
     assert home.acted == [("announce", {})]
 
 
@@ -52,19 +50,15 @@ async def test_frontend_taps_run_at_once(kernel, home):
     assert home.acted == [("unlock", {})]
 
 
-async def test_external_results_taint_the_session(kernel):
-    caller = Caller(kind="hermes", session="s9")
-    result = await kernel.tools.call("home_snapshot", {}, caller)
+async def test_external_results_keep_their_label(kernel):
+    result = await kernel.tools.call("home_snapshot", {}, Caller(kind="hermes", session="s9"))
     assert "external" in result.labels
-    assert kernel.sessions.is_tainted("s9")
+
+
+def test_the_plugin_session_becomes_the_caller():
     args = {"_session": "s9", "values": ["clock.time"]}
-    later = caller_from(kernel, args)
-    assert later.tainted and args == {"values": ["clock.time"]}
-
-
-async def test_the_plugin_flag_taints_too(kernel):
-    caller = caller_from(kernel, {"_session": "s3", "_tainted": True})
-    assert caller.tainted and kernel.sessions.is_tainted("s3")
+    caller = caller_from(args)
+    assert caller.session == "s9" and args == {"values": ["clock.time"]}
 
 
 async def test_unknown_tools_and_missing_args_explain_themselves(kernel):

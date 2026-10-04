@@ -48,7 +48,6 @@ CREATE TABLE IF NOT EXISTS triggers (
     armed INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     created_by TEXT,
-    tainted INTEGER NOT NULL,
     last_fired_at TEXT,
     fire_count INTEGER NOT NULL DEFAULT 0
 );
@@ -101,7 +100,6 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
     kind TEXT NOT NULL,
     conversation_id TEXT,
     trigger_id TEXT,
-    tainted INTEGER NOT NULL,
     created_at TEXT NOT NULL
 );
 """

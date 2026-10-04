@@ -6,9 +6,7 @@ action as a pending approval with a deadline, which the frontend shows and
 only the owner can answer. Every request, allowed or refused, goes into the
 event log with who asked and why.
 
-A tainted caller (a session that has read content a stranger controls) gets
-the stricter level: notify becomes ask. An action marked `requires_human`
-always asks, and config can't lower it.
+An action marked `requires_human` always asks, and config can't lower it.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from .db import dumps, from_iso, iso, loads
 from .source import SourceError
-from .spec import AUTONOMY_ORDER, ActionSpec, Autonomy, Result
+from .spec import ActionSpec, Autonomy, Result
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -31,17 +29,12 @@ log = logging.getLogger("huvu.policy")
 CallerKind = Literal["hermes", "script", "frontend", "kernel"]
 ApprovalStatus = Literal["pending", "approved", "denied", "expired", "failed"]
 
-# Approvals the kernel answers itself, not a source: a trigger registered
-# from a tainted session waits on one of these.
-KERNEL = "kernel"
-
 
 @dataclass(frozen=True)
 class Caller:
     kind: CallerKind
     session: str | None = None
     trigger: str | None = None
-    tainted: bool = False
 
     def describe(self) -> str:
         parts = [self.kind]
@@ -49,12 +42,10 @@ class Caller:
             parts.append(f"session {self.session}")
         if self.trigger:
             parts.append(f"trigger {self.trigger}")
-        if self.tainted:
-            parts.append("tainted")
         return ", ".join(parts)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "session": self.session, "trigger": self.trigger, "tainted": self.tainted}
+        return {"kind": self.kind, "session": self.session, "trigger": self.trigger}
 
 
 @dataclass
@@ -93,8 +84,6 @@ class Policy:
 
     def level(self, source: str, spec: ActionSpec, caller: Caller) -> Autonomy:
         level: Autonomy = self._overrides.get(f"{source}.{spec.name}", spec.autonomy)
-        if caller.tainted and AUTONOMY_ORDER[level] == AUTONOMY_ORDER["notify"]:
-            level = "ask"
         if spec.requires_human:
             level = "ask"
         return level
@@ -133,12 +122,6 @@ class Policy:
             data={"action": f"{source}.{action}", "caller": caller.as_dict()},
         )
         return result
-
-    async def hold_kernel(self, action: str, args: dict[str, Any], caller: Caller, reason: str, ttl) -> Approval:
-        """Holds one of the kernel's own steps, such as activating a trigger
-        a tainted session registered."""
-        spec = ActionSpec(name=action, description=reason, approval_ttl=ttl)
-        return await self._hold(KERNEL, action, args, caller, reason, spec)
 
     async def _hold(self, source: str, action: str, args: dict[str, Any], caller: Caller, reason: str | None, spec: ActionSpec) -> Approval:
         now = self._kernel.now()
@@ -193,10 +176,7 @@ class Policy:
         caller = Caller(kind="frontend")
         status: ApprovalStatus = "approved"
         try:
-            if approval.source == KERNEL:
-                approval.result = await self._kernel.kernel_approved(approval.action, approval.args)
-            else:
-                approval.result = (await self.run(approval.source, approval.action, approval.args, caller)).data
+            approval.result = (await self.run(approval.source, approval.action, approval.args, caller)).data
         except SourceError as err:
             approval.result = {"error": str(err)}
             status = "failed"

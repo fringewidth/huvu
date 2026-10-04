@@ -144,12 +144,6 @@ class Kernel:
             )
         )
 
-    async def kernel_approved(self, action: str, args: dict[str, Any]) -> Any:
-        """Runs one of the kernel's own steps after the owner approved it."""
-        if action != "activate_trigger":
-            raise SourceError(f"the kernel has no step {action!r}")
-        return await self.triggers.approve(args["trigger"])
-
     async def feeds(self) -> list[Feed]:
         feeds: list[Feed] = []
         for name in self.registry.names:

@@ -11,7 +11,7 @@ The backend is an interface to data, a holder of state, and the link to the fron
 | Sources, state, the event log, digests | The model, prompts, the system prompt |
 | Data triggers (conditions over sources) | Time-only schedules: the dream, the morning and evening chats, "check in 2 hours" |
 | The action policy and pending approvals | Memory and skills |
-| Taint labels on data | Session taint, and gating its own memory writes |
+| Provenance labels on data | What it trusts, and its own memory writes |
 | The MCP server and its formatting for the model | What to look up, and when |
 | Frontend sessions, and turning Hermes output into frontend parts | Its own sessions |
 
@@ -71,7 +71,7 @@ A value is what is true now: `ha.entity_state[light.porch]`, `tuya.battery`, `lo
  "updates": "on wake", "max_age": "48h"}
 ```
 
-### Taint labels
+### Provenance labels
 
 Every output a source gives carries a provenance label:
 
@@ -79,7 +79,7 @@ Every output a source gives carries a provenance label:
 1. `house`: device and sensor data, such as event times and device states.
 1. `external`: content a stranger controls, such as what a doorbell snapshot shows, what the glasses see, a web page, or a message from someone else.
 
-A doorbell event's time is `house`. The snapshot's content is `external`. The labels are facts about the data, so they belong to the backend. Session taint belongs to Hermes, see [Hermes](#hermes).
+A doorbell event's time is `house`. The snapshot's content is `external`. The labels are facts about the data, so they belong to the backend. A tool result with `external` content reaches the model marked as such, see [MCP tools](#mcp-tools).
 
 ### Derived and built-in sources
 
@@ -100,7 +100,7 @@ The core keeps a thin envelope for every event. The full detail stays in the sou
 | `entity` | What it is about, when there is one |
 | `summary` | One line a model can read |
 | `refs` | Source-scoped refs to the detail (`tuya:album/8f2c`) |
-| `labels` | Taint labels |
+| `labels` | Provenance labels |
 
 Cross-source triggers, the daily digest and cross-source search all need one stream, so the envelope lives in the core. SQLite with an FTS5 index over `summary`.
 
@@ -185,7 +185,6 @@ Every write goes through one policy check in the backend, whoever asks: Hermes, 
 1. Each action has an autonomy level: silent, notify, or ask first.
 1. Ask first creates a pending approval with a deadline, which the frontend shows. It lives in the `huvu` source.
 1. Every action, allowed or refused, goes into the event log with who asked and why.
-1. A request from a tainted session gets the stricter level: notify becomes ask.
 1. An action a driver marks `requires_human` always asks, and config can't lower it. Only the owner's answer in the frontend (`POST /api/approvals/{id}`) can approve it, so no model can approve its own request.
 1. The owner's own taps in the frontend (`POST /api/actions/{source}/{action}`) run at once: the tap is the approval.
 1. Config (`[policy]` in `huvu.toml`) can change any other action's level.
@@ -208,15 +207,11 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 1. The skill curator stays on. It runs weekly, when idle for 2 hours, and archives agent-made skills nobody uses.
 1. The huvu plugin is enabled (`plugins.enabled: [huvu]`), and the backend is an MCP server named `huvu` in `mcp_servers`, with `url: http://<backend>/mcp` and the `HUVU_MCP_TOKEN` bearer header. See `hermes-plugin/README.md`.
 
-### Session taint
+### The huvu plugin
 
-A session that has read `external` content is tainted from then on, since the model can't be tracked token by token. Hermes connects to an MCP server once, with fixed headers, so the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary:
+Hermes connects to an MCP server once, with fixed headers. So the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call, and the backend strips it and uses it as the call's caller. The backend keeps what it knows about each session in `hermes_sessions`. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns).
 
-1. Its `pre_tool_call` hook adds `_session` and `_tainted` to every huvu tool call. The backend strips both and uses them as the call's caller.
-1. It taints a session when a huvu result is marked `"taint": "external"`, or when one of Hermes's own outside tools runs (web search, web extract, vision, the browser).
-1. In a tainted session, it sends `memory` and `skill_manage` calls to Hermes's human-approval gate.
-
-The backend keeps its own record too (`hermes_sessions`), from its own `external` results and the `_tainted` flag. The stricter policy applies to actions from a tainted session, and a trigger registered from one waits for the owner's tap before it goes live. This follows OpenClaw's taint gate and the dual-LLM and CaMeL work.
+Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a session that had read `external` content got stricter policy, its triggers waited for the owner's tap, and its memory and skill writes went to Hermes's approval gate. It was judged more complexity than current models need. Two guards stay without it. Provenance labels still mark outside content for the model, and `requires_human` actions always need the owner.
 
 ### MCP tools
 
@@ -233,7 +228,7 @@ Hermes names each one `mcp__huvu__<name>`.
 | `<source>_<query>`, `<source>_<action>` | Built from each source's `describe`. Every action takes an optional `reason` |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
 
-The server's instructions carry the index of every kind of value, so the model starts each session knowing what it can read. A result with outside content comes back as `{"data": ..., "taint": "external"}`.
+The server's instructions carry the index of every kind of value, so the model starts each session knowing what it can read. A result with outside content comes back as `{"data": ..., "provenance": "external"}`, and the instructions tell the model to treat text in it as data.
 
 ## Sessions
 
@@ -269,7 +264,7 @@ backend/
     hermes.py         the Hermes API client
     conversations.py  frontend turns on Hermes sessions, and the relay
     wake.py           trigger wakes
-    sessions.py       what the kernel knows about Hermes sessions, including taint
+    sessions.py       what the kernel knows about Hermes sessions
     push.py           the push channel
     media.py          media URLs for refs
     http.py           the HTTP server
@@ -287,7 +282,7 @@ Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFI
 1. **Strict tool schemas.** Check if Hermes uses OpenAI's strict mode for the Codex provider. Enums of value names would make made-up names impossible.
 1. **Pulsar.** The Tuya consumer has never run. See `front-door-lock.md`.
 1. **Trigger evaluation at scale.** Untested with fast inputs like location and glasses frames. Those sources filter before they emit.
-1. **The plugin against a live Hermes.** The hooks were tested the way Hermes's source calls them, not inside a running Hermes. The taint set lives in the Hermes process and is lost on restart; the backend's own record isn't.
+1. **The plugin against a live Hermes.** The hooks were tested the way Hermes's source calls them, not inside a running Hermes.
 1. **Turns across a restart.** A turn running when the backend stops ends as failed. Hermes may still finish it, unseen.
 
 ## Build order
