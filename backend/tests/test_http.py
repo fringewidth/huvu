@@ -182,6 +182,46 @@ def test_a_shared_device_asks_who_is_there(server):
     assert answered.json()["status"] == "confirmed"
     assert httpx.get(f"{server.base}/api/attendance", headers=tv).json()["user"]["name"] == "Mom"
     tv_id = httpx.get(f"{server.base}/api/me", headers=tv).json()["device"]["id"]
+    [place] = httpx.get(f"{server.base}/api/attendance/mine", headers=moms_phone).json()
+    assert place["device"] == {"id": tv_id, "name": "living room"}
     assert httpx.delete(f"{server.base}/api/attendance/{tv_id}", headers=server.login("phone")).status_code == 403
     assert httpx.delete(f"{server.base}/api/attendance/{tv_id}", headers=tv).json() == {"ok": True}
     assert httpx.get(f"{server.base}/api/attendance", headers=tv).json()["user"] is None
+
+
+def test_a_turn_replays_from_its_start(server):
+    laptop = server.login("web")
+    with httpx.stream("POST", f"{server.base}/api/chat", json={"id": "t_replay", "ask": "hi"}, headers=laptop) as res:
+        "".join(res.iter_text())
+    with httpx.stream("GET", f"{server.base}/api/turns/t_replay/events", headers=laptop) as res:
+        body = "".join(res.iter_text())
+    names = [line[7:] for line in body.splitlines() if line.startswith("event: ")]
+    assert names == ["turn.started", "turn.ended"]
+    ended = json.loads([line for line in body.splitlines() if line.startswith("data: ")][-1][6:])
+    assert ended["answer"] == "ok" and ended["turn"] == "t_replay"
+    assert httpx.get(f"{server.base}/api/turns/t_replay/events", headers=server.login("phone")).status_code == 404
+
+
+def test_wrong_answers_say_what_went_wrong(server):
+    phone = server.login("phone")
+    assert httpx.post(f"{server.base}/api/pair/confirm", json={"code": "ZZZZ-ZZZZ"}, headers=phone).status_code == 404
+    assert httpx.post(f"{server.base}/api/identify/nope", json={"yes": True}, headers=phone).status_code == 404
+    assert httpx.get(f"{server.base}/api/notifications", headers=phone).json() == []
+
+
+def test_requests_at_once_all_know_their_device(server):
+    from concurrent.futures import ThreadPoolExecutor
+
+    phone = server.login("phone")
+    paths = ["/api/me", "/api/approvals", "/api/identify", "/api/notifications", "/api/triggers", "/api/conversation"] * 8
+    with ThreadPoolExecutor(len(paths)) as pool:
+        codes = list(pool.map(lambda path: httpx.get(f"{server.base}{path}", headers=phone).status_code, paths))
+    assert codes == [200] * len(paths)
+
+
+def test_only_a_phone_registers_a_push_token(server):
+    body = {"token": "fcm-1", "platform": "android"}
+    assert httpx.post(f"{server.base}/api/push/token", json=body, headers=server.login("web")).status_code == 403
+    assert httpx.post(f"{server.base}/api/push/token", json=body, headers=server.login("phone")).json() == {"ok": True}
+    [row] = server.kernel.db.execute("SELECT token, platform FROM push_tokens").fetchall()
+    assert tuple(row) == ("fcm-1", "android")

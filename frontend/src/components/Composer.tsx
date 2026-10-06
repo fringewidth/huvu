@@ -21,6 +21,9 @@ interface ComposerProps {
   // A reply is still coming in. The composer offers to stop it, and sends
   // nothing new until it is stopped or done.
   running: boolean;
+  // Asked to stop: the backend lets Hermes finish its last words, so the
+  // reply ends a moment later.
+  stopping: boolean;
   onStop: () => void;
 }
 
@@ -39,6 +42,7 @@ export const Composer = memo(function Composer({
   rewinding,
   onCancelRewind,
   running,
+  stopping,
   onStop,
 }: ComposerProps) {
   const canSend = draft.trim().length > 0 && !running;
@@ -91,14 +95,15 @@ export const Composer = memo(function Composer({
               <m.button
                 type="button"
                 onClick={onStop}
+                disabled={stopping}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.4, ease: EASE }}
-                className={`${capsClass} -my-3 ml-auto flex min-h-11 items-center gap-2 px-2 text-ivory/60 transition-colors duration-500 hover:text-ivory`}
+                className={`${capsClass} -my-3 ml-auto flex min-h-11 items-center gap-2 px-2 text-ivory/60 transition-colors duration-500 enabled:hover:text-ivory disabled:text-ivory/35`}
               >
-                <span className="size-1.5 bg-sindoor" />
-                stop
+                <span className={`size-1.5 ${stopping ? "bg-ivory/35" : "bg-sindoor"}`} />
+                {stopping ? "stopping" : "stop"}
               </m.button>
             )}
           </AnimatePresence>

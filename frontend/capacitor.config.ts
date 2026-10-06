@@ -14,6 +14,13 @@ const config: CapacitorConfig = {
   // The garden's paper color, so the WebView never flashes white while
   // the page loads.
   backgroundColor: hex(PAPER),
+  plugins: {
+    // The app in front shows everything itself, from the push stream, so
+    // iOS shows no notification over it. Android does this by default.
+    FirebaseMessaging: {
+      presentationOptions: [],
+    },
+  },
 };
 
 export default config;

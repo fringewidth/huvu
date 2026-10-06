@@ -23,7 +23,8 @@
 Secrets never go in the file. HERMES_API_KEY (the default Hermes profile's
 key) and HUVU_MCP_TOKEN (the token that profile sends to /mcp) come from the
 environment, or else from backend/.env (gitignored), which setup.sh writes;
-both serve the default group's shared devices. Users, devices and each user's
+both serve the default group's shared devices. HUVU_FCM_CREDENTIALS, the
+path of a Firebase service account's JSON key, turns on native push. Users, devices and each user's
 profile secrets live in the database (see accounts.py), managed with
 `huvu user ...`.
 """
@@ -68,6 +69,9 @@ class Config:
     hermes_url: str = "http://localhost:8642"
     # The default profile's API key.
     hermes_api_key: str | None = None
+    # The path of a Firebase service account's JSON key, for native push.
+    # None turns native push off.
+    fcm_credentials: Path | None = None
     policy: dict[str, Autonomy] = field(default_factory=dict)
     sources: list[SourceConfig] = field(default_factory=list)
     # Where huvu writes a Hermes skill per source. Defaults to
@@ -88,6 +92,7 @@ def load(path: Path | None = None) -> Config:
     auth = raw.get("auth", {})
     hermes = raw.get("hermes", {})
     base = path.parent if path.exists() else Path.cwd()
+    fcm = secret("HUVU_FCM_CREDENTIALS")
     config = Config(
         data_dir=(base / raw.get("data_dir", "data")).resolve(),
         public_url=raw.get("public_url", "http://localhost:3001").rstrip("/"),
@@ -99,6 +104,7 @@ def load(path: Path | None = None) -> Config:
         mcp_token=secret("HUVU_MCP_TOKEN"),
         hermes_url=hermes.get("url", "http://localhost:8642"),
         hermes_api_key=secret("HERMES_API_KEY"),
+        fcm_credentials=Path(fcm).expanduser() if fcm else None,
         policy=dict(raw.get("policy", {})),
         skills_dir=(base / raw["skills_dir"]).resolve() if raw.get("skills_dir") else None,
         hermes_skills_dir=(base / raw["hermes_skills_dir"]).resolve() if raw.get("hermes_skills_dir") else REPO / "hermes-skills",

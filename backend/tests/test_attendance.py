@@ -38,8 +38,10 @@ async def test_the_question_goes_to_that_persons_phones(kernel, family):
     await kernel.attendance.answer(check.id, True, family.mom_phone)
     await asyncio.sleep(0)
     assert kernel.attendance.holder(family.tv.id) == "mom"
-    assert tv == [("attendance", {"user": {"id": "mom", "name": "Mom"}})]
-    assert moms[-1] == ("identify.done", {"id": check.id, "status": "confirmed"})
+    recognized = ("attendance", {"device": {"id": family.tv.id, "name": "living room"}, "user": {"id": "mom", "name": "Mom"}})
+    assert tv == [recognized]
+    # Mom's phone hears where she is recognized, so it can end it from afar.
+    assert moms[-2:] == [recognized, ("identify.done", {"id": check.id, "status": "confirmed"})]
     for task in (moms_task, mine_task, tv_task):
         task.cancel()
 

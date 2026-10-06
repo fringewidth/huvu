@@ -66,7 +66,13 @@ SCRYPT_P = 1
 
 class AuthError(Exception):
     """A login, pairing or permission that failed. The message is safe to
-    show the client."""
+    show the client, and `status` is the HTTP status it answers with: 403
+    unless the request named something that isn't there (404), was already
+    done (409), ran out of time (410) or left out what it needs (400)."""
+
+    def __init__(self, message: str, status: int = 403) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -382,12 +388,12 @@ class Accounts:
         if group_id is None and len(groups) == 1:
             group_id = groups[0]
         if group_id is None or group_id not in groups:
-            raise AuthError(f"say which of your groups the device joins: {', '.join(groups) or 'you are a member of none'}")
+            raise AuthError(f"say which of your groups the device joins: {', '.join(groups) or 'you are a member of none'}", 400)
         self._drop_expired_pairings()
         wanted = code.strip().upper().replace("-", "").replace(" ", "")
         pairing = next((p for p in self._pairings.values() if p.device is None and hmac.compare_digest(p.code, wanted)), None)
         if pairing is None:
-            raise AuthError("no device is showing that code")
+            raise AuthError("no device is showing that code", 404)
         pairing.device, pairing.token = self._add_device(pairing.name, pairing.kind, None, group_id)
         return pairing.device
 

@@ -9,6 +9,7 @@ dependencies = [
     "pydantic",
     "httpx",
     "mcp",
+    "pyjwt[crypto]>=2.15.1",
 ]
 
 [project.scripts]

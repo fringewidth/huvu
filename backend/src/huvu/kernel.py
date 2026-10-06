@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -22,11 +23,12 @@ from .builtin.clock import ClockSource
 from .builtin.huvu import HuvuSource
 from .config import Config
 from .conversations import ConversationHub
-from .db import connect
+from .db import connect, from_iso, iso
 from .events import EventLog
 from .hermes import HermesClient
 from .media import MediaStore
 from .policy import Policy
+from .native_push import FcmClient, NativePush
 from .push import PushHub
 from .registry import Registry
 from .scripts import ScriptRunner
@@ -46,6 +48,8 @@ TICK = 60.0
 SESSION_RETENTION = timedelta(days=30)
 # How often the sweep runs.
 SWEEP_EVERY = timedelta(days=1)
+# How long a notification stays listed for a phone that missed it.
+NOTIFY_KEEP = timedelta(days=3)
 
 
 class Kernel:
@@ -77,7 +81,8 @@ class Kernel:
         self.conversations = ConversationHub(self)
         self.waker = Waker(self)
         self.attendance = Attendance(self)
-        self.push = PushHub()
+        self.native_push = NativePush(self, FcmClient(config.fcm_credentials) if config.fcm_credentials else None)
+        self.push = PushHub(self.native_push.forward)
         self.media = MediaStore(self)
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None
@@ -102,6 +107,8 @@ class Kernel:
         if self.config.hermes_skills_dir is not None:
             skills.link_all(self.registry.specs(), self.config.skills_folder, self.config.hermes_skills_dir)
         await self.triggers.load()
+        if self.native_push.sender is None:
+            log.info("native push is off: HUVU_FCM_CREDENTIALS is not set")
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
         await self.kernel_event("started", f"kernel started with sources {', '.join(self.registry.names)}")
 
@@ -112,6 +119,7 @@ class Kernel:
         await self.triggers.stop()
         await self.registry.stop()
         await self.hermes.close()
+        await self.native_push.close()
         self.db.close()
 
     async def _tick(self) -> None:
@@ -201,11 +209,38 @@ class Kernel:
             )
         )
 
-    async def notify(self, user: str | None, group: str | None, text: str, *, image: str | None = None, urgency: str = "normal") -> None:
+    async def notify(
+        self, user: str | None, group: str | None, text: str, *, image: str | None = None, urgency: str = "normal", opens: str | None = None
+    ) -> None:
         """A notification on a user's phones, or on a group's members'
-        phones when there is no user."""
-        payload = {"text": text, "image": image, "urgency": urgency, "user": user, "group": None if user else group}
+        phones when there is no user. It is kept for NOTIFY_KEEP, so a phone
+        that wasn't connected finds it later. `opens` names the app screen
+        that deals with it, such as "triggers"."""
+        now = self.now()
+        # With no user, a group's members get it: the default group's when
+        # none is named, the way phones() picks them.
+        group = None if user else (group or self.accounts.default_group())
+        payload = {"id": f"n_{secrets.token_hex(5)}", "at": now, "text": text, "image": image, "urgency": urgency, "opens": opens, "user": user, "group": group}
+        self.db.execute("DELETE FROM notifications WHERE ts < ?", ((now - NOTIFY_KEEP).timestamp(),))
+        self.db.execute(
+            "INSERT INTO notifications (id, at, ts, text, image, urgency, opens, user_id, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (payload["id"], iso(now), now.timestamp(), text, image, urgency, opens, user, group),
+        )
         self.push.send("notify", payload, self.accounts.phones(user, group))
+
+    def notifications(self, user: str | None) -> list[dict[str, Any]]:
+        """What was sent to a user's phones: their own notifications and
+        their member groups', oldest first."""
+        groups = self.accounts.member_groups(user)
+        marks = ", ".join("?" * len(groups))
+        rows = self.db.execute(
+            f"SELECT * FROM notifications WHERE user_id = ? OR (user_id IS NULL AND group_id IN ({marks})) ORDER BY ts",
+            (user, *groups),
+        ).fetchall()
+        return [
+            {"id": r["id"], "at": from_iso(r["at"]), "text": r["text"], "image": r["image"], "urgency": r["urgency"], "opens": r["opens"], "user": r["user_id"], "group": r["group_id"]}
+            for r in rows
+        ]
 
     async def feeds(self) -> list[Feed]:
         feeds: list[Feed] = []

@@ -383,6 +383,9 @@ class TriggerEngine:
         await self._end(trigger, "removed", f"trigger {trigger.id} removed")
         return trigger
 
+    def get(self, trigger_id: str) -> Trigger | None:
+        return self._triggers.get(trigger_id)
+
     def list(self, caller: Caller) -> list[Trigger]:
         """A user's live triggers. On a shared device nobody is recognized
         at, the device's triggers still waiting for their person."""
@@ -408,7 +411,7 @@ class TriggerEngine:
             return
         reason = f"it woke the model {wakes} times in {int(WAKE_WINDOW.total_seconds() // 3600)} hours"
         await self._pause(trigger, "limit", reason)
-        await self._kernel.notify(trigger.user, None, f"Paused a trigger, since {reason}: {trigger.spec.note}", urgency="high")
+        await self._kernel.notify(trigger.user, None, f"Paused a trigger, since {reason}: {trigger.spec.note}", urgency="high", opens="triggers")
 
     async def _pause(self, trigger: Trigger, by: PausedBy, reason: str) -> None:
         trigger.status = "paused"
@@ -625,7 +628,7 @@ class TriggerEngine:
         if fires > BUSY_FIRES and not told:
             text = f"Your triggers fired {fires} times in the last hour. Check them, or ask huvu to pause one."
             await self._kernel.kernel_event("triggers.busy", text, user=trigger.user)
-            await self._kernel.notify(trigger.user, None, text)
+            await self._kernel.notify(trigger.user, None, text, opens="triggers")
 
     async def _deliver(self, trigger: Trigger, payload: dict[str, Any]) -> None:
         try:

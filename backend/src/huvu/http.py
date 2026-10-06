@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +79,11 @@ class IdentifyAnswer(BaseModel):
     yes: bool
 
 
+class PushToken(BaseModel):
+    token: str = Field(min_length=1)
+    platform: Literal["android", "ios"]
+
+
 class Situation(BaseModel):
     values: list[str]
 
@@ -111,7 +116,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.exception_handler(AuthError)
     async def auth_error(request: Request, err: AuthError) -> JSONResponse:
-        return JSONResponse({"detail": str(err)}, status_code=403)
+        return JSONResponse({"detail": str(err)}, status_code=err.status)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -195,6 +200,12 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         named = accounts.user(user) if user else None
         return JSONResponse({"user": named.public() if named else None})
 
+    @app.get("/api/attendance/mine")
+    async def recognized(me: Device = device) -> JSONResponse:
+        """The shared devices this device's user is recognized at, so their
+        phone can end it from afar."""
+        return JSONResponse(api_json(kernel.attendance.places(me.user) if me.user else []))
+
     @app.post("/api/attendance")
     async def identify(body: Identify, me: Device = device) -> JSONResponse:
         """A shared device asks: is this person here? Their phones get the
@@ -236,6 +247,15 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         await kernel.conversations.stop(turn_id)
         return {"ok": True}
 
+    @app.get("/api/turns/{turn_id}/events")
+    async def turn_events(turn_id: str, me: Device = device) -> StreamingResponse:
+        """One turn's events from its start, then live until it ends, for a
+        client that opens while it runs."""
+        if not kernel.conversations.owns(me.id, turn_id):
+            raise HTTPException(404, f"no turn {turn_id!r}")
+        events = kernel.conversations.replay(turn_id)
+        return StreamingResponse(_sse_stream(events), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
     @app.get("/api/conversation")
     async def conversation(me: Device = device) -> JSONResponse:
         return JSONResponse(api_json([t.public() for t in kernel.conversations.turns(me.id)]))
@@ -244,6 +264,13 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     async def push(me: Device = device) -> StreamingResponse:
         events = kernel.push.subscribe(me.id)
         return StreamingResponse(_sse_stream(events, forever=True), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/push/token")
+    async def push_token(body: PushToken, me: Device = phone) -> dict[str, bool]:
+        """A phone's FCM token, so what needs its person reaches it while the
+        app is closed. Logging the device out drops it."""
+        kernel.native_push.register(me.id, body.token, body.platform)
+        return {"ok": True}
 
     @app.get("/api/feeds", dependencies=[device])
     async def feeds() -> JSONResponse:
@@ -261,7 +288,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.get("/api/approvals")
     async def approvals(by: Device = phone) -> JSONResponse:
-        return JSONResponse(api_json([a.public() for a in kernel.policy.pending() if kernel.policy.answerable(a, by)]))
+        return JSONResponse(api_json([kernel.policy.public(a) for a in kernel.policy.pending() if kernel.policy.answerable(a, by)]))
 
     @app.post("/api/approvals/{approval_id}")
     async def answer(approval_id: str, body: Answer, by: Device = phone) -> JSONResponse:
@@ -269,7 +296,13 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             approval = await kernel.policy.resolve(approval_id, body.approve, by)
         except SourceError as err:
             raise HTTPException(409, str(err)) from err
-        return JSONResponse(api_json(approval.public()))
+        return JSONResponse(api_json(kernel.policy.public(approval)))
+
+    @app.get("/api/notifications")
+    async def notifications(by: Device = phone) -> JSONResponse:
+        """The notifications of the last few days, for a phone that wasn't
+        connected when they were sent."""
+        return JSONResponse(api_json(kernel.notifications(by.user)))
 
     # Triggers
 

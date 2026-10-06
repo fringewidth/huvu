@@ -4,9 +4,11 @@ import { Capacitor } from "@capacitor/core";
 import * as m from "motion/react-m";
 import { AnimatePresence, LayoutGroup } from "motion/react";
 import { growForWords } from "../canvas/garden";
+import { onOpens } from "../account/nativePush";
+import { useWaiting } from "../account/waiting";
 import { refreshFeeds, type Feed } from "../chat/feeds";
 import * as thread from "../chat/thread";
-import { initialMode, TARGET, TV, ui, type Mode } from "../config/interaction";
+import { initialMode, PHONE, TARGET, TV, ui, type Mode } from "../config/interaction";
 import { launch, snapshot, type Snapshot } from "../stage/flight";
 import { capsClass, EASE } from "../stage/style";
 import { useScrollIntent } from "../stage/useScrollIntent";
@@ -16,7 +18,9 @@ import { useWide } from "../stage/useWide";
 import { useVoiceSession, type VoicePhase } from "../voice/useVoiceSession";
 import { Composer } from "./Composer";
 import { Feeds } from "./Feeds";
+import { Menu, type MenuSection } from "./Menu";
 import { TurnView } from "./TurnView";
+import { Waiting } from "./Waiting";
 import { VoiceFlower, type FlowerState } from "./VoiceFlower";
 
 // The whole UI over the garden. Not a chat log: the stage holds one turn
@@ -24,6 +28,11 @@ import { VoiceFlower, type FlowerState } from "./VoiceFlower";
 // one size; picking a row makes that turn the stage again, and any scroll
 // folds it back. Voice mode moves the flower to the middle and hides the
 // text field; the thread and the history stay the same underneath.
+//
+// At launch the stage shows the greeting, with the turns from before (the
+// backend's, and notices) waiting in history. A turn takes the stage when
+// it is asked in this session, is still running, or is a notice nobody
+// has seen yet.
 type View = { kind: "stage"; focus: string | null } | { kind: "history"; cursor: string | null };
 
 // Listening starts the moment a push-to-talk key goes down, so the first
@@ -55,7 +64,7 @@ const PHASE_FLOWER: Record<VoicePhase, FlowerState> = {
 };
 
 export function Stage() {
-  const { turns: allTurns, running } = thread.useThread();
+  const { turns: allTurns, running, stopping } = thread.useThread();
   const wide = useWide();
 
   const [rewindId, setRewindId] = useState<string | null>(null);
@@ -74,6 +83,10 @@ export function Stage() {
   const [docked, setDocked] = useState(false);
   const [draft, setDraft] = useState("");
   const [feedsOpen, setFeedsOpen] = useState(false);
+  const [menu, setMenu] = useState<MenuSection | null>(null);
+  // How tall the card of what waits on this phone is, so the turn stops
+  // short of it.
+  const [waitingH, setWaitingH] = useState(0);
   // Turns asked before this moment (seeded or restored) never grow the
   // garland and are never announced.
   const [sessionStart] = useState(() => Date.now());
@@ -89,10 +102,15 @@ export function Stage() {
   const rowButtons = useRef(new Map<string, HTMLButtonElement | null>());
   const ptt = useRef<{ timer: number; holding: boolean } | null>(null);
   const wrote = useRef({ id: "", words: 0, sent: 0 });
+  // Turns that took the stage once. They keep it after they end, even if
+  // they began before this launch.
+  const [staged, setStaged] = useState<ReadonlySet<string>>(() => new Set());
   const geo = useSlotGeometry(rootRef, slotRef, composerRef);
 
   const latest = turns.at(-1) ?? null;
-  const heroId = view.kind === "stage" ? (turns.some((t) => t.id === view.focus) ? view.focus : (latest?.id ?? null)) : null;
+  if (latest && !staged.has(latest.id) && (latest.at >= sessionStart || latest.running || latest.notice?.unseen)) setStaged(new Set([...staged, latest.id]));
+  const latestStaged = latest && staged.has(latest.id) ? latest.id : null;
+  const heroId = view.kind === "stage" ? (turns.some((t) => t.id === view.focus) ? view.focus : latestStaged) : null;
   const shown = view.kind === "history" ? turns : turns.filter((t) => t.id === heroId);
 
   const submit = (text: string, from?: Snapshot) => {
@@ -155,8 +173,9 @@ export function Stage() {
   // or an opened turn, then voice mode. Returns false when there is
   // nothing left to undo (the hardware back button then leaves the app).
   const goBack = (): boolean => {
-    if (feedsOpen) setFeedsOpen(false);
-    else if (running && mode === "text") stop();
+    if (menu) setMenu(null);
+    else if (feedsOpen) setFeedsOpen(false);
+    else if (running && !stopping && mode === "text") stop();
     else if (rewindId) cancelRewind();
     else if (view.kind === "history" || view.focus) toStage(null);
     else if (mode === "voice" && ui.modeSwitchable) leaveVoice();
@@ -176,6 +195,7 @@ export function Stage() {
       submit(text);
     },
     retry: (turn: thread.Turn) => thread.retry(turn.id),
+    show: (section: MenuSection) => setMenu(section),
     registerFocus: (id: string, el: HTMLButtonElement | null) => {
       rowButtons.current.set(id, el);
     },
@@ -191,6 +211,10 @@ export function Stage() {
       thread.watch(feed);
       setView({ kind: "stage", focus: null });
     },
+  });
+  const menuActions = useStable({
+    toggle: () => setMenu((open) => (open ? null : "top")),
+    close: () => setMenu(null),
   });
   const composerActions = useStable({
     submit: (text: string, from: Snapshot) => {
@@ -222,7 +246,7 @@ export function Stage() {
   const scroll = useScrollIntent(listRef, (up) => {
     if (view.kind === "history") {
       if (!up) toStage(null);
-    } else if (up || heroId !== latest?.id) {
+    } else if (up || (heroId !== null && heroId !== latest?.id)) {
       toHistory(heroId);
     }
   }, dock);
@@ -289,7 +313,7 @@ export function Stage() {
     const stage = view.kind === "stage";
     const moves: Record<string, () => void> = {
       ArrowUp: () => (stage ? leaveChoices() || scrollList(true) || toHistory(heroId) : moveCursor(-1)),
-      ArrowDown: () => (stage ? scrollList(false) || reachChoices() || (heroId !== latest?.id && toHistory(heroId)) : moveCursor(1)),
+      ArrowDown: () => (stage ? scrollList(false) || reachChoices() || (heroId !== null && heroId !== latest?.id && toHistory(heroId)) : moveCursor(1)),
       ArrowLeft: () => stage && stepChoice(-1),
       ArrowRight: () => stage && stepChoice(1),
     };
@@ -399,11 +423,14 @@ export function Stage() {
     };
   }, []);
 
+  // A tapped notification that names a screen opens the menu there.
+  useEffect(() => onOpens((section) => setMenu(section)), []);
+
   // A written reply grows the garland a little per new word. In voice mode
-  // huvu's voice grows it instead. A watched feed says nothing, so the
-  // reply under it keeps growing it.
+  // huvu's voice grows it instead. A watched feed or a notice is no reply,
+  // so the reply under it keeps growing it.
   useEffect(() => {
-    const turn = allTurns.findLast((t) => !t.feed);
+    const turn = allTurns.findLast(thread.asked);
     if (!turn || turn.at < sessionStart || mode !== "text") return;
     const w = wrote.current.id === turn.id ? wrote.current : { id: turn.id, words: 0, sent: 0 };
     const words = turn.answer.split(/\s+/).filter(Boolean).length;
@@ -465,7 +492,7 @@ export function Stage() {
       : { x: geo.slotX - FLOWER_BIG / 2, y: geo.slotY - FLOWER_BIG / 2, scale: FLOWER_SMALL / FLOWER_BIG, opacity: 1 });
   // In voice history, and under a docked flower, the list stops just above
   // the "write" button.
-  const listBottom = !geo ? 0 : voiceStage && !docked ? geo.h / 2 + FLOWER_BIG / 2 : inVoice ? 88 : geo.composerH;
+  const listBottom = !geo ? 0 : voiceStage && !docked ? geo.h / 2 + FLOWER_BIG / 2 : (inVoice ? 88 : geo.composerH) + (PHONE ? waitingH : 0);
   const voiceCaption = voiceStage && !docked;
   // Screen readers hear each answer once, when it is complete.
   const announcement = latest && latest.at >= sessionStart && !latest.running ? latest.answer : "";
@@ -494,7 +521,7 @@ export function Stage() {
                 actions={turnActions}
               />
             ))}
-            {turns.length === 0 && (
+            {view.kind === "stage" && heroId === null && (
               <m.li
                 key="empty"
                 initial={{ opacity: 0 }}
@@ -524,9 +551,7 @@ export function Stage() {
         {announcement}
       </p>
 
-      <span className={`${capsClass} halo pointer-events-none absolute left-6 top-7 z-20 text-[11px] tracking-[0.42em] text-ivory/75 sm:left-12 sm:top-10`}>
-        huvu
-      </span>
+      {ui.hasInput ? <Menu open={menu} onToggle={menuActions.toggle} onClose={menuActions.close} /> : <TvWordmark />}
 
       <Feeds open={feedsOpen} onToggle={feedsActions.toggle} onPick={feedsActions.pick} listRef={feedsRef} />
 
@@ -586,9 +611,12 @@ export function Stage() {
           rewinding={rewindId !== null}
           onCancelRewind={composerActions.cancelRewind}
           running={running}
+          stopping={stopping}
           onStop={composerActions.stop}
         />
       )}
+
+      {PHONE && geo && <Waiting bottom={inVoice ? 88 : geo.composerH} onHeight={setWaitingH} />}
 
       {/* One flower for the whole app, above everything. Switching modes
           glides it between the composer and the middle of the screen with
@@ -612,5 +640,31 @@ export function Stage() {
         </m.div>
       )}
     </div>
+  );
+}
+
+// The TV's wordmark, with who is recognized at it: only someone who said
+// yes on their phone, so the name is never a guess. While it waits for
+// that yes, it says whose phone to look at.
+function TvWordmark() {
+  const { here, asking } = useWaiting();
+  return (
+    <span className="halo pointer-events-none absolute left-6 top-7 z-20 flex items-baseline gap-5 sm:left-12 sm:top-10">
+      <span className={`${capsClass} text-[11px] tracking-[0.42em] text-ivory/75`}>huvu</span>
+      <AnimatePresence mode="wait" initial={false}>
+        {(here || asking) && (
+          <m.span
+            key={here ? `here-${here.id}` : `asking-${asking?.person.id}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6, ease: EASE }}
+            className={`${capsClass} ${here ? "text-sindoor" : "text-ivory/55"}`}
+          >
+            {here ? `with ${here.name}` : `${asking?.person.name}, check your phone`}
+          </m.span>
+        )}
+      </AnimatePresence>
+    </span>
   );
 }

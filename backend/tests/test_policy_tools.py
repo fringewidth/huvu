@@ -206,3 +206,19 @@ async def test_two_answers_at_once_run_it_once(kernel, home, family):
     )
     assert home.acted == [("unlock", {})]
     assert sum(isinstance(r, Exception) for r in results) == 1
+
+
+async def test_missed_notifications_are_listed_for_the_phone(kernel, family):
+    await kernel.tools.call("huvu_notify", {"text": "for me"}, Caller(kind="hermes", user="me"))
+    await kernel.tools.call("huvu_notify", {"text": "for everyone"}, Caller(kind="hermes"))
+    assert [n["text"] for n in kernel.notifications("me")] == ["for me", "for everyone"]
+    assert [n["text"] for n in kernel.notifications("mom")] == ["for everyone"]
+
+
+async def test_approvals_say_what_and_who_in_words(kernel, family):
+    held = await kernel.policy.request("home", "unlock", {}, Caller(kind="hermes", user="me", device=family.me_web.id))
+    asked_at_tv = await kernel.policy.request("home", "unlock", {"door": "back"}, Caller(kind="frontend", device=family.tv.id, group="home"))
+    mine = kernel.policy.public(kernel.policy.get(held.data["approval"]))
+    assert mine["label"] == "Unlocks the front door." and mine["requester"] == "huvu, talking with Me on laptop"
+    theirs = kernel.policy.public(kernel.policy.get(asked_at_tv.data["approval"]))
+    assert theirs["requester"] == "someone on living room"

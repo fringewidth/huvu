@@ -234,3 +234,25 @@ async def test_images_get_media_urls(kernel):
     assert url == kernel.media.url_for("home:snap/1")
     blob = await kernel.media.fetch(url.rsplit("/", 1)[1])
     assert blob.content_type == "image/jpeg"
+
+
+async def test_a_running_turn_replays_what_came_before(kernel, hermes):
+    go_on = asyncio.Event()
+
+    async def wait(session_id: str) -> None:
+        await go_on.wait()
+
+    hermes.script = [("run.started", {"run_id": "run_1"}), ("assistant.delta", {"delta": "The porch light is"}), wait, ("assistant.delta", {"delta": " on."}), ("run.completed", {})]
+    live = await kernel.conversations.ask("c1", "porch?", user="me")
+    await asyncio.sleep(0.01)
+    replay = asyncio.create_task(_drain(kernel.conversations.replay(live.turn.id)))
+    await asyncio.sleep(0.01)
+    go_on.set()
+    events = await replay
+    deltas = "".join(d["text"] for n, d in events if n == "answer.delta")
+    assert events[0][0] == "turn.started" and deltas == "The porch light is on."
+    assert events[-1][1]["answer"] == "The porch light is on."
+
+
+async def _drain(events) -> list[tuple[str, dict]]:
+    return [item async for item in events]

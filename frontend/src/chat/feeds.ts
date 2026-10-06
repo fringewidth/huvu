@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { BACKEND } from "./backend";
+import { getJson } from "../net/http";
 
 // Every live feed the gateway could stream right now: cameras, huvu's
 // browser, a screen. Listing a feed opens nothing. A feed streams only
@@ -15,8 +15,6 @@ export interface Feed {
   src: string;
 }
 
-const FEEDS_ENDPOINT = `${BACKEND}/api/feeds`;
-
 let feeds: Feed[] = [];
 const listeners = new Set<() => void>();
 let loading: Promise<void> | null = null;
@@ -27,9 +25,7 @@ let loading: Promise<void> | null = null;
 export function refreshFeeds(): Promise<void> {
   loading ??= (async () => {
     try {
-      const res = await fetch(FEEDS_ENDPOINT);
-      if (!res.ok) throw new Error(`feeds: backend answered ${res.status}`);
-      feeds = parse(await res.json());
+      feeds = parse(await getJson<unknown>("/api/feeds"));
       for (const listener of listeners) listener();
     } catch (err) {
       console.error("feeds: could not load the list", err);

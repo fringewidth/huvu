@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { useMotionValue } from "motion/react";
-import { getThread, stop as stopThread, subscribe } from "../chat/thread";
+import { asked, getThread, stop as stopThread, subscribe } from "../chat/thread";
 import { resumeAudio } from "./audio";
 import { acquireMic, closeMic, type Mic } from "./mic";
 import { speak, stopSpeaking, warmSpeaker } from "./speaker";
@@ -74,9 +74,9 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     void warmSpeaker().catch((err) => console.error("voice: clip failed to load", err));
   }
 
-  // Drops the reply in flight: its words stop streaming and its voice goes
-  // quiet. The utterance count moves on, so the cut-off clip's end can't
-  // move the session on again.
+  // Drops the reply in flight: huvu is asked to stop and its voice goes
+  // quiet. Words Hermes already sent still arrive. The utterance count
+  // moves on, so the cut-off clip's end can't move the session on again.
   function interrupt(): void {
     awaiting.current = "none";
     utterance.current++;
@@ -130,8 +130,9 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     const { turns, running } = getThread();
     if (running) awaiting.current = "running";
     if (awaiting.current !== "running") return;
-    // A feed opened meanwhile sits on top, and is no answer.
-    if (turns.findLast((t) => !t.feed)?.answer) {
+    // A feed opened or a notice sent meanwhile sits on top, and is no
+    // answer.
+    if (turns.findLast(asked)?.answer) {
       awaiting.current = "none";
       setPhase("speaking");
       const id = ++utterance.current;

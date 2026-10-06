@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from .accounts import AuthError, Device
 from .db import dumps, from_iso, iso, loads
+from .names import UnknownName
 from .source import SourceError
 from .spec import ActionSpec, Autonomy, Caller, Result, Scope
 
@@ -126,6 +127,39 @@ class Policy:
         personal = device is not None and device.user is not None
         return personal and accounts.approvers(caller.user, caller.group)[0] == caller.user
 
+    def public(self, approval: Approval) -> dict[str, Any]:
+        """An approval as a phone shows it: the raw fields, plus `label`,
+        what the action does, and `requester`, who asked, both in words."""
+        return {**approval.public(), "label": self._label(approval), "requester": self._requester(approval.caller)}
+
+    def _label(self, approval: Approval) -> str:
+        label = f"{approval.source}.{approval.action}"
+        try:
+            label = self._kernel.registry.resolve_action(approval.source, approval.action).description
+        except (SourceError, UnknownName):
+            # The source or the action is gone since; the name still says
+            # what was asked.
+            pass
+        return label
+
+    def _requester(self, caller: dict[str, Any]) -> str:
+        accounts = self._kernel.accounts
+        user = accounts.user(caller["user"]) if caller.get("user") else None
+        device = accounts.device(caller.get("device"))
+        trigger = self._kernel.triggers.get(caller["trigger"]) if caller.get("trigger") else None
+        person = user.name if user else "someone"
+        place = f" on {device.name}" if device else ""
+        requester = "huvu" + (f", talking with {person}{place}" if device else "")
+        if trigger is not None:
+            requester = f"a trigger: {trigger.spec.note}"
+        elif caller.get("trigger"):
+            requester = "a trigger that is gone since"
+        elif caller["kind"] == "frontend":
+            requester = f"{person}{place}"
+        elif caller["kind"] == "kernel":
+            requester = "huvu"
+        return requester
+
     def answerable(self, approval: Approval, device: Device) -> bool:
         return self._kernel.accounts.answers(device, approval.user, approval.group)
 
@@ -190,7 +224,7 @@ class Policy:
         return approval
 
     def _push(self, approval: Approval) -> None:
-        self._kernel.push.send("approval", approval.public(), self._kernel.accounts.phones(approval.user, approval.group))
+        self._kernel.push.send("approval", self.public(approval), self._kernel.accounts.phones(approval.user, approval.group))
 
     def get(self, approval_id: str) -> Approval | None:
         row = self._kernel.db.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()

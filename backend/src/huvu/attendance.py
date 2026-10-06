@@ -127,17 +127,17 @@ class Attendance:
         """A user's answer from their phone."""
         check = self._get(check_id)
         if check is None or check.status != "pending":
-            raise AuthError(f"no open question {check_id!r}")
+            raise AuthError(f"no open question {check_id!r}", 404)
         if not by.is_phone or by.user != check.user:
             raise AuthError("answer this from your own phone")
         now = self._kernel.now()
         if now - check.asked_at > ASK_TTL:
             await self._close(check, "expired", now)
-            raise AuthError("this question expired")
+            raise AuthError("this question expired", 410)
         # A double tap: the first answer counts, the second gets nothing.
         won = self._db.execute("UPDATE attendance SET status = 'answering' WHERE id = ? AND status = 'pending'", (check_id,)).rowcount
         if not won:
-            raise AuthError("this question was already answered")
+            raise AuthError("this question was already answered", 409)
         if yes:
             await self._confirm(check, now)
             self._done(check)
@@ -180,7 +180,7 @@ class Attendance:
         name = self._user_name(check.user)
         await self._kernel.kernel_event("attendance.confirmed", f"{name} is at {self._name(check.device)}", user=check.user, device=check.device)
         self._kernel.conversations.note(check.device, f"{name} was recognized at this device; you're talking with them now")
-        self._kernel.push.send("attendance", {"user": {"id": check.user, "name": name}}, [check.device])
+        self._push(check, {"id": check.user, "name": name})
 
     async def release(self, device_id: str, by: Device | None, reason: str) -> Check | None:
         """Ends the device's attendance. From the device itself, the
@@ -198,7 +198,13 @@ class Attendance:
         name = self._user_name(check.user)
         await self._kernel.kernel_event("attendance.ended", f"{name} left {self._name(check.device)}: {reason}", user=check.user, device=check.device)
         self._kernel.conversations.note(check.device, f"{name} is no longer recognized at this device ({reason}); assume nobody in particular")
-        self._kernel.push.send("attendance", {"user": None}, [check.device])
+        self._push(check, None)
+
+    def _push(self, check: Check, user: dict[str, str] | None) -> None:
+        """Tells the device who is recognized at it, and the person's phones
+        where they are recognized, so a phone can end it from afar."""
+        payload = {"device": {"id": check.device, "name": self._name(check.device)}, "user": user}
+        self._kernel.push.send("attendance", payload, [check.device, *self._kernel.accounts.phones(check.user)])
 
     def current(self, device_id: str | None) -> Check | None:
         """The device's confirmed attendance, if one is live."""
@@ -208,6 +214,11 @@ class Attendance:
             else None
         )
         return None if row is None else _check(row)
+
+    def places(self, user_id: str | None) -> list[dict[str, Any]]:
+        """The shared devices a user is recognized at now."""
+        rows = self._db.execute("SELECT * FROM attendance WHERE status = 'confirmed' AND user_id = ? ORDER BY confirmed_at", (user_id,)).fetchall()
+        return [{"device": {"id": r["device_id"], "name": self._name(r["device_id"])}, "since": from_iso(r["confirmed_at"])} for r in rows]
 
     def holder(self, device_id: str | None) -> str | None:
         current = self.current(device_id)

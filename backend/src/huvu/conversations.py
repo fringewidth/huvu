@@ -260,6 +260,26 @@ class ConversationHub:
         while (item := await queue.get()) is not None:
             yield item
 
+    def replay(self, turn_id: str) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        """A turn's events from its start, for a client that opens while the
+        turn runs. A delta doesn't say where its text goes, so a client
+        joining mid-turn can't add later deltas to a snapshot; it rebuilds
+        the turn from here instead. A live turn replays what happened and
+        then follows it. An ended one is rebuilt from what was kept."""
+        live = self._live.get(turn_id)
+        return self.subscribe(live) if live is not None else self._kept_events(turn_id)
+
+    async def _kept_events(self, turn_id: str) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        row = self._db.execute("SELECT * FROM turns WHERE id = ?", (turn_id,)).fetchone()
+        if row is None:
+            return
+        turn = _turn(row)
+        base = {"turn": turn.id, "conversation": turn.conversation_id}
+        yield "turn.started", {**base, "ask": turn.ask, "at": turn.at}
+        for part in turn.parts:
+            yield "part", {**base, "part": part}
+        yield "turn.ended", {**base, "ending": turn.ending, "answer": turn.answer}
+
     def _cold(self, session: str) -> bool:
         """Whether the provider's cache of a session has expired."""
         last = self._kernel.sessions.last_used(session)

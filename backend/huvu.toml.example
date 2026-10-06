@@ -1,6 +1,7 @@
 # Copy to huvu.toml (gitignored). Secrets come from the environment:
 #   HERMES_API_KEY   the API_SERVER_KEY of Hermes's default profile, the household's
 #   HUVU_MCP_TOKEN   the token the default profile sends to /mcp
+#   HUVU_FCM_CREDENTIALS   path of a Firebase service account's JSON key; turns on native push
 # Users, devices, and each user's profile key and token live in the database.
 # Add users with `uv run huvu user add <name>`.
 

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { authHeaders, isBackend } from "../net/http";
 
 // Plays a live WebRTC feed from a WHEP endpoint: POST our SDP offer to
 // `src`, get the answer and the Location of our session back, and DELETE
 // that Location to hang up. Any WHEP server works, from the huvu gateway
-// to a media server relaying a camera.
+// to a media server relaying a camera. Only the backend's own endpoints get
+// this device's token.
 export type FeedState = "connecting" | "live" | "lost";
 
 // The answer only needs our candidates if the server can't reach us
@@ -21,7 +23,7 @@ export function useWhepFeed(src: string): { stream: MediaStream | null; state: F
     const abort = new AbortController();
     let session: string | null = null;
     const hangUp = () => {
-      if (session) void fetch(session, { method: "DELETE" }).catch(() => {});
+      if (session) void fetch(session, { method: "DELETE", headers: auth(session) }).catch(() => {});
       session = null;
     };
 
@@ -38,7 +40,7 @@ export function useWhepFeed(src: string): { stream: MediaStream | null; state: F
         await gathered(pc);
         const res = await fetch(src, {
           method: "POST",
-          headers: { "Content-Type": "application/sdp" },
+          headers: { "Content-Type": "application/sdp", ...auth(src) },
           body: pc.localDescription?.sdp,
           signal: abort.signal,
         });
@@ -63,6 +65,10 @@ export function useWhepFeed(src: string): { stream: MediaStream | null; state: F
   }, [src]);
 
   return { stream, state };
+}
+
+function auth(url: string): Record<string, string> {
+  return isBackend(url) ? authHeaders() : {};
 }
 
 function gathered(pc: RTCPeerConnection): Promise<void> {

@@ -198,6 +198,35 @@ CREATE INDEX IF NOT EXISTS attendance_device ON attendance (device_id, status);
 -- One open question per person per device, so a double press asks once.
 CREATE UNIQUE INDEX IF NOT EXISTS attendance_one_question ON attendance (device_id, user_id) WHERE status = 'pending';
 
+-- Notifications sent to phones, so a phone that wasn't connected can
+-- still show what it missed. Kept for NOTIFY_KEEP (kernel.py).
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    ts REAL NOT NULL,
+    text TEXT NOT NULL,
+    image TEXT,
+    urgency TEXT NOT NULL,
+    -- The app screen that deals with it, such as "triggers".
+    opens TEXT,
+    -- Whose phones it went to: the user's, or with no user, the members of
+    -- group_id.
+    user_id TEXT,
+    group_id TEXT
+);
+CREATE INDEX IF NOT EXISTS notifications_ts ON notifications (ts);
+
+-- Each phone's FCM token, for native push while its app is closed
+-- (native_push.py).
+CREATE TABLE IF NOT EXISTS push_tokens (
+    token TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
+    -- "android" or "ios".
+    platform TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_tokens_device ON push_tokens (device_id);
+
 CREATE TABLE IF NOT EXISTS hermes_sessions (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,

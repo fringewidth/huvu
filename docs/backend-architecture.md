@@ -315,6 +315,7 @@ The backend multiplexes on top of that (`conversations.py`):
 1. Hermes's own sessions (the dream, the morning chat) are its business. A chat Hermes starts reaches the frontend through `huvu_notify`.
 1. **The prompt cache decides when a session continues.** The provider keeps a session's prompt cached for 5 minutes after its last use (`CACHE_TTL` in `conversations.py`). An ask within that window continues the same Hermes session and hits the cache. An ask after it starts a fresh session, primed the way a compacted session is: the asks and answers so far, with a note telling the model to carry on as the same assistant without acknowledging it. Thinking and tool output are left out, since with the cache cold they would cost full price to replay. Every `conversation.turn` event carries the run's `usage`, cache reads included, to check this against the provider.
 1. **Edit and retry rewind**, always through a fresh session with the transcript of the turns that stay. Hermes can fork a session but its API can't cut one short; its CLI and chat gateways can (`/undo`, `rewind_user_turn`), so a rewind endpoint upstream would let a rewind within the cache window keep its cache. Both sessions stay until the sweep.
+1. **A client joins a turn from its start.** A delta doesn't say where its text goes, so a client that opens while a turn runs can't add later deltas to a snapshot. `GET /api/turns/{turn}/events` replays the turn's events so far from the turn's own history, then follows it live, the way the turn's own stream does.
 1. **Stop lets Hermes finish.** A stop asks Hermes to stop and keeps relaying until Hermes's stream ends, so the turn has every token Hermes produced and ends the way Hermes reports: complete if it finished anyway, stopped if it was cut off. Only a Hermes that hasn't ended 15 s later is cut off by huvu. The frontend and the backend agree on how every turn ended.
 1. **Old sessions are swept.** Once a day, the Hermes sessions huvu started that haven't been used for 30 days are deleted through Hermes's API. The event log and the turns huvu keeps for the stage stay. Hermes's own sessions (cron jobs, the dream) are untouched, and Hermes prunes nothing by itself (`hermes sessions prune` only touches ended sessions).
 
@@ -345,6 +346,7 @@ backend/
     wake.py           trigger wakes
     sessions.py       what the kernel knows about Hermes sessions
     push.py           the push channel
+    native_push.py    FCM tokens and the sender, for phones whose app is closed
     media.py          media URLs for refs
     http.py           the HTTP server
     auth.py, config.py, db.py, times.py, kernel.py, __main__.py
@@ -365,12 +367,11 @@ Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFI
 1. **Trigger evaluation at scale.** Untested with fast inputs like location and glasses frames. Those sources filter before they emit.
 1. **The plugin against a live Hermes.** The hooks were tested the way Hermes's source calls them, not inside a running Hermes.
 1. **Profiles against a live Hermes.** The `/p/<profile>/` routes and per-profile keys come from Hermes's source and docs. No backend call has gone through them yet.
-1. **Native push.** Approvals, "is it you?" questions and notifications reach a phone only while its app holds the push stream open. FCM and APNs need a token registry and a sender.
+1. **Native push against a real Firebase project.** Phones register FCM tokens, and notifications, pending approvals and "is it you?" questions go to them through FCM's HTTP v1 API (`native_push.py`), signed with the service account key in `HUVU_FCM_CREDENTIALS`. It was tested with a fake FCM only. iOS also needs the APNs key uploaded to the Firebase project. A phone that connects later still catches up from the lists (`GET /api/approvals`, `/api/identify`, `/api/notifications`, which keeps 3 days).
 1. **Finer roles.** Groups have two roles, member and guest. Kids who may approve the porch light but not the front door would need a third, or per-action rules.
 1. **Turns across a restart.** A turn running when the backend stops ends as failed. Hermes may still finish it, unseen.
 
 ## Build order
 
 1. Drivers, starting with Tuya (Pulsar first, then the album fetch and decryption). Checked by pointing Hermes at the MCP server, ringing the doorbell, and asking who rang.
-1. The frontend's side of users and devices, the push channel and approvals (`frontend-changes.md`).
 1. The HA driver.

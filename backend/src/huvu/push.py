@@ -5,8 +5,9 @@ its conversation that it didn't start, a notification, a pending approval,
 a question asking whether it's them at a shared device. Every open client
 keeps `GET /api/push` open, and gets only what is addressed to its device.
 Notifications, approvals and those questions go to phones, which are taken
-to be on their user's person. A device that isn't connected misses them; native push
-notifications are not built yet.
+to be on their user's person. A device that isn't connected misses them
+here; the hub hands everything it sends to `forward` as well, which is how
+native push (native_push.py) reaches a phone whose app is closed.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import asyncio
 import json
 import logging
 import secrets
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -36,8 +37,9 @@ class Client:
 
 
 class PushHub:
-    def __init__(self) -> None:
+    def __init__(self, forward: Callable[[str, Any, list[str]], None] | None = None) -> None:
         self._clients: dict[str, Client] = {}
+        self._forward = forward
 
     @property
     def clients(self) -> list[dict[str, str]]:
@@ -62,6 +64,13 @@ class PushHub:
                 client.queue.put_nowait((name, data))
             except asyncio.QueueFull:
                 log.warning("push client %s is not reading; dropped %s", client.id, name)
+        if self._forward is None:
+            return
+        # The streams have it already, so a failure here only logs.
+        try:
+            self._forward(name, data, sorted(wanted))
+        except Exception:
+            log.exception("forwarding %s failed", name)
 
 
 def sse(name: str, data: Any) -> str:

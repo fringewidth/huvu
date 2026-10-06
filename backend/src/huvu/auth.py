@@ -36,9 +36,12 @@ def bearer(request: Request) -> str:
 
 
 def device_auth(config: Config, accounts: Accounts):
-    """A FastAPI dependency that returns the calling device."""
+    """A FastAPI dependency that returns the calling device. It is async so
+    it runs on the event loop, like every other use of the kernel's one
+    SQLite connection: FastAPI runs a plain function in a thread pool, and
+    two requests at once would then share the connection across threads."""
 
-    def check(request: Request) -> Device:
+    async def check(request: Request) -> Device:
         device = accounts.authenticate(bearer(request))
         if device is None and config.auth_mode == "off":
             device = accounts.dev_device(config.dev_user)
@@ -54,8 +57,8 @@ def phone_auth(config: Config, accounts: Accounts):
     answer "is it you?", pair shared devices."""
     device_check = device_auth(config, accounts)
 
-    def check(request: Request) -> Device:
-        device = device_check(request)
+    async def check(request: Request) -> Device:
+        device = await device_check(request)
         if not device.is_phone:
             raise HTTPException(403, "do this from your phone")
         return device

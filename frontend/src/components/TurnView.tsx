@@ -6,6 +6,7 @@ import { land, snapshot, type Snapshot } from "../stage/flight";
 import { chipsFor, kindOf, partsInSlot, type Slot } from "../stage/parts";
 import { capsClass, EASE } from "../stage/style";
 import type { ImagePart, RichPart, ToolPart, Turn } from "../chat/thread";
+import type { MenuSection } from "./Menu";
 
 // One turn, in one of two sizes. As the hero it is the whole stage: the
 // answer set large, images and panels open. As a history row it sits at
@@ -23,6 +24,8 @@ export interface TurnActions {
   edit(turn: Turn, from: Snapshot): void;
   choose(text: string): void;
   retry(turn: Turn): void;
+  // Opens the menu at the section a notice is about.
+  show(section: MenuSection): void;
   // Fire TV moves focus between history rows by hand.
   registerFocus(id: string, el: HTMLButtonElement | null): void;
 }
@@ -136,6 +139,25 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
               className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/45 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
             >
               edit
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* A notice asked nothing either. Its cue says huvu sent it unasked,
+          and how urgent it is. */}
+      {turn.notice && (
+        <div className={`relative z-10 flex items-baseline gap-3 ${hero ? "" : "pointer-events-none"}`}>
+          <span className={`${capsClass} shrink-0 ${turn.notice.urgency === "high" ? "text-sindoor" : "text-ivory/55"}`}>
+            {turn.notice.urgency === "high" ? "urgent" : "from huvu"}
+          </span>
+          {hero && turn.notice.opens === "triggers" && (
+            <button
+              type="button"
+              onClick={() => actions.show("triggers")}
+              className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+            >
+              see triggers
             </button>
           )}
         </div>

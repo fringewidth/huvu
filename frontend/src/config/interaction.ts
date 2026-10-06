@@ -11,11 +11,17 @@ export interface Greeting {
 // Everything about how the UI behaves on one build target. This answers
 // "what does this screen look like". What the device can do (wake word is
 // Android only) is a platform check, kept apart from this on purpose.
+// What kind of device the backend is told this is. A personal device
+// (phone, web) logs in with its user's password; a shared one (tv) pairs
+// with a code a member confirms on their phone.
+export type DeviceKind = "phone" | "web" | "tv";
+
 interface Profile {
+  deviceKind: DeviceKind;
   // Whether this screen has input of its own: a composer, the flower, edit
-  // and retry. Fire TV has none. It shows the turns sent to it and the
-  // live feeds picked on it, and still sends a choice picked with the
-  // remote.
+  // and retry. Fire TV has none. It shows the turns of its own
+  // conversation (asks reach it through Alexa) and the live feeds picked
+  // on it, and still sends a choice picked with the remote.
   hasInput: boolean;
   // "none" for a screen that asks nothing. initialMode() shows it as text.
   defaultMode: Mode;
@@ -51,6 +57,7 @@ interface Profile {
 
 const PROFILES: Record<Target, Profile> = {
   web: {
+    deviceKind: "web",
     hasInput: true,
     defaultMode: "text",
     modeSwitchable: true,
@@ -72,6 +79,7 @@ const PROFILES: Record<Target, Profile> = {
     maxPixelDensity: 2,
   },
   phone: {
+    deviceKind: "phone",
     hasInput: true,
     defaultMode: "text",
     modeSwitchable: true,
@@ -94,6 +102,7 @@ const PROFILES: Record<Target, Profile> = {
   // Display only. It asks nothing, so the voice and text fields are left
   // out.
   firetv: {
+    deviceKind: "tv",
     hasInput: false,
     defaultMode: "none",
     modeSwitchable: false,
@@ -153,6 +162,11 @@ function resolveTarget(): Target {
 export const TARGET: Target = resolveTarget();
 export const ui: Profile = PROFILES[TARGET];
 export const TV = TARGET === "firetv";
+// A shared device pairs instead of logging in, and can recognize who is at
+// it. A phone answers approvals and "is it you?" questions, and gets
+// notifications.
+export const SHARED = ui.deviceKind === "tv";
+export const PHONE = ui.deviceKind === "phone";
 
 // The phone widget's quick-voice button deep-links with ?mode=voice.
 export function initialMode(): Mode {
