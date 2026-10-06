@@ -35,6 +35,7 @@ async def kernel(tmp_path, clock, home, hermes):
     yield k
     await k.triggers.stop()
     await k.conversations.close()
+    k.data.close()
     k.db.close()
 
 

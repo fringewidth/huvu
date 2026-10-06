@@ -28,9 +28,18 @@ url = "http://localhost:8642"
 # Autonomy per action, over each driver's default: silent, notify or ask.
 # An action a driver marks requires_human always asks, whatever this says.
 [policy]
-# "ha.turn_on" = "silent"
+# "ha.bedroom_ac_set" = "silent"
 
 # [[sources]]
 # name = "tuya"
 # driver = "huvu_drivers.tuya:TuyaSource"
 # options = { env_file = "~/.tuya.env" }
+
+# Home Assistant. HA_TOKEN (environment or backend/.env) is a long-lived
+# access token of huvu's own HA user, which must be an administrator.
+# `users` maps HA user ids to huvu users, so a change made in the HA app
+# counts as that person's. What HA must look like: docs/home-assistant.md.
+# [[sources]]
+# name = "ha"
+# driver = "huvu_drivers.ha:HomeAssistant"
+# options = { url = "http://homeassistant.local:8123", users = { "<HA user id>" = "<huvu user>" } }

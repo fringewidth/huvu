@@ -361,6 +361,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -377,6 +378,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
     { name = "uvicorn", extras = ["standard"] },
+    { name = "websockets", specifier = ">=17.1" },
 ]
 
 [package.metadata.requires-dev]

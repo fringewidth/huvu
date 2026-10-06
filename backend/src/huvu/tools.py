@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from .accounts import AuthError, Device
+from .data import DataError
 from .events import day_bounds
 from .names import UnknownName
 from .registry import suggest
@@ -42,7 +43,7 @@ log = logging.getLogger("huvu.tools")
 Handler = Callable[[dict[str, Any], Caller], Awaitable[Result]]
 
 # Source names that would collide with kernel tool names.
-RESERVED = {"state", "events", "sources", "triggers", "ui", "kernel", "people", "act", "query"}
+RESERVED = {"state", "events", "sources", "triggers", "ui", "kernel", "people", "act", "query", "data"}
 
 
 class ToolError(Exception):
@@ -116,7 +117,7 @@ class ToolBox:
             raise ToolError(f"{name} needs {', '.join(missing)}")
         try:
             result = await tool.handler(args, caller)
-        except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError, AuthError) as err:
+        except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError, AuthError, DataError) as err:
             raise ToolError(str(err)) from err
         return result
 
@@ -185,7 +186,17 @@ class ToolBox:
                 _schema({"day": {"type": "string"}, "hour": {"type": "integer"}}),
                 self._events_digest,
             ),
-            Tool("sources_list", "Every source with its values, events, queries and actions.", _schema({}), self._sources_list),
+            Tool(
+                "data_sql",
+                "Runs one read-only SQLite query over the history every source keeps, for finding patterns and preferences. "
+                "Each source's skill (huvu-<source>) lists its tables (<source>_<table>) and columns. `events` is the event log "
+                "(id, source, type, entity, summary, data as JSON). Every table has at, ts (epoch s), local_date, local_minute "
+                "(minutes since midnight), weekday (1 = Monday), user_id and group_id. JSON functions work. "
+                "Returns columns and rows, at most `limit` (default 200, at most 1000): aggregate in SQL instead of reading rows.",
+                _schema({"sql": {"type": "string"}, "limit": {"type": "integer"}}, ["sql"]),
+                self._data_sql,
+            ),
+            Tool("sources_list", "Every source with its values, events, queries, actions and tables.", _schema({}), self._sources_list),
             Tool(
                 "triggers_register",
                 "Registers a trigger: a condition over source data that wakes you when it comes true. Write `note` first: why it exists and what to do. "
@@ -315,6 +326,11 @@ class ToolBox:
             end = start + timedelta(hours=1)
         return Result(data=self._kernel.events.digest(start, end, viewer=self._kernel.accounts.scope(caller.user, caller.group)), labels=["house"])
 
+    async def _data_sql(self, args: dict[str, Any], caller: Caller) -> Result:
+        viewer = self._kernel.accounts.scope(caller.user, caller.group)
+        data = await self._kernel.data.sql(str(args["sql"]), viewer, int(args.get("limit") or 200))
+        return Result(data=data, labels=["house"])
+
     async def _sources_list(self, args: dict[str, Any], caller: Caller) -> Result:
         data = [
             {
@@ -324,6 +340,7 @@ class ToolBox:
                 "events": [f"{s.name}.{e.type}" for e in s.events],
                 "queries": [f"{s.name}_{q.name}" for q in s.queries],
                 "actions": [f"{s.name}_{a.name}" for a in s.actions],
+                "tables": [f"{s.name}_{t.name}" for t in s.tables],
                 "skill": f"huvu-{s.name}",
             }
             for s in self._kernel.registry.specs()

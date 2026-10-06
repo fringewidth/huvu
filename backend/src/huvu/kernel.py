@@ -23,6 +23,7 @@ from .builtin.clock import ClockSource
 from .builtin.huvu import HuvuSource
 from .config import Config
 from .conversations import ConversationHub
+from .data import DataStore
 from .db import connect, from_iso, iso
 from .events import EventLog
 from .hermes import HermesClient
@@ -84,6 +85,7 @@ class Kernel:
         self.native_push = NativePush(self, FcmClient(config.fcm_credentials) if config.fcm_credentials else None)
         self.push = PushHub(self.native_push.forward)
         self.media = MediaStore(self)
+        self.data = DataStore(self)
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None
 
@@ -93,6 +95,8 @@ class Kernel:
             self.registry.load(source.name, source.driver, source.options)
         for name, source in (sources or {}).items():
             self.registry.add(name, source)
+        for spec in self.registry.specs():
+            self.data.ensure(spec)
         self.tools.build()
         self.state.load()
 
@@ -103,14 +107,40 @@ class Kernel:
         # Turns that were running when the kernel last stopped never ended.
         self.db.execute("UPDATE turns SET running = 0, ending = 'failed' WHERE running = 1")
         await self.registry.start()
-        skills.write_all(self.registry.specs(), self.config.skills_folder)
-        if self.config.hermes_skills_dir is not None:
-            skills.link_all(self.registry.specs(), self.config.skills_folder, self.config.hermes_skills_dir)
+        self.write_skills()
         await self.triggers.load()
         if self.native_push.sender is None:
             log.info("native push is off: HUVU_FCM_CREDENTIALS is not set")
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
         await self.kernel_event("started", f"kernel started with sources {', '.join(self.registry.names)}")
+
+    def write_skills(self) -> None:
+        skills.write_all(self.registry.specs(), self.config.skills_folder)
+        if self.config.hermes_skills_dir is not None:
+            skills.link_all(self.registry.specs(), self.config.skills_folder, self.config.hermes_skills_dir)
+
+    async def respec(self, name: str) -> None:
+        """A source's spec changed while it runs (see SourceContext.respec):
+        describe it again, and rebuild what is built from specs. The MCP
+        tool list doesn't change, since source actions run through `act`,
+        so no Hermes session loses its prompt cache; only the source's
+        skill does. A trigger script whose grant names a tool that is gone
+        fails at its next run, as a trigger.error event the dream reads."""
+        old, new = self.registry.respec(name)
+        self.data.ensure(new)
+        self.tools.build()
+        self.write_skills()
+        before = {a.name for a in old.actions} | {q.name for q in old.queries}
+        after = {a.name for a in new.actions} | {q.name for q in new.queries}
+        added = sorted(after - before)
+        removed = sorted(before - after)
+        parts = []
+        if added:
+            parts.append("added " + ", ".join(f"{name}_{n}" for n in added))
+        if removed:
+            parts.append("removed " + ", ".join(f"{name}_{n}" for n in removed))
+        summary = "; ".join(parts) or "changed descriptions or arguments"
+        await self.kernel_event("source.respec", f"{name} changed what it offers: {summary}", entity=name, data={"added": added, "removed": removed})
 
     async def stop(self) -> None:
         if self._ticker:
@@ -120,6 +150,7 @@ class Kernel:
         await self.registry.stop()
         await self.hermes.close()
         await self.native_push.close()
+        self.data.close()
         self.db.close()
 
     async def _tick(self) -> None:

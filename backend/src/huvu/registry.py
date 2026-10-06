@@ -25,6 +25,8 @@ log = logging.getLogger("huvu.registry")
 
 RESTART_FIRST = 5.0
 RESTART_MAX = 300.0
+# A run at least this long counts as healthy, and resets the backoff.
+HEALTHY_RUN = 60.0
 
 
 @dataclass
@@ -42,13 +44,20 @@ class Registry:
     def add(self, name: str, source: Source) -> None:
         if name in self._sources:
             raise ValueError(f"two sources are named {name!r}")
-        spec = source.describe().model_copy(update={"name": name})
-        # Rebuilt so the name passes the same check a driver's own name does.
-        spec = SourceSpec.model_validate(spec.model_dump())
         data_dir = self._kernel.config.data_dir / "sources" / name
         data_dir.mkdir(parents=True, exist_ok=True)
+        # Bound first, so `describe` can read the source's own folder, such
+        # as a cache of what it offered before the last restart.
         source.bind(SourceContext(self._kernel, name, data_dir))
-        self._sources[name] = Loaded(source, spec)
+        self._sources[name] = Loaded(source, _described(name, source))
+
+    def respec(self, name: str) -> tuple[SourceSpec, SourceSpec]:
+        """Describes a loaded source again. Returns the old spec and the
+        new one."""
+        loaded = self._loaded(name)
+        old = loaded.spec
+        loaded.spec = _described(name, loaded.source)
+        return old, loaded.spec
 
     def load(self, name: str, target: str, options: dict[str, Any]) -> None:
         """Loads a driver from `module:Class`, as the config names it."""
@@ -72,7 +81,9 @@ class Registry:
         """Runs a source's `run`, and starts it again after a backoff when it
         raises. A `run` that returns is done for good."""
         delay = RESTART_FIRST
+        loop = asyncio.get_running_loop()
         while True:
+            started = loop.time()
             try:
                 await loaded.source.run()
                 break
@@ -80,6 +91,11 @@ class Registry:
                 raise
             except Exception as err:
                 log.exception("source %s crashed", name)
+                # A source that ran fine for a while and then lost its
+                # connection starts again from the first delay, so a
+                # Home Assistant restart once a month doesn't cost 5 min.
+                if loop.time() - started >= HEALTHY_RUN:
+                    delay = RESTART_FIRST
                 await self._kernel.kernel_event(
                     "source_error",
                     f"{name} stopped with an error and restarts in {int(delay)} s: {err}",
@@ -164,6 +180,12 @@ class Registry:
                 unit = f", {value.unit}" if value.unit else ""
                 lines.append(f"{spec.name}.{value.name}{params}  {value.description} ({value.updates}{unit})")
         return "\n".join(lines)
+
+
+def _described(name: str, source: Source) -> SourceSpec:
+    spec = source.describe().model_copy(update={"name": name})
+    # Rebuilt so the name passes the same check a driver's own name does.
+    return SourceSpec.model_validate(spec.model_dump())
 
 
 def suggest(name: str, known: list[str]) -> str:

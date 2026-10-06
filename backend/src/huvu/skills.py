@@ -5,10 +5,11 @@ loads a skill's body only when it needs it. That is how the model learns
 what huvu can do without every action's schema in every session: each
 source becomes a skill named `huvu-<source>`, whose body is the driver's
 hand-written guide (when to use it, the gotchas) followed by a reference
-huvu generates from the driver's spec (actions, queries, values, events),
-so it can't drift from the code.
+huvu generates from the driver's spec (actions, queries, values, events,
+tables), so it can't drift from the code.
 
 The skills are written into the backend's data folder at every start, and
+again when a source's spec changes while it runs (Kernel.respec), and
 linked, one symlink per source, into a fixed folder that every Hermes
 profile reads through `skills.external_dirs` (the repo's `hermes-skills/`
 by default). The links are made or repaired at every start too, so nothing
@@ -29,13 +30,13 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from .spec import SourceSpec
+from .spec import STANDARD_COLUMNS, SourceSpec
 
 log = logging.getLogger("huvu.skills")
 
 PREFIX = "huvu-"
 OWNED = (
-    "huvu wrote this skill from its driver and rewrites it at every start, so don't edit it; "
+    "huvu wrote this skill from its driver and rewrites it at every start and whenever the source changes, so don't edit it; "
     "put what you learn about the house in your own skills or memory."
 )
 
@@ -93,6 +94,22 @@ def render(spec: SourceSpec) -> str:
             fields = f" Fields: {', '.join(f'{k} ({v})' for k, v in event.data.items())}." if event.data else ""
             lines.append(f"- `{spec.name}.{event.type}`: {event.description}{fields}")
         lines.append("")
+    if spec.tables:
+        standard = ", ".join(STANDARD_COLUMNS)
+        lines += [
+            "## Tables",
+            "",
+            f"History for analysis, kept for good. Query with `data_sql` (SQLite, one read-only statement; JSON functions work). "
+            f"Every table also has the standard columns {standard}: `at` is ISO local time, `ts` seconds since the epoch, "
+            "`local_minute` minutes since local midnight, `weekday` 1 for Monday, and `user_id` whose row it is. "
+            "Join tables of different sources on time (`ts` windows, or the latest row before a time) and on `user_id`.",
+            "",
+        ]
+        for table in spec.tables:
+            lines += [f"### `{spec.name}_{table.name}`", "", _one_line(table.description), ""]
+            lines += [f"- `{c.name}` ({c.type}): {c.description}" for c in table.columns]
+            indexes = [["ts"], ["user_id", "ts"], *table.indexes]
+            lines += ["", "Indexed on " + ", ".join(f"({', '.join(i)})" for i in indexes) + ".", ""]
     return "\n".join(lines)
 
 

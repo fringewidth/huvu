@@ -46,9 +46,11 @@ class Source:
         self._ctx = ctx
 
     def describe(self) -> SourceSpec:
-        """The source's values, events, queries and actions. Called once at
-        load. The kernel builds the model's tools and the trigger catalog
-        from it."""
+        """The source's values, events, queries, actions and history
+        tables. Called at load, after `bind`, and again each time the source
+        calls `ctx.respec()`. The kernel builds the model's tools, the
+        trigger catalog, the history tables and the source's skill from
+        it."""
         raise NotImplementedError
 
     async def run(self) -> None:
@@ -92,9 +94,10 @@ class Source:
 
 
 class SourceContext:
-    """What the kernel gives a source: a way to report events and values, a
-    way to read other sources (for derived sources like presence), a
-    folder of its own, and its logger."""
+    """What the kernel gives a source: a way to report events, values and
+    history rows, a way to say its spec changed, a way to read other
+    sources (for derived sources like presence), a folder of its own, and
+    its logger."""
 
     def __init__(self, kernel: Kernel, name: str, data_dir: Path) -> None:
         self._kernel = kernel
@@ -153,6 +156,27 @@ class SourceContext:
             params or {},
             Reading(value=reading, at=at or self._kernel.now(), labels=labels or ["house"]),
         )
+
+    async def record(
+        self,
+        table: str,
+        row: dict[str, Any],
+        *,
+        at: datetime | None = None,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        """Adds a row to one of the source's history tables (`table` is
+        unqualified, as in the spec). The kernel fills in the standard
+        columns: the time keys from `at`, and whose row it is from `user`
+        and `group`, with the same meaning as on events. See data.py."""
+        self._kernel.data.record(self.name, table, row, at=at or self._kernel.now(), user=user, group=group)
+
+    async def respec(self) -> None:
+        """Tells the kernel the source's spec changed, such as when the
+        scripts in Home Assistant change. The kernel calls `describe` again,
+        and rebuilds the tools, the history tables and the source's skill."""
+        await self._kernel.respec(self.name)
 
     async def read(self, keys: list[str]) -> dict[str, Reading]:
         """Reads values from any source, by their keys (`ha.entity_state[light.porch]`)."""

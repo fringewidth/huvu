@@ -1,6 +1,6 @@
 # Backend architecture
 
-The design of huvu's backend, as decided on 2026-10-02 and 2026-10-03, with users and devices added on 2026-10-04. The kernel (everything except the drivers) was built on 2026-10-03 in `backend/`, with the Hermes plugin in `hermes-plugin/`. No driver exists yet. The frontend side of the boundary is in `frontend-contract.md`.
+The design of huvu's backend, as decided on 2026-10-02 and 2026-10-03, with users and devices added on 2026-10-04, and history tables and the Home Assistant driver on 2026-10-06. The kernel (everything except the drivers) was built on 2026-10-03 in `backend/`, with the Hermes plugin in `hermes-plugin/`. The first driver, Home Assistant (`huvu_drivers/ha/`), was built on 2026-10-06 and has only run against a fake HA. The frontend side of the boundary is in `frontend-contract.md`. What Home Assistant itself must look like for huvu is in `home-assistant.md`.
 
 The backend is an interface to data, a holder of state, and the link to the frontend. It owns nothing about the model. Hermes is the agent, and everything to do with prompts, memory, schedules and sessions belongs to Hermes.
 
@@ -20,9 +20,11 @@ Hermes reaches the backend through the backend's MCP server. The backend reaches
 
 ## Stack
 
-Python, managed with uv. asyncio for the long-lived connections (Pulsar, the HA websocket). Pydantic for every schema, since its JSON Schema output is what sources publish. FastAPI for the HTTP surface. SQLite with FTS5 for the event log, triggers and the last reading of every pushed value. The official MCP Python SDK for the MCP server.
+Python, managed with uv. asyncio for the long-lived connections (Pulsar, the HA websocket). Pydantic for every schema, since its JSON Schema output is what sources publish. FastAPI for the HTTP surface. SQLite with FTS5 for the event log, triggers and the last reading of every pushed value, and a second SQLite file for the history tables. The official MCP Python SDK for the MCP server. `websockets` for the HA connection.
 
 Python over TypeScript or Go, because the ML pieces (face embeddings, Whisper, vision models) ship as Python first, Hermes is Python, and the tested Tuya code is Python. One language for the backend and any Hermes plugins.
+
+**Everything is SQLite** (decided 2026-10-06). The kernel's database, the history tables, and any database a driver keeps for itself are SQLite files. No other database engine is used. What would push toward another engine is served by SQLite extensions instead: FTS5 for text search (the event log has it), the JSON functions for nested data, `sqlite-vec` for embeddings when semantic search comes. One engine means one query language for the dream, one way to back up `data/`, and joins across sources in one query. The question came up because some sources hold data that isn't tabular (images, audio, free text). That data stays in the source. What the source records is rows of facts about it with a ref to the raw content, see [History tables](#history-tables).
 
 ## Users, groups and devices
 
@@ -63,7 +65,7 @@ Each profile sends huvu's MCP server its own token, so the backend knows whose H
 
 ## Sources
 
-Every data source is a pluggable module. A source owns its own storage, processing, querying and retrieval. The core never tells a source where to keep things. The Tuya source keeps its decrypted snapshots where it likes, and HA keeps its own history.
+Every data source is a pluggable module. A source owns its own working storage, processing, querying and retrieval. The Tuya source keeps its decrypted snapshots where it likes in its folder, and a source that needs a database of its own uses SQLite. The one thing a source doesn't keep for itself is its history for analysis: it records those rows into the kernel's history tables, see [History tables](#history-tables).
 
 ### The contract
 
@@ -83,16 +85,18 @@ class Source:
     async def feeds(self) -> list[Feed]: ...
 ```
 
-1. `describe` lists the source's values, events, queries and actions, each with a JSON Schema and a one-line description, plus `guide`: the hand-written part of the source's Hermes skill (when to use it, the gotchas). The types are in `spec.py`.
-1. `run` is the long-lived part: a Pulsar consumer, a websocket, a polling loop. It reports through `self.ctx`: `ctx.emit(type, summary, ...)` for events and `ctx.update(value, reading, ...)` for values. If it raises, the kernel logs a `source_error` event and starts it again with a backoff (5 s, doubling to 5 min).
+1. `describe` lists the source's values, events, queries, actions and history tables, each with a schema and a one-line description, plus `guide`: the hand-written part of the source's Hermes skill (when to use it, the gotchas). The types are in `spec.py`. The kernel binds the source before it calls `describe`, so `describe` can read the source's own folder.
+1. `run` is the long-lived part: a Pulsar consumer, a websocket, a polling loop. It reports through `self.ctx`: `ctx.emit(type, summary, ...)` for events, `ctx.update(value, reading, ...)` for values and `ctx.record(table, row, ...)` for history rows. If it raises, the kernel logs a `source_error` event and starts it again with a backoff (5 s, doubling to 5 min). A run that lasted at least a minute resets the backoff to 5 s, so a source that loses its connection once a month (HA restarting for an update) comes back in 5 s, not 5 min.
 1. `read` answers `on_demand` values. Pushed values are answered from what the source pushed.
 1. `search` finds the source's things by name, area or alias, such as HA entities. Each match names the actions that work the thing, so the model learns how to work a device where it finds it.
 1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it. Both get the `Caller`, whose `user` says whom the call is for and `group` which group's shared device it came through, so a source with per-person data, such as a calendar, answers with that person's.
-1. `watch` asks the source to push changes for one value. A source that pushes everything anyway (HA) can leave it alone.
+1. `watch` asks the source to push changes for one value. A source that pushes everything anyway can leave it alone. HA uses it: its values are `on_demand`, and it pushes only the entities a trigger watches.
 1. `fetch` returns the binary content behind a ref (`tuya:album/8f2c`), such as a decrypted snapshot. The frontend gets it through a media URL.
 1. `feeds` lists live feeds the source can stream, for the frontend's list.
 
-`self.ctx` also gives a source its own folder (`ctx.data_dir`), a logger, `ctx.now()`, and reads, queries and watches on other sources, for derived sources. An event type a source emits must be in its spec, or the kernel refuses it.
+`self.ctx` also gives a source its own folder (`ctx.data_dir`), a logger, `ctx.now()`, and reads, queries and watches on other sources, for derived sources. An event type a source emits must be in its spec, or the kernel refuses it, and so must a table it records into and every column of the row.
+
+**A spec can change while the source runs.** The HA driver's actions are the scripts in Home Assistant, and those change when someone edits HA. The source calls `ctx.respec()`, and the kernel (`Kernel.respec`) calls `describe` again, adds any new history tables and columns, rebuilds the tool box, rewrites the skills, and logs a `source.respec` event that names the actions and queries added and removed. The MCP tool list doesn't change, because source actions run through `act`, so no Hermes session loses its prompt cache. A trigger script whose grant names an action that is gone fails at its next run, as a `trigger.error` event the dream reads.
 
 Every argument and result is plain JSON. Sources start as in-process modules. A heavy source can later move to another machine behind HTTP (`GET /describe`, `POST /query/{name}`, `POST /act/{name}`, events pushed to the core) without changing anything else.
 
@@ -102,8 +106,8 @@ A value is what is true now: `ha.entity_state[light.porch]`, `tuya.battery`, `lo
 
 ```json
 {"name": "ha.entity_state", "params": {"entity_id": "string"}, "type": "string",
- "description": "Current state of a Home Assistant entity: on/off for lights, locked/unlocked for locks, a number for sensors.",
- "updates": "pushed"}
+ "description": "An exposed Home Assistant entity's state, as HA says it: on, off, a mode, a number as text",
+ "updates": "on_demand"}
 {"name": "tuya.battery", "type": "number", "unit": "%",
  "description": "Front door lock battery. Updates only when the lock wakes, so it can be hours old.",
  "updates": "on wake", "max_age": "48h"}
@@ -124,6 +128,22 @@ A doorbell event's time is `house`. The snapshot's content is `external`. The la
 A source can read other sources through the core's query and watch API. "Who's home" is a `presence` source that combines phone location, ESPresense rooms through HA and the last unlock. Sources are code the repo owner reviews and commits, so this costs nothing in trust.
 
 State that no device owns lives in a built-in source named `huvu`, behind the same contract: the house mode (normal, away, guests, sleeping), pending approvals, aliases. `huvu.mode` works in a trigger condition the same way `ha.entity_state` does.
+
+### The Home Assistant driver
+
+Decided and built on 2026-10-06 (`huvu_drivers/ha/`). How to set up HA for it, for the agents that do that work: `home-assistant.md`.
+
+1. **The household builds the abstraction in HA, and huvu only translates it.** Most devices in the house are infrared, worked by a Broadlink RM4 as sequences of button presses, so HA's own services (`light.turn_on`, `climate.set_temperature`) say little about them. Every way huvu may change the house is an HA script with a description, fields and an area. Each exposed script becomes one action, named after the script (`script.bedroom_ac_set` is `ha_bedroom_ac_set`), its description becomes the action's, and its fields' selectors become the input schema. huvu defines no actions of its own: a first design had huvu-side groups (`turn_on`, `set_climate`, `unlock`, a generic `call_service`) and was dropped once the scripts carried the abstraction. There is no raw service call, so the policy and the history only see actions someone named.
+1. **Labels on the script set the autonomy.** `huvu_silent`, `huvu_notify`, `huvu_ask`, `huvu_human` (which is `requires_human`). A script with no huvu label asks, so a forgotten label costs a tap and never runs something unasked; the strictest label wins. Because each script is its own action, the policy is per script with no kernel change. The alternative, one generic `run_script` action with a hook letting a source raise the level per call, was considered and not needed.
+1. **What HA exposes to Assist is what huvu sees** (`homeassistant/expose_entity/list`). An entity that isn't exposed can't be read, searched or worked. The family manages it in HA's UI, and there is no second list in `huvu.toml`. The list is shared with HA's own Assist. `exposure = "all"` reads everything, for development.
+1. **Three values, all `on_demand`**: `ha.entity_state`, `ha.entity_number` and `ha.entity_attributes`, each with `entity_id`. A ValueSpec has one type, and the trigger engine compares by it, so a number needs its own value (`"9" <= "10"` is false as text). The driver keeps every exposed state in memory and answers reads from it; pushing every change through `ctx.update` would write a row per power-meter reading. It pushes only entities a trigger watches. An `unavailable` or `unknown` entity reads as null with a reason, and so does everything while HA is disconnected, so a trigger never fires on a stale value.
+1. **The scripts can change while huvu runs.** The driver reloads the registries, the exposure list and the scripts on any registry event, and every 5 minutes for edits HA sends no event for, and calls `ctx.respec()` when the actions differ. It caches the scripts in its folder, so the actions exist before HA connects.
+1. **Every change says who caused it.** HA's context on each change gives four actors: `huvu` (huvu's token belongs to its own HA user), `ha_user` (someone in the HA app, mapped to a huvu user by the `users` option), `automation` (no user but a parent context), and `device` (neither: a switch, the device's own button). A change inside a script run takes the run's actor. For huvu's own runs the driver also knows the huvu user, because it matches the run to the call it has in flight. huvu's token must belong to a separate HA user, or huvu's actions would look like that person's, and that user must be an administrator to read the registries.
+1. **History** goes into three tables: `ha_changes` (every state change of an exposed entity, and every change of an attribute a person chooses, such as brightness or a target temperature, with the actor), `ha_script_runs` (every run, by anyone; the arguments only for huvu's runs, since HA doesn't report them for others), and `ha_sensor_5min` (numeric sensors as time-weighted 5-minute buckets, with a row per bucket even when nothing changed, so the latest row before a time is the value then). Buckets live only while the connection does, so a gap in the connection is a gap in the rows.
+1. **Events** go to the log only for what a person would call an event: locks, covers, alarms, people, and door, window, smoke and leak sensors, plus any domain in the `event_domains` option. Transitions to or from `unavailable` stay out. Script runs by anyone but huvu are `ha.script_run` events; huvu's own are `action.ran` already.
+1. **Queries**: `ha_history` (HA's recorder, which keeps about 10 days by default), `ha_areas`, and `ha_problems` (scripts left out, missing descriptions, unknown labels, a token on a family member's user). The query names are reserved: a script named `history` is left out.
+1. **Infrared is a gap in the data.** A press on a physical IR remote never reaches HA, so the dream would only learn from what huvu itself did. A power-metering plug on each IR device worth learning about closes the gap: its watts show the real state, and the change shows as `device`.
+1. **Not built**: cameras and their snapshots, live feeds from HA's go2rtc, and naming the automation behind an `automation` change.
 
 ## The event log
 
@@ -148,6 +168,53 @@ Cross-source triggers, the daily digest and cross-source search all need one str
 The log scopes itself, so each user's dream reads their own events, their member groups' and the house's: actions, approvals, trigger runs and wake replies carry the user they were for, and a shared device's turns with nobody recognized carry its group. Every finished chat turn is logged too (`conversation.turn`, the ask and the start of the answer), as its user's. That is how a dream learns from what someone said at the TV, whose Hermes session lives in the group's profile.
 
 Digests roll the log up by hour and by day. A digest is data, so the backend builds it and exposes it as the `events_digest` tool. Hermes decides when to read it.
+
+## History tables
+
+Decided and built on 2026-10-06 (`data.py`). huvu's agent is expected to learn each person's preferences on its own, mostly in the nightly dream, by doing real data engineering over the house's data. A value says only what is true now, and an event is a one-line summary for reading; neither can be averaged or grouped. So every source can also keep history tables: typed rows, one per thing that happened, kept for good.
+
+1. **A source declares its tables** in its spec (`TableSpec`: a name, a description, typed columns with descriptions, and indexes) and **writes rows** with `ctx.record(table, row, at=..., user=..., group=...)`. The column types are text, integer, real, boolean and json.
+1. **The kernel keeps every source's tables in one SQLite database**, `<data_dir>/analytics.db`, as `<source>_<table>` (`ha_script_runs`). One database is what lets one query join sources. It is separate from `huvu.db`, so heavy analytical reads never touch the database that holds users and tokens.
+1. **Every row gets the standard columns**, filled in by the kernel, never by the source: `at` (ISO with the local offset), `ts` (seconds since the epoch), `local_date`, `local_minute` (minutes since local midnight), `weekday` (1 is Monday), `user_id` and `group_id`. These are the shared keys every join across sources uses, and computing them in one place means two sources can't disagree on what "22:30 on a Tuesday" is. Every table is indexed on `(ts)` and `(user_id, ts)`, plus the indexes its spec names.
+1. **Rows are never deleted, and columns are never dropped.** A newer driver that declares a new column gets it added to the table (`ALTER TABLE ADD COLUMN`), and old rows have it as NULL.
+1. **Raw content stays in the source.** For data that isn't tabular (a doorbell snapshot, a voice clip, a long message), the row holds the facts about it (when, who, what was recognized) and a ref to the content, which `fetch` returns.
+1. `user_id` and `group_id` mean what they mean on events: whose row it is, and with neither, the house's.
+
+### data_sql
+
+The `data_sql` tool runs one read-only SQLite statement for the caller and returns its columns and at most `limit` rows (200 by default, 1000 at most). It is how the dream, and any session, analyses the history. Each source's skill lists its tables and columns, so the model knows the schema without a lookup.
+
+The query runs on its own read-only connection, on a worker thread, so a long query never blocks the event loop; WAL lets it read while drivers write. Before the query runs, the kernel:
+
+1. Attaches `huvu.db` read-only, as `kernel`.
+1. Puts a temporary view in front of every history table, with the same name, that keeps only the rows the caller may see, with the same rule as the event log (`Scope`). A view named like the table shadows it, so queries use the plain names.
+1. Adds an `events` view over the event log, scoped the same way, with the same `local_date`, `local_minute` and `weekday` columns, so events join with history rows on the same keys.
+1. Turns on `query_only`, and sets an authorizer. The authorizer refuses every read of the real tables that doesn't come through a view, so the raw tables, other users' rows and the rest of `huvu.db` (users, tokens) are out of reach. It also refuses writes, pragmas and `ATTACH`.
+1. Sets a progress handler that stops the query after 10 s.
+
+A scope view must read a column in its WHERE clause, even for the kernel's own unscoped reads, because SQLite's authorizer only learns that a `count(*)` came through a view when the view reads a column.
+
+### Joining sources
+
+Most joins across sources at home are on time, person and place, the way a warehouse joins fact tables on shared dimensions. Rows almost never share an exact timestamp, so the joins are:
+
+1. **Window**: the AC script within 30 minutes after an arrival (`r.ts BETWEEN a.ts AND a.ts + 1800`).
+1. **As-of**: the room temperature when the script ran (the latest sensor row with `ts <= r.ts`, as a correlated subquery on the `(entity_id, ts)` index).
+1. **Interval**: who was home when the gate opened (`start <= ts AND ts < end`).
+1. **Bucket**: hot days against AC hours (both rolled up to `local_date`).
+
+The pattern the dream should follow is to join once into a wide feature table (one row per person per day: arrival time, first AC run, set temperature, outside high, weekday) and look for patterns in that, rather than joining raw tables for every question.
+
+### Not built yet
+
+Decided, with the build left for later:
+
+1. **A people map**: (source, external id) to huvu user, kept by the kernel, so a Tuya fingerprint slot or a face id resolves to a person through a view, and fixing a mapping fixes all earlier rows. The HA driver maps HA users itself for now (its `users` option).
+1. **Places**: HA's areas as the canonical rooms, with other sources (ESPresense rooms, a camera's location) mapped onto them, so `place_id` means the same in every table.
+1. **A date table**: one row per day with weekday, season, and public holidays and festivals, so a festival week isn't read as noise.
+1. **Interval views**: state as periods (`entity, state, start, end`), derived with `LEAD()` over a change table, for interval joins.
+1. **A writable schema per profile**, next to the read-only tables, where the dream keeps derived tables (`daily_features`, `visitors`) and saved queries that back each preference it stores in memory, so the next dream can check the claim again.
+1. **`triggers_backtest`**: replays a trigger's `when` over history, so the dream can say "this would have fired on 11 of the 13 evenings you did it yourself" before it proposes the trigger.
 
 ## State
 
@@ -262,7 +329,7 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 
 ### What Hermes owns
 
-1. **The dream.** A Hermes cron job with a prompt huvu writes. It reads `events_digest`, `trigger.run` and `trigger.error` events, fixes or deletes broken triggers, registers new ones, updates its own memory and skills, and writes proposals for the morning chat.
+1. **The dream.** A Hermes cron job with a prompt huvu writes. It reads `events_digest`, `trigger.run` and `trigger.error` events, fixes or deletes broken triggers, registers new ones, updates its own memory and skills, and writes proposals for the morning chat. It is also where preferences are learned: it queries the history tables with `data_sql`, starting from where the last dream stopped, looks for repeated actions by a person in a similar context, for corrections (someone changing what huvu did a few minutes later), and for manual actions a trigger could do, checks each candidate for support, consistency and recency, keeps the claim in memory with the query that supports it, and proposes it in the morning chat. A trigger is registered only after the person says yes. The dream prompt itself is not written yet.
 1. **Time-only schedules**, as Hermes cron jobs.
 1. **What it learns.** Which tools and values it uses often, that `state_search` exists, what you call the hall light. This goes in its own memory and skills, written during the dream. Little goes into the model's memory beyond that.
 1. **The situation block** at the start of a session: time, where you are, the house, pending approvals. The huvu Hermes plugin adds it on a session's first turn, from `POST /api/situation`. The values in it are set in the plugin's environment (`HUVU_SITUATION`).
@@ -289,7 +356,8 @@ Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; 
 | `state_search` | Finds values by name, area or alias |
 | `events_search`, `events_get` | Full-text search over the event log, and one event |
 | `events_digest` | A day's or an hour's digest |
-| `sources_list` | Every source with its values, events, queries and actions |
+| `sources_list` | Every source with its values, events, queries, actions and tables |
+| `data_sql` | One read-only SQLite query over the history tables and the event log, scoped to the caller. See [History tables](#history-tables) |
 | `triggers_register`, `triggers_test`, `triggers_list`, `triggers_remove`, `triggers_pause`, `triggers_resume` | Trigger management |
 | `act`, `query` | Run a source action or query by name (`ha_turn_on`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
@@ -299,9 +367,9 @@ A result with outside content comes back as `{"data": ..., "provenance": "extern
 
 ### Skills
 
-Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, queries, values, events. A session sees one line per skill in its skill index, about 30 tokens and cached, and loads a skill's body with `skill_view` when it needs that source. So what huvu can do grows with drivers without growing every session's prompt.
+Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, queries, values, events, and history tables with their columns, the standard columns and the indexes, which is the data dictionary the dream works from. A session sees one line per skill in its skill index, about 30 tokens and cached, and loads a skill's body with `skill_view` when it needs that source. So what huvu can do grows with drivers without growing every session's prompt.
 
-huvu writes the skills into its data folder at every start (`skills_dir`, default `<data_dir>/skills`), and links each into the repo's gitignored `hermes-skills/` (`hermes_skills_dir`), making the folder and repairing the links as needed and removing those of sources that are gone. Every profile reads `hermes-skills/` through `skills.external_dirs` (`setup.sh` sets it), so nothing needs setting up again; Hermes follows the links (`os.walk(followlinks=True)`). Anything else in the folder is left alone. The files are read-only: Hermes lets the model edit a skill wherever it lives, and huvu would overwrite the edit at the next start, so what the model learns about the house goes into its own skills and memory. This needs Hermes to read the backend's disk; if the two ever run on different machines, the plugin would fetch the skills instead.
+huvu writes the skills into its data folder at every start and at every respec (`skills_dir`, default `<data_dir>/skills`), and links each into the repo's gitignored `hermes-skills/` (`hermes_skills_dir`), making the folder and repairing the links as needed and removing those of sources that are gone. Every profile reads `hermes-skills/` through `skills.external_dirs` (`setup.sh` sets it), so nothing needs setting up again; Hermes follows the links (`os.walk(followlinks=True)`). Anything else in the folder is left alone. The files are read-only: Hermes lets the model edit a skill wherever it lives, and huvu would overwrite the edit at the next start, so what the model learns about the house goes into its own skills and memory. This needs Hermes to read the backend's disk; if the two ever run on different machines, the plugin would fetch the skills instead.
 
 ## Sessions
 
@@ -327,7 +395,8 @@ The relay turns Hermes's events into frontend events. Hermes's housekeeping tool
 backend/
   pyproject.toml, huvu.toml.example
   src/huvu/
-    spec.py           the contract's types: SourceSpec, ValueSpec, Event, Reading, labels, Caller
+    spec.py           the contract's types: SourceSpec, ValueSpec, TableSpec, Event, Reading, labels, Caller
+    data.py           the history tables (analytics.db) and data_sql
     accounts.py       users, devices, pairing, tokens, each user's Hermes profile
     attendance.py     who is at a shared device, confirmed from their phone
     skills.py         every source as a Hermes skill
@@ -351,8 +420,10 @@ backend/
     http.py           the HTTP server
     auth.py, config.py, db.py, times.py, kernel.py, __main__.py
     builtin/          the clock and huvu sources
-  src/huvu_drivers/   the drivers, one module per source
-  tests/
+  src/huvu_drivers/   the drivers, one package or module per source
+    ha/               Home Assistant: client.py (WebSocket), scripts.py (scripts as actions),
+                      history.py (who caused a change, sensor buckets), source.py (the driver)
+  tests/              fakes.py (a fake house and Hermes), fake_ha.py (a fake Home Assistant)
 hermes-plugin/huvu/   the Hermes plugin
 ```
 
@@ -370,8 +441,11 @@ Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFI
 1. **Native push against a real Firebase project.** Phones register FCM tokens, and notifications, pending approvals and "is it you?" questions go to them through FCM's HTTP v1 API (`native_push.py`), signed with the service account key in `HUVU_FCM_CREDENTIALS`. It was tested with a fake FCM only. iOS also needs the APNs key uploaded to the Firebase project. A phone that connects later still catches up from the lists (`GET /api/approvals`, `/api/identify`, `/api/notifications`, which keeps 3 days).
 1. **Finer roles.** Groups have two roles, member and guest. Kids who may approve the porch light but not the front door would need a third, or per-action rules.
 1. **Turns across a restart.** A turn running when the backend stops ends as failed. Hermes may still finish it, unseen.
+1. **The HA driver against a live HA.** It was tested against a fake HA that answers the way HA's WebSocket API is documented and coded. These were taken from HA's source and not seen on a live instance: `homeassistant/expose_entity/list`, `script/config`, `config/entity_registry/get_entries` (for aliases), `return_response` on a script call, and that a script's own service calls run in the script's context. `ha_problems` and the driver's warnings show the first of these going wrong.
+1. **History retention.** History rows are kept for good. At the sizes estimated (a few hundred change rows and about 14,000 sensor rows a day) that is a few million rows a year, which SQLite handles; if it grows past that, old sensor buckets roll up to hours.
 
 ## Build order
 
-1. Drivers, starting with Tuya (Pulsar first, then the album fetch and decryption). Checked by pointing Hermes at the MCP server, ringing the doorbell, and asking who rang.
-1. The HA driver.
+1. The HA driver: built on 2026-10-06. Left: the HA side (`home-assistant.md`) and a first run against the live HA.
+1. The Tuya driver (Pulsar first, then the album fetch and decryption). Checked by pointing Hermes at the MCP server, ringing the doorbell, and asking who rang. Its unlocks go into a history table too.
+1. The rest of the history work under [Not built yet](#not-built-yet), starting with the writable schema and backtests.

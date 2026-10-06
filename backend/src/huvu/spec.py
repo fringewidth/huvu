@@ -161,6 +161,62 @@ class ActionSpec(Strict):
         return v
 
 
+ColumnType = Literal["text", "integer", "real", "boolean", "json"]
+
+# Every history table has these, filled in by the kernel (see data.py), so
+# every source's rows join on the same time and person keys.
+STANDARD_COLUMNS: dict[str, tuple[str, str]] = {
+    "at": ("text", "When it happened: ISO 8601 with the local offset"),
+    "ts": ("real", "The same instant in seconds since the epoch, for ranges and joins"),
+    "local_date": ("text", "The local date, YYYY-MM-DD"),
+    "local_minute": ("integer", "Minutes since local midnight, 0 to 1439"),
+    "weekday": ("integer", "1 is Monday, 7 is Sunday"),
+    "user_id": ("text", "The huvu user it belongs to; NULL if nobody is known"),
+    "group_id": ("text", "The group it belongs to, when it has no user and isn't the whole house's"),
+}
+
+
+class ColumnSpec(Strict):
+    name: str
+    type: ColumnType
+    description: str
+
+    @field_validator("name")
+    @classmethod
+    def _column_name(cls, v: str) -> str:
+        if not MEMBER_RE.match(v):
+            raise ValueError(f"column name {v!r} must match {MEMBER_RE.pattern}")
+        if v in STANDARD_COLUMNS:
+            raise ValueError(f"column {v!r} is a standard column; the kernel fills it in")
+        return v
+
+
+class TableSpec(Strict):
+    """A history table a source keeps for analysis: one row per thing that
+    happened, with typed columns, so the dream can join and aggregate it
+    with SQL. The kernel keeps every source's tables in one SQLite
+    database, as `<source>_<name>`, with the standard columns added, and
+    keeps the rows for good. Raw content (images, audio) stays in the
+    source; a row holds the facts about it and a ref."""
+
+    name: str
+    description: str
+    columns: list[ColumnSpec]
+    # Each entry is the columns of one index, such as ["entity_id", "ts"].
+    # Every table also gets (ts) and (user_id, ts).
+    indexes: list[list[str]] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def _table_name(cls, v: str) -> str:
+        if not MEMBER_RE.match(v):
+            raise ValueError(f"table name {v!r} must match {MEMBER_RE.pattern}")
+        return v
+
+    def column(self, name: str) -> ColumnSpec | None:
+        return next((c for c in self.columns if c.name == name), None)
+
+
 class SourceSpec(Strict):
     name: str
     # One line: what the source covers. It is the source's skill's
@@ -168,12 +224,13 @@ class SourceSpec(Strict):
     description: str
     # The hand-written part of the source's skill (Markdown): when to use it
     # and the gotchas its schemas can't say. huvu adds the reference part
-    # (actions, queries, values, events) itself. See skills.py.
+    # (actions, queries, values, events, tables) itself. See skills.py.
     guide: str = ""
     values: list[ValueSpec] = Field(default_factory=list)
     events: list[EventSpec] = Field(default_factory=list)
     queries: list[QuerySpec] = Field(default_factory=list)
     actions: list[ActionSpec] = Field(default_factory=list)
+    tables: list[TableSpec] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -193,6 +250,9 @@ class SourceSpec(Strict):
 
     def action(self, name: str) -> ActionSpec | None:
         return next((a for a in self.actions if a.name == name), None)
+
+    def table(self, name: str) -> TableSpec | None:
+        return next((t for t in self.tables if t.name == name), None)
 
 
 class Event(Strict):
