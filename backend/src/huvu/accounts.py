@@ -14,6 +14,10 @@ group's shared devices and be recognized at them, but trusts nothing
 implicitly: they don't see the group's events, and they never approve
 anything. Every approval a guest causes goes to the group's members.
 
+A tracker is a location app on a user's phone (OwnTracks), added from the
+command line. It has a token of its own, revoked apart from the phone's
+login, and it can only post to a source's ingest route.
+
 Every device has its own token, stored hashed, so a lost phone can be cut
 off without logging anyone else out. Phones are taken to be on their user's
 person, so approvals, "is it you?" questions and notifications go to
@@ -42,7 +46,7 @@ from .db import from_iso, iso
 from .hermes import Profile
 from .spec import Scope
 
-DeviceKind = Literal["phone", "web", "tv", "speaker"]
+DeviceKind = Literal["phone", "web", "tv", "speaker", "tracker"]
 Role = Literal["member", "guest"]
 PERSONAL: set[str] = {"phone", "web"}
 HOUSEHOLD: set[str] = {"tv", "speaker"}
@@ -116,6 +120,10 @@ class Device:
     @property
     def is_phone(self) -> bool:
         return self.kind == "phone"
+
+    @property
+    def is_tracker(self) -> bool:
+        return self.kind == "tracker"
 
     def public(self) -> dict[str, Any]:
         return {
@@ -362,6 +370,12 @@ class Accounts:
         if row is None or not ok:
             raise AuthError("wrong username or password")
         return self._add_device(name, cast(DeviceKind, kind), username, None)
+
+    def add_tracker(self, user_id: str, name: str) -> tuple[Device, str]:
+        """Adds a location tracker for a user. Returns the device and its
+        token, shown this once."""
+        self._require_user(user_id)
+        return self._add_device(name, "tracker", user_id, None)
 
     def start_pairing(self, name: str, kind: str) -> Pairing:
         """A shared device asks to pair. It shows the code, and polls

@@ -25,7 +25,7 @@ Know this before you design anything in HA. Every rule below follows from it.
 1. Every script huvu may run has a description written for a model (see [Descriptions](#descriptions)).
 1. Every script id is lower case letters, digits and underscores, starting with a letter. These ids are reserved and get left out: `history`, `areas`, `problems`.
 1. Don't build behavior in HA automations, such as "turn the AC on at 22:30". huvu's triggers own behavior, and the dream learns from what people do. HA automations are for device glue only: syncing a state, a power sensor, a debounce. See [Automations](#step-9-automations).
-1. Never remove or rename an exposed script without checking `ha_problems` afterwards. A renamed script is a new action, and huvu triggers that used the old name fail.
+1. Never remove or rename an exposed script without checking the `ha.problems` value afterwards (ask huvu "what is wrong with the Home Assistant setup?"). A renamed script is a new action, and huvu triggers that used the old name fail.
 1. Quote `"on"`, `"off"`, `"yes"` and `"no"` in YAML. HA's YAML reads them unquoted as booleans, and a select option `off` would turn into `false`.
 
 ## Tools

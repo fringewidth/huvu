@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Where a piece of data came from. The labels are facts about the data, so
 # the backend owns them. A tool result with `external` in it reaches the
@@ -38,7 +38,9 @@ Autonomy = Literal["silent", "notify", "ask"]
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*$")
 MEMBER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-CallerKind = Literal["hermes", "script", "frontend", "kernel"]
+# `device` is a device posting data of its own to a source (a phone's
+# location tracker), through POST /api/ingest/{source}.
+CallerKind = Literal["hermes", "script", "frontend", "kernel", "device"]
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,10 @@ class ValueSpec(Strict):
     # Older than this counts as unknown to triggers. None means never stale.
     max_age: timedelta | None = None
     labels: list[Label] = Field(default_factory=lambda: ["house"])
+    # One person's value, such as where they are. Its `user` param names
+    # whose, and nobody else reads it or uses it in a trigger, members of
+    # their groups included.
+    personal: bool = False
 
     @field_validator("name")
     @classmethod
@@ -110,6 +116,12 @@ class ValueSpec(Strict):
         if not MEMBER_RE.match(v):
             raise ValueError(f"value name {v!r} must match {MEMBER_RE.pattern}")
         return v
+
+    @model_validator(mode="after")
+    def _personal_has_user(self) -> ValueSpec:
+        if self.personal and "user" not in self.params:
+            raise ValueError(f"personal value {self.name!r} needs a `user` param")
+        return self
 
 
 class EventSpec(Strict):
@@ -125,19 +137,6 @@ class EventSpec(Strict):
     def _member_name(cls, v: str) -> str:
         if not MEMBER_RE.match(v):
             raise ValueError(f"event type {v!r} must match {MEMBER_RE.pattern}")
-        return v
-
-
-class QuerySpec(Strict):
-    name: str
-    description: str
-    input_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
-
-    @field_validator("name")
-    @classmethod
-    def _member_name(cls, v: str) -> str:
-        if not MEMBER_RE.match(v):
-            raise ValueError(f"query name {v!r} must match {MEMBER_RE.pattern}")
         return v
 
 
@@ -224,11 +223,12 @@ class SourceSpec(Strict):
     description: str
     # The hand-written part of the source's skill (Markdown): when to use it
     # and the gotchas its schemas can't say. huvu adds the reference part
-    # (actions, queries, values, events, tables) itself. See skills.py.
+    # (actions, values, events, tables) itself. See skills.py. There are no
+    # queries: what a source knows over time goes in its tables, which the
+    # model reads with data_sql, and what is true now in its values.
     guide: str = ""
     values: list[ValueSpec] = Field(default_factory=list)
     events: list[EventSpec] = Field(default_factory=list)
-    queries: list[QuerySpec] = Field(default_factory=list)
     actions: list[ActionSpec] = Field(default_factory=list)
     tables: list[TableSpec] = Field(default_factory=list)
 
@@ -244,9 +244,6 @@ class SourceSpec(Strict):
 
     def event(self, type_: str) -> EventSpec | None:
         return next((e for e in self.events if e.type == type_), None)
-
-    def query(self, name: str) -> QuerySpec | None:
-        return next((q for q in self.queries if q.name == name), None)
 
     def action(self, name: str) -> ActionSpec | None:
         return next((a for a in self.actions if a.name == name), None)
@@ -304,7 +301,7 @@ class Match(Strict):
 
 
 class Result(Strict):
-    """What a query or action returns: plain JSON data and its labels."""
+    """What an action or a tool returns: plain JSON data and its labels."""
 
     data: Any = None
     labels: list[Label] = Field(default_factory=lambda: ["house"])

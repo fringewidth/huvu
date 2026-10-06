@@ -16,8 +16,8 @@ What the script says in HA becomes what the model sees:
    huvu label asks first, so a forgotten label costs a tap, never an
    unasked action.
 
-Anything that doesn't fit is a setup problem: logged, listed by the
-`problems` query, and, where it can't work at all, left out.
+Anything that doesn't fit is a setup problem: logged, listed in the
+`problems` value, and, where it can't work at all, left out.
 """
 
 from __future__ import annotations
@@ -37,10 +37,6 @@ LEVELS: dict[str, tuple[Autonomy, bool]] = {
     "huvu_human": ("ask", True),
 }
 DEFAULT_LEVEL: Autonomy = "ask"
-
-# The driver's own queries. A script with one of these names would collide
-# with it as a tool name (`ha_history`).
-RESERVED = {"history", "areas", "problems"}
 
 ENTITY_ID_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 
@@ -86,8 +82,6 @@ def problems_of(script: Script) -> list[str]:
     found: list[str] = []
     if not MEMBER_RE.match(script.object_id):
         found.append(f"left out {script.entity_id}: its id must be lower case letters, digits and underscores, starting with a letter")
-    elif script.object_id in RESERVED:
-        found.append(f"left out {script.entity_id}: {script.object_id!r} is the name of one of the driver's queries; rename the script")
     if not script.description:
         found.append(f"{script.entity_id} has no description; the model only sees its name")
     levels = [label for label in script.labels if label in LEVELS]

@@ -59,6 +59,18 @@ def _visible(viewer: Viewer, prefix: str = "") -> tuple[str, list[Any]]:
     return clause, args
 
 
+def sees(viewer: Viewer, event: Event) -> bool:
+    """Whether `viewer` may see one event: `_visible` for an event in hand,
+    such as one a trigger is about to fire on."""
+    seen = True
+    if isinstance(viewer, Scope):
+        own = viewer.user is not None and event.user == viewer.user
+        group = event.user is None and event.group is not None and event.group in viewer.groups
+        house = viewer.house and event.user is None and event.group is None
+        seen = own or group or house
+    return seen
+
+
 class EventLog:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn

@@ -1,5 +1,5 @@
-"""Each source as a Hermes skill, and act / query, which reach the source
-tools Hermes no longer sees."""
+"""Each source as a Hermes skill, and act, which reaches the source actions
+Hermes doesn't see."""
 
 from __future__ import annotations
 
@@ -37,21 +37,19 @@ def test_skills_are_written_read_only_and_stale_ones_go(kernel, tmp_path):
     assert {p.name for p in folder.iterdir()} == {"huvu-home", "huvu-huvu", "huvu-clock", "someone-elses"}
 
 
-async def test_act_and_query_reach_source_tools(kernel, home, family):
+async def test_act_reaches_source_actions(kernel, home, family):
     me = Caller(kind="hermes", user="me")
     done = await kernel.tools.call("act", {"name": "home_turn_on", "args": {"entity_id": "light.porch"}, "reason": "asked"}, me)
     assert done.data == {"done": "turn_on"} and home.acted == [("turn_on", {"entity_id": "light.porch"})]
-    snap = await kernel.tools.call("query", {"name": "home_snapshot"}, me)
-    assert "external" in snap.labels
     with pytest.raises(ToolError, match="Did you mean home_turn_on"):
         await kernel.tools.call("act", {"name": "home_turn_onn"}, me)
     with pytest.raises(ToolError, match=r"needs entity_id; it is home_turn_on\(entity_id, reason\?\)"):
         await kernel.tools.call("act", {"name": "home_turn_on"}, me)
     with pytest.raises(ToolError, match="takes no colour"):
         await kernel.tools.call("act", {"name": "home_turn_on", "args": {"entity_id": "x", "colour": "red"}}, me)
-    # A query isn't an action, and the other way round.
-    with pytest.raises(ToolError, match="no action named 'home_snapshot'"):
-        await kernel.tools.call("act", {"name": "home_snapshot"}, me)
+    # A kernel tool isn't an action.
+    with pytest.raises(ToolError, match="no action named 'state_get'"):
+        await kernel.tools.call("act", {"name": "state_get"}, me)
 
 
 async def test_search_says_how_to_work_a_thing(kernel):

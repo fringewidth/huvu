@@ -18,7 +18,6 @@ from ..spec import (
     Caller,
     EventSpec,
     Match,
-    QuerySpec,
     Reading,
     Result,
     SourceSpec,
@@ -57,14 +56,20 @@ class HuvuSource(Source):
                     updates="on_demand",
                     labels=["owner"],
                 ),
+                ValueSpec(name="aliases", description="Every alias and the value key it points to", type="object", updates="on_demand", labels=["owner"]),
+                ValueSpec(
+                    name="approvals",
+                    description="The actions waiting for the person's tap: theirs, and those of the groups they're a member of",
+                    type="list",
+                    params={"user": "string"},
+                    updates="on_demand",
+                    labels=["owner"],
+                    personal=True,
+                ),
             ],
             events=[
                 EventSpec(type="mode_changed", description="The house mode changed.", data={"mode": "string"}),
                 EventSpec(type="notified", description="huvu sent the owner a notification."),
-            ],
-            queries=[
-                QuerySpec(name="aliases", description="Every alias and the value key it points to."),
-                QuerySpec(name="pending_approvals", description="Actions waiting for the owner's tap."),
             ],
             actions=[
                 ActionSpec(
@@ -122,6 +127,11 @@ class HuvuSource(Source):
         now = self.ctx.now()
         if value == "mode":
             reading = Reading(value=self._get("mode") or "normal", at=now, labels=["owner"])
+        elif value == "aliases":
+            reading = Reading(value=self._aliases(), at=now, labels=["owner"])
+        elif value == "approvals":
+            pending = self._kernel.policy.pending_for(self._kernel.accounts.scope(params["user"], None))
+            reading = Reading(value=[a.public() for a in pending], at=now, labels=["owner"])
         else:
             target = self._aliases().get(params["alias"].lower())
             reading = Reading(value=target, at=now, labels=["owner"], reason=None if target else "no such alias")
@@ -130,15 +140,6 @@ class HuvuSource(Source):
     async def search(self, text: str) -> list[Match]:
         needle = text.lower().strip()
         return [Match(value=target, name=f"you call it {alias!r}") for alias, target in self._aliases().items() if needle in alias or alias in needle]
-
-    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
-        if name == "aliases":
-            data: Any = self._aliases()
-        elif name == "pending_approvals":
-            data = [a.public() for a in self._kernel.policy.pending_for(self._kernel.accounts.scope(caller.user, caller.group))]
-        else:
-            raise SourceError(f"huvu has no query {name!r}")
-        return Result(data=data, labels=["owner"])
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         handlers = {

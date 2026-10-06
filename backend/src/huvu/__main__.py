@@ -14,6 +14,7 @@ Users and devices are managed from here too:
     uv run huvu group list
     uv run huvu device list
     uv run huvu device revoke d_1a2b3c4d5e
+    uv run huvu tracker add mom              prints a QR code and link that set up OwnTracks on her phone
 
 A new user joins the default group (home) as a member, unless told
 otherwise with --group, --guest or --no-group.
@@ -70,6 +71,11 @@ def main() -> None:
     device = commands.add_parser("device", help="manage devices").add_subparsers(dest="action", required=True)
     device.add_parser("list", help="list devices")
     device.add_parser("revoke", help="log a device out").add_argument("id")
+
+    tracker = commands.add_parser("tracker", help="manage location trackers (OwnTracks)").add_subparsers(dest="action", required=True)
+    add_tracker = tracker.add_parser("add", help="add OwnTracks on a user's phone, and print the link that sets it up")
+    add_tracker.add_argument("user")
+    add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone)")
 
     args = parser.parse_args()
     config = config_module.load()
@@ -136,7 +142,28 @@ def _manage(config, args) -> None:
                 print(f"{d.id}\t{d.kind}\t{d.user or f'group {d.group}'}\t{d.name}\t{d.created_at:%Y-%m-%d}")
         case ("device", "revoke"):
             accounts.revoke(args.id)
+        case ("tracker", "add"):
+            _add_tracker(config, accounts, args.user, args.name or f"{args.user}'s phone")
     conn.close()
+
+
+def _add_tracker(config, accounts: Accounts, user: str, name: str) -> None:
+    """Adds a tracker and prints what sets OwnTracks up on the phone: a QR
+    code to scan, and the same link to open on the phone itself."""
+    import segno
+
+    from huvu_drivers.location import setup_link
+
+    source = next((s.name for s in config.sources if s.driver.endswith("location:LocationSource")), None)
+    if source is None:
+        raise AuthError("no location source in huvu.toml; add one first (see huvu_drivers/location.py)")
+    if "localhost" in config.public_url or "127.0.0.1" in config.public_url:
+        raise AuthError(f"public_url is {config.public_url}, which a phone can't reach; set the backend's public URL in huvu.toml first")
+    device, token = accounts.add_tracker(user, name)
+    link = setup_link(f"{config.public_url}/api/ingest/{source}", user, device.id, token)
+    segno.make(link, error="l").terminal(compact=True)
+    print(f"Added tracker {device.id} for {user}. On their phone, install OwnTracks, then scan this code or open the link (it holds the token, shown once):")
+    print(link)
 
 
 def _new_password() -> str:

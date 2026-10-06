@@ -16,9 +16,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .db import dumps, loads
+from .events import EVERYONE, Viewer
 from .names import UnknownName, ValueRef
 from .source import SourceError
-from .spec import Match, Reading, ValueSpec
+from .spec import Match, Reading, Scope, ValueSpec
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -28,6 +29,10 @@ log = logging.getLogger("huvu.state")
 Watcher = Callable[[ValueRef, Reading], Awaitable[None]]
 
 SEARCH_LIMIT = 15
+
+
+class PrivateValue(SourceError):
+    """A personal value read by someone other than its person."""
 
 
 class StateService:
@@ -63,13 +68,14 @@ class StateService:
             except Exception:
                 log.exception("watcher of %s failed", ref)
 
-    async def get(self, keys: list[str]) -> dict[str, Reading]:
-        """Reads each key. A key that fails gets a reading with the reason,
-        so one bad name doesn't sink the rest."""
+    async def get(self, keys: list[str], viewer: Viewer = EVERYONE) -> dict[str, Reading]:
+        """Reads each key, as `viewer` may. A key that fails gets a reading
+        with the reason, so one bad name doesn't sink the rest."""
         out: dict[str, Reading] = {}
         for key in keys:
             try:
                 ref, spec = self._kernel.registry.resolve_value(key)
+                check_personal(ref, spec, viewer)
                 out[key] = await self.read(ref, spec)
             except (UnknownName, SourceError) as err:
                 out[key] = Reading(reason=str(err))
@@ -121,6 +127,14 @@ class StateService:
                 reading = self._cache.get(ValueRef(spec.name, value.name))
                 found.append(Match(value=f"{spec.name}.{value.name}", name=value.description, now=reading.value if reading else None))
         return _dedupe(found)[:SEARCH_LIMIT]
+
+
+def check_personal(ref: ValueRef, spec: ValueSpec, viewer: Viewer) -> None:
+    """Raises unless `viewer` may read the value: a personal value only by
+    the person it names. The kernel itself reads everything."""
+    owner = ref.params_dict.get("user")
+    if spec.personal and isinstance(viewer, Scope) and viewer.user != owner:
+        raise PrivateValue(f"{ref.key} is {owner}'s own; only they can read it or use it in a trigger")
 
 
 def is_fresh(reading: Reading | None, spec: ValueSpec, now: datetime) -> bool:

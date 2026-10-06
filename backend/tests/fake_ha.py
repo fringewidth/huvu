@@ -55,7 +55,6 @@ class FakeHA:
         # Script object id -> [(entity_id, state, attributes)] it sets.
         self.effects: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
         self.responses: dict[str, Any] = {}
-        self.history: dict[str, list[dict[str, Any]]] = {}
         self.calls: list[dict[str, Any]] = []
         self.commands: list[str] = []
         self.transport: FakeTransport | None = None
@@ -154,9 +153,6 @@ class FakeHA:
 
     def _script__config(self, message: dict[str, Any]) -> dict[str, Any]:
         return {"config": self.scripts[message["entity_id"]]}
-
-    def _history__history_during_period(self, message: dict[str, Any]) -> dict[str, Any]:
-        return {e: self.history.get(e, []) for e in message["entity_ids"]}
 
     def _call_service(self, message: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(message)

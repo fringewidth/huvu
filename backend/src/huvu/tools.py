@@ -1,11 +1,13 @@
 """The tool box: the one tool surface Hermes and trigger scripts share.
 
-Kernel tools come first (state, events, triggers, ui, people). Then every
-source query and action becomes a tool named `<source>_<name>`, built from
-the source's spec. Actions go through the policy; queries don't.
+Kernel tools come first (state, events, data, triggers, ui, people). Then
+every source action becomes a tool named `<source>_<name>`, built from the
+source's spec, which goes through the policy. Sources have no queries:
+what is true now is a value (state_get), and what happened over time is a
+history table (data_sql).
 
-Hermes sees the kernel tools, plus `act` and `query`, which run any source
-action or query by name. The per-source tools stay off MCP, so a new driver
+Hermes sees the kernel tools, plus `act`, which runs any source action by
+name. The per-source tools stay off MCP, so a new driver
 adds nothing to a session's tool list: what a source can do is in its
 Hermes skill (see skills.py), loaded when needed. Scripts still call the
 per-source tools by name, so their grants stay per action.
@@ -43,7 +45,7 @@ log = logging.getLogger("huvu.tools")
 Handler = Callable[[dict[str, Any], Caller], Awaitable[Result]]
 
 # Source names that would collide with kernel tool names.
-RESERVED = {"state", "events", "sources", "triggers", "ui", "kernel", "people", "act", "query", "data"}
+RESERVED = {"state", "events", "sources", "triggers", "ui", "kernel", "people", "act", "data"}
 
 
 class ToolError(Exception):
@@ -59,8 +61,8 @@ class Tool:
     handler: Handler
     # Changes something. Skipped in a script's dry run.
     writes: bool = False
-    # Listed to Hermes over MCP. Per-source tools aren't; `act` and `query`
-    # reach them.
+    # Listed to Hermes over MCP. Per-source actions aren't; `act` reaches
+    # them.
     exposed: bool = True
 
 
@@ -83,9 +85,6 @@ class ToolBox:
         for spec in self._kernel.registry.specs():
             if spec.name in RESERVED:
                 raise ValueError(f"a source can't be named {spec.name!r}; it collides with kernel tools")
-            for query in spec.queries:
-                handler = self._query_handler(spec.name, query.name)
-                self._add(Tool(f"{spec.name}_{query.name}", query.description, query.input_schema, handler, exposed=False))
             for action in spec.actions:
                 schema = _with_reason(action.input_schema)
                 desc = action.description + (" Always needs a person's tap." if action.requires_human else "")
@@ -121,12 +120,6 @@ class ToolBox:
             raise ToolError(str(err)) from err
         return result
 
-    def _query_handler(self, source: str, name: str) -> Handler:
-        async def handle(args: dict[str, Any], caller: Caller) -> Result:
-            return await self._kernel.registry.get(source).query(name, args, caller)
-
-        return handle
-
     def _action_handler(self, source: str, name: str) -> Handler:
         async def handle(args: dict[str, Any], caller: Caller) -> Result:
             clean = dict(args)
@@ -144,12 +137,6 @@ class ToolBox:
                 _schema({"name": {"type": "string"}, "args": {"type": "object"}, "reason": {"type": "string", "description": "One line: why."}}, ["name"]),
                 self._act,
                 writes=True,
-            ),
-            Tool(
-                "query",
-                "Runs a huvu query by name, such as tuya_snapshot, with its args. Each source's skill (huvu-<source>) lists its queries.",
-                _schema({"name": {"type": "string"}, "args": {"type": "object"}}, ["name"]),
-                self._query,
             ),
             Tool(
                 "state_get",
@@ -196,7 +183,7 @@ class ToolBox:
                 _schema({"sql": {"type": "string"}, "limit": {"type": "integer"}}, ["sql"]),
                 self._data_sql,
             ),
-            Tool("sources_list", "Every source with its values, events, queries, actions and tables.", _schema({}), self._sources_list),
+            Tool("sources_list", "Every source with its values, events, actions and tables.", _schema({}), self._sources_list),
             Tool(
                 "triggers_register",
                 "Registers a trigger: a condition over source data that wakes you when it comes true. Write `note` first: why it exists and what to do. "
@@ -262,26 +249,19 @@ class ToolBox:
         ]
 
     async def _act(self, args: dict[str, Any], caller: Caller) -> Result:
-        tool = self._named(str(args.get("name", "")), writes=True)
+        tool = self._named(str(args.get("name", "")))
         given = dict(args.get("args") or {})
         if args.get("reason"):
             given["reason"] = args["reason"]
         self._check_args(tool, given)
         return await self.call(tool.name, given, caller)
 
-    async def _query(self, args: dict[str, Any], caller: Caller) -> Result:
-        tool = self._named(str(args.get("name", "")), writes=False)
-        given = dict(args.get("args") or {})
-        self._check_args(tool, given)
-        return await self.call(tool.name, given, caller)
-
-    def _named(self, name: str, *, writes: bool) -> Tool:
-        """A source action (or query) by name, or an error naming the closest."""
-        kind = "action" if writes else "query"
-        candidates = [t.name for t in self._tools.values() if not t.exposed and t.writes == writes]
+    def _named(self, name: str) -> Tool:
+        """A source action by name, or an error naming the closest."""
+        candidates = [t.name for t in self._tools.values() if not t.exposed]
         tool = self._tools.get(name)
-        if tool is None or tool.exposed or tool.writes != writes:
-            raise ToolError(f"no {kind} named {name!r}{suggest(name, candidates)}; each source's skill (huvu-<source>) lists them")
+        if tool is None or tool.exposed:
+            raise ToolError(f"no action named {name!r}{suggest(name, candidates)}; each source's skill (huvu-<source>) lists them")
         return tool
 
     @staticmethod
@@ -294,7 +274,7 @@ class ToolBox:
             raise ToolError(f"{tool.name} {problem}; it is {signature(tool.name, tool.input_schema)}")
 
     async def _state_get(self, args: dict[str, Any], caller: Caller) -> Result:
-        readings = await self._kernel.state.get(list(args["values"]))
+        readings = await self._kernel.state.get(list(args["values"]), self._kernel.accounts.scope(caller.user, caller.group))
         return Result(data=readings, labels=merge_labels(*(r.labels for r in readings.values())))
 
     async def _state_search(self, args: dict[str, Any], caller: Caller) -> Result:
@@ -338,7 +318,6 @@ class ToolBox:
                 "description": s.description,
                 "values": [f"{s.name}.{v.name}" + (f"[{','.join(v.params)}]" if v.params else "") for v in s.values],
                 "events": [f"{s.name}.{e.type}" for e in s.events],
-                "queries": [f"{s.name}_{q.name}" for q in s.queries],
                 "actions": [f"{s.name}_{a.name}" for a in s.actions],
                 "tables": [f"{s.name}_{t.name}" for t in s.tables],
                 "skill": f"huvu-{s.name}",

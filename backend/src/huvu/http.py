@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any, Literal
@@ -21,12 +22,12 @@ from starlette.routing import Route
 
 from . import mcp_server
 from .accounts import AuthError, Device
-from .auth import McpAuth, bearer, device_auth, mcp_caller, phone_auth
+from .auth import McpAuth, bearer, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
 from .kernel import Kernel
 from .push import api_json, sse
-from .source import SourceError
+from .source import NotIngesting, SourceError
 from .spec import Caller
 from .times import for_model
 from .tools import ToolError
@@ -94,6 +95,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     mcp = mcp_server.build(kernel)
     device = Depends(device_auth(config, accounts))
     phone = Depends(phone_auth(config, accounts))
+    poster = Depends(ingest_auth(config, accounts))
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -339,6 +341,24 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(400, str(err)) from err
         return JSONResponse(api_json(result.data))
 
+    # Data devices post to sources
+
+    @app.post("/api/ingest/{source}")
+    async def ingest(source: str, request: Request, me: Device = poster) -> JSONResponse:
+        """A device posts data of its own to a source, such as a phone's
+        location from OwnTracks. The source's reply is the response body."""
+        try:
+            target = kernel.registry.get(source)
+            body = await request.json() if await request.body() else None
+            reply = await target.ingest(body, Caller(kind="device", user=me.user, device=me.id))
+        except NotIngesting as err:
+            raise HTTPException(404, str(err)) from err
+        except json.JSONDecodeError as err:
+            raise HTTPException(400, f"the body isn't JSON: {err}") from err
+        except SourceError as err:
+            raise HTTPException(404 if source not in kernel.registry.names else 400, str(err)) from err
+        return JSONResponse(api_json(reply))
+
     # For the huvu Hermes plugin
 
     @app.post("/api/situation")
@@ -349,7 +369,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         known, user, group = mcp_caller(config, accounts, bearer(request))
         if not known:
             raise HTTPException(401, "unauthorized")
-        readings = for_model(await kernel.state.get(body.values), kernel.now())
+        readings = for_model(await kernel.state.get(body.values, accounts.scope(user, group)), kernel.now())
         lines = [f"Now: {kernel.now():%a %Y-%m-%d %H:%M}"]
         if user:
             named = accounts.user(user)

@@ -144,15 +144,16 @@ async def test_hermes_side_over_mcp(server):
             init = await session.initialize()
             assert "state_search" in (init.instructions or "")
             tools = {t.name for t in (await session.list_tools()).tools}
-            assert {"act", "query", "state_get", "triggers_register", "ui_choices"} <= tools
-            # Source actions and queries are reached through act and query.
+            assert {"act", "state_get", "data_sql", "triggers_register", "ui_choices"} <= tools
+            assert "query" not in tools
+            # Source actions are reached through act.
             assert not any(t.startswith("home_") for t in tools)
             done = await session.call_tool("act", {"name": "home_turn_on", "args": {"entity_id": "light.porch"}})
             assert json.loads(done.content[0].text) == {"done": "turn_on"}
             result = await session.call_tool("state_get", {"values": ["clock.time"], "_session": "hs1"})
             body = json.loads(result.content[0].text)
             assert "just now" in body["clock.time"]["at"]
-            outside = await session.call_tool("home_snapshot", {"_session": "hs1"})
+            outside = await session.call_tool("state_get", {"values": ["home.snapshot"], "_session": "hs1"})
             assert json.loads(outside.content[0].text)["provenance"] == "external"
             # The profile's token says whose trigger this is.
             registered = await session.call_tool("triggers_register", {"note": "Doorbell.", "when": [{"event": "home.doorbell"}]})

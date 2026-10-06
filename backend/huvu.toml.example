@@ -43,3 +43,11 @@ url = "http://localhost:8642"
 # name = "ha"
 # driver = "huvu_drivers.ha:HomeAssistant"
 # options = { url = "http://homeassistant.local:8123", users = { "<HA user id>" = "<huvu user>" } }
+
+# Where each person is, from OwnTracks on their phone. `home` makes the home
+# and near_home waypoints, owned by `group`. Phones must reach public_url;
+# then `uv run huvu tracker add <username>` prints the QR code for each one.
+# [[sources]]
+# name = "location"
+# driver = "huvu_drivers.location:LocationSource"
+# options = { home = { lat = 17.385, lon = 78.4867, radius_m = 150 }, near_home_km = 3, group = "home" }

@@ -2,7 +2,10 @@
 
 Every frontend request carries its device's bearer token (or `?token=` on
 streams, for clients that can't set headers). The token names the device,
-and the device names its user, or its group for a shared device.
+and the device names its user, or its group for a shared device. A tracker
+(OwnTracks) can't set a bearer header, so the ingest route also takes HTTP
+Basic auth, with the username as the user and the token as the password.
+A tracker's token works on the ingest route only.
 
 Hermes calls /mcp from one of several profiles: one per user, and one per
 group for its shared devices (the default group's is Hermes's default
@@ -17,6 +20,8 @@ from the default group. That is only for development on localhost.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from contextvars import ContextVar
 
 from fastapi import HTTPException, Request
@@ -47,9 +52,44 @@ def device_auth(config: Config, accounts: Accounts):
             device = accounts.dev_device(config.dev_user)
         if device is None:
             raise HTTPException(401, "log in or pair this device")
+        if device.is_tracker:
+            raise HTTPException(403, "a tracker can only post to /api/ingest")
         return device
 
     return check
+
+
+def ingest_auth(config: Config, accounts: Accounts):
+    """A FastAPI dependency for a device posting its own data: a tracker or
+    a personal device, by bearer token or by Basic auth. With Basic auth the
+    username must be the device's user."""
+
+    async def check(request: Request) -> Device:
+        username, token = _basic(request)
+        device = accounts.authenticate(token or bearer(request))
+        if device is None and config.auth_mode == "off":
+            device = accounts.dev_device(config.dev_user)
+        if device is None or (username is not None and username != device.user):
+            raise HTTPException(401, "unknown device; add a tracker with `huvu tracker add`", headers={"WWW-Authenticate": 'Basic realm="huvu"'})
+        if device.user is None:
+            raise HTTPException(403, "a shared device has nobody's data to post")
+        return device
+
+    return check
+
+
+def _basic(request: Request) -> tuple[str | None, str | None]:
+    """(username, password) from a Basic auth header, or (None, None)."""
+    header = request.headers.get("authorization", "")
+    found: tuple[str | None, str | None] = (None, None)
+    if header.startswith("Basic "):
+        try:
+            username, sep, password = base64.b64decode(header.removeprefix("Basic ").strip()).decode().partition(":")
+        except (binascii.Error, UnicodeDecodeError):
+            username, sep, password = "", "", ""
+        if sep:
+            found = (username, password)
+    return found
 
 
 def phone_auth(config: Config, accounts: Accounts):

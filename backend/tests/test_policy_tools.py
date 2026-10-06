@@ -93,7 +93,7 @@ async def test_notifications_reach_the_users_phones(kernel, family):
 
 
 async def test_external_results_keep_their_label(kernel):
-    result = await kernel.tools.call("home_snapshot", {}, Caller(kind="hermes", session="s9"))
+    result = await kernel.tools.call("state_get", {"values": ["home.snapshot", "clock.time"]}, Caller(kind="hermes", session="s9"))
     assert "external" in result.labels
 
 
@@ -128,7 +128,7 @@ async def test_events_tools_take_relative_times(kernel, clock):
 
 SCRIPT = """
 def run(ctx):
-    snap = ctx.call("home_snapshot")
+    snap = ctx.call("state_get", {"values": ["home.snapshot"]})["home.snapshot"]["value"]
     ctx.log("snapshot says", snap["text"])
     ctx.call("home_turn_on", {"entity_id": "light.porch"})
     if "note" in snap["text"]:
@@ -137,7 +137,7 @@ def run(ctx):
 
 
 async def test_scripts_call_granted_tools_and_wake(kernel, home, hermes, family):
-    spec = {"note": "Triage the doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": SCRIPT, "grants": ["home_snapshot", "home_turn_on"]}
+    spec = {"note": "Triage the doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": SCRIPT, "grants": ["state_get", "home_turn_on"]}
     await kernel.triggers.register(TriggerSpec.model_validate(spec), Caller(kind="hermes", session="s1", user="me"))
     await kernel.registry.get("home").ctx.emit("doorbell", "ding")
     await settle(kernel)
@@ -150,7 +150,7 @@ async def test_scripts_call_granted_tools_and_wake(kernel, home, hermes, family)
 
 async def test_dry_runs_skip_actions_and_wakes(kernel, home, hermes):
     await kernel.registry.get("home").ctx.emit("doorbell", "ding")
-    spec = {"note": "Triage.", "when": [{"event": "home.doorbell"}], "script": SCRIPT, "grants": ["home_snapshot", "home_turn_on"]}
+    spec = {"note": "Triage.", "when": [{"event": "home.doorbell"}], "script": SCRIPT, "grants": ["state_get", "home_turn_on"]}
     report = await kernel.tools.call("triggers_test", spec, Caller(kind="hermes"))
     [run] = report.data["script_runs"]
     assert run["error"] is None, run["log"]
@@ -160,7 +160,7 @@ async def test_dry_runs_skip_actions_and_wakes(kernel, home, hermes):
 
 
 async def test_scripts_outside_their_grants_are_refused(kernel, home):
-    spec = {"note": "x", "when": [{"event": "home.doorbell"}], "script": SCRIPT, "grants": ["home_snapshot"]}
+    spec = {"note": "x", "when": [{"event": "home.doorbell"}], "script": SCRIPT, "grants": ["state_get"]}
     report = await kernel.tools.call("triggers_test", spec, Caller(kind="hermes"))
     [run] = report.data["script_runs"]
     assert "not in this trigger's grants" in run["error"]

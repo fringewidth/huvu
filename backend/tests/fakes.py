@@ -17,7 +17,7 @@ from huvu.spec import (
     EventSpec,
     Feed,
     Match,
-    QuerySpec,
+    Reading,
     Result,
     SourceSpec,
     ValueSpec,
@@ -52,12 +52,12 @@ class HomeSource(Source):
                 ValueSpec(name="eta_min", description="Minutes to home by car", type="number", max_age=timedelta(minutes=30)),
                 ValueSpec(name="light", description="State of a light", type="string", params={"entity_id": "string"}),
                 ValueSpec(name="battery", description="Door lock battery", type="number", updates="on_wake"),
+                ValueSpec(name="snapshot", description="The last doorbell snapshot", type="object", updates="on_demand", labels=["external"]),
             ],
             events=[
                 EventSpec(type="doorbell", description="Someone rang the doorbell."),
                 EventSpec(type="unlock", description="The door was unlocked.", data={"method": "string", "person": "string"}),
             ],
-            queries=[QuerySpec(name="snapshot", description="The last doorbell snapshot.", input_schema={"type": "object", "properties": {}})],
             actions=[
                 ActionSpec(name="turn_on", description="Turns a light on.", autonomy="silent", input_schema={"type": "object", "properties": {"entity_id": {"type": "string"}}, "required": ["entity_id"]}),
                 ActionSpec(name="announce", description="Says something on the speaker.", autonomy="notify"),
@@ -69,10 +69,9 @@ class HomeSource(Source):
         lights = {"light.porch": "Porch Light", "light.light_3": "Light 3"}
         return [Match(value=f"home.light[{k}]", name=v, actions=["home_turn_on"]) for k, v in lights.items() if text.lower() in v.lower()]
 
-    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
-        if name != "snapshot":
-            raise SourceError(f"no query {name}")
-        return Result(data={"ref": "home:snap/1", "text": "a note held up to the camera"}, labels=["external"])
+    async def read(self, value: str, params: dict[str, Any]) -> Reading:
+        snapshot = Reading(value={"ref": "home:snap/1", "text": "a note held up to the camera"}, labels=["external"])
+        return snapshot if value == "snapshot" else await super().read(value, params)
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         self.acted.append((name, args))

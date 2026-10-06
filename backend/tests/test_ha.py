@@ -61,7 +61,7 @@ def ha(clock) -> FakeHA:
     ha.effects["bedroom_ac_set"] = [("climate.bedroom_ac", "cool", {"temperature": 24})]
     ha.script("gate_open", alias="Gate open", description="Opens the gate.", labels=["huvu_human"])
     ha.script("tv_netflix", alias="TV Netflix", labels=["huvu_silnt"])
-    ha.script("history", alias="History", description="Clashes with the query.")
+    ha.script("2nd_floor_off", alias="2nd floor off", description="Starts with a digit, so it can't be an action name.")
     return ha
 
 
@@ -103,8 +103,8 @@ async def test_scripts_become_actions(house, tmp_path):
     assert schema["required"] == ["mode"]
     assert schema["properties"]["mode"] == {"type": "string", "enum": ["off", "cool", "dry"], "description": "off, cool or dry."}
     assert schema["properties"]["temperature"] == {"type": "number", "minimum": 16, "maximum": 30, "description": "In °C. Target."}
-    problems = (await kernel.tools.call("query", {"name": "ha_problems"}, MOM)).data["problems"]
-    assert any(p.startswith("left out script.history") for p in problems)
+    problems = (await kernel.tools.call("state_get", {"values": ["ha.problems"]}, MOM)).data["ha.problems"].value["problems"]
+    assert any(p.startswith("left out script.2nd_floor_off") for p in problems)
     assert "script.tv_netflix has no description; the model only sees its name" in problems
     assert any("huvu_silnt" in p for p in problems)
     skill = (tmp_path / "skills" / "huvu-ha" / "SKILL.md").read_text()
@@ -275,12 +275,11 @@ async def test_watchers_hear_changes_and_a_drop_ends_the_run(house, ha):
     assert reading.reason == "Home Assistant is not connected right now"
 
 
-async def test_history_reads_the_recorder(house, ha, clock):
-    stamp = clock.now.timestamp()
-    ha.history["light.hall"] = [{"s": "on", "lu": stamp - 60}, {"s": "off", "lu": stamp}]
-    result = await house.kernel.tools.call("query", {"name": "ha_history", "args": {"entity_id": "light.hall", "hours": 2}}, MOM)
-    assert [c["state"] for c in result.data["changes"]] == ["on", "off"]
-    assert result.data["changes"][1]["at"] == clock.now
+async def test_areas_list_entities_and_their_scripts(house):
+    areas = (await house.kernel.tools.call("state_get", {"values": ["ha.areas"]}, MOM)).data["ha.areas"].value
+    bedroom = next(a for a in areas if a["area"] == "Bedroom")
+    assert "ha_bedroom_ac_set" in bedroom["actions"]
+    assert any(e["entity_id"] == "climate.bedroom_ac" for e in bedroom["entities"])
 
 
 async def test_a_bad_token_or_a_plain_user_is_refused(tmp_path, clock, hermes, ha, monkeypatch):

@@ -51,10 +51,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import Field, field_validator
 
 from .db import dumps, from_iso, iso, loads
-from .events import EventLog
+from .events import EventLog, Viewer, sees
 from .names import UnknownName, ValueRef
 from .spec import Caller, Event, Reading, Strict, ValueSpec, merge_labels
-from .state import is_fresh
+from .state import check_personal, is_fresh
 from .times import parse_clock, parse_when
 from .wake import WAKE_WINDOW
 
@@ -263,10 +263,10 @@ class TriggerEngine:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
-    def validate(self, spec: TriggerSpec) -> TriggerSpec:
-        """Checks every name and argument, and returns the spec with
-        `expires` resolved to ISO. Raises TriggerError with a fix in the
-        message."""
+    def validate(self, spec: TriggerSpec, user: str | None = None) -> TriggerSpec:
+        """Checks every name and argument, for a trigger of `user`, and
+        returns the spec with `expires` resolved to ISO. Raises TriggerError
+        with a fix in the message."""
         trigger = Trigger(
             id="check",
             spec=spec,
@@ -274,7 +274,7 @@ class TriggerEngine:
             armed=True,
             created_at=self._kernel.now(),
             created_by=None,
-            user=None,
+            user=user,
             expires_at=None,
         )
         self._resolve(trigger)
@@ -292,8 +292,9 @@ class TriggerEngine:
         events = [c for c in trigger.spec.when if isinstance(c, EventCheck)]
         if len(events) > 1:
             raise TriggerError("a trigger can check one event at most; two events never arrive at the same moment")
-        trigger.checks = [self._check(c) for c in trigger.spec.when if isinstance(c, ValueCheck)]
-        trigger.resets = [self._check(c) for c in trigger.spec.reset or []]
+        viewer = self._viewer(trigger)
+        trigger.checks = [self._check(c, viewer) for c in trigger.spec.when if isinstance(c, ValueCheck)]
+        trigger.resets = [self._check(c, viewer) for c in trigger.spec.reset or []]
         trigger.event = events[0] if events else None
         if trigger.event:
             event_spec = registry.resolve_event(trigger.event.event)
@@ -301,10 +302,16 @@ class TriggerEngine:
             if unknown:
                 raise TriggerError(f"{trigger.event.event} has no data field {unknown[0]!r}; it has {', '.join(event_spec.data)}")
         for key in trigger.spec.include:
-            registry.resolve_value(key)
+            check_personal(*registry.resolve_value(key), viewer)
 
-    def _check(self, raw: ValueCheck) -> Check:
+    def _viewer(self, trigger: Trigger) -> Viewer:
+        """What a trigger may read and see: what its user may. One still
+        waiting for its person reads only what anyone at the device may."""
+        return self._kernel.accounts.scope(trigger.user, trigger.group)
+
+    def _check(self, raw: ValueCheck, viewer: Viewer) -> Check:
         ref, spec = self._kernel.registry.resolve_value(raw.value, raw.params)
+        check_personal(ref, spec, viewer)
         if raw.op == "between" and not (isinstance(raw.arg, list) and len(raw.arg) == 2):
             raise TriggerError(f"{ref.key}: between takes [start, end]")
         if raw.op == "in" and not isinstance(raw.arg, list):
@@ -324,7 +331,7 @@ class TriggerEngine:
         """Registers a trigger for the caller's user. On a shared device
         nobody is recognized at, it waits, and everyone in the device's
         group is asked on their phone whether it's them."""
-        spec = self.validate(spec)
+        spec = self.validate(spec, caller.user)
         unconfirmed = caller.user is None
         if unconfirmed and caller.device is None:
             raise TriggerError("a trigger belongs to a person, and nobody is known here to ask; set it up from someone's own conversation")
@@ -493,7 +500,9 @@ class TriggerEngine:
             if trigger is None or trigger.status != "active" or trigger.event is None:
                 continue
             where = trigger.event.where or {}
-            if all(event.data.get(k) == v for k, v in where.items()):
+            # Someone else's event (where they arrived) never reaches a
+            # trigger of a user who couldn't see it in the log.
+            if all(event.data.get(k) == v for k, v in where.items()) and sees(self._viewer(trigger), event):
                 await self._look(trigger, event)
 
     async def _look(self, trigger: Trigger, event: Event | None) -> None:
@@ -590,7 +599,7 @@ class TriggerEngine:
         deliver."""
         now = self._kernel.now()
         _, matched, _ = await self._holds(trigger.checks)
-        included = await self._kernel.state.get(trigger.spec.include)
+        included = await self._kernel.state.get(trigger.spec.include, self._viewer(trigger))
         labels = merge_labels(*(r.labels for r in matched.values()), *(r.labels for r in included.values()), event.labels if event else [])
         trigger.armed = False
         trigger.last_fired_at = now
@@ -657,7 +666,7 @@ class TriggerEngine:
         """What a trigger would do now, without registering it: each check's
         current reading and result, the last few events an event check
         would have matched, and what its script would have done for `user`."""
-        spec = self.validate(spec)
+        spec = self.validate(spec, user)
         trigger = Trigger(
             id="test",
             spec=spec,
@@ -685,12 +694,12 @@ class TriggerEngine:
     def _replay(self, trigger: Trigger) -> list[Event]:
         assert trigger.event is not None
         log_: EventLog = self._kernel.events
-        recent = log_.search(type=trigger.event.event, limit=50)
+        recent = log_.search(type=trigger.event.event, limit=50, viewer=self._viewer(trigger))
         where = trigger.event.where or {}
         return [e for e in recent if all(e.data.get(k) == v for k, v in where.items())][:REPLAY]
 
     async def _dry_runs(self, trigger: Trigger, replay: list[Event], readings: dict[str, Reading]) -> list[dict[str, Any]]:
-        included = await self._kernel.state.get(trigger.spec.include)
+        included = await self._kernel.state.get(trigger.spec.include, self._viewer(trigger))
         base = {
             "trigger": trigger.id,
             "note": trigger.spec.note,

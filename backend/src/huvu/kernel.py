@@ -130,8 +130,8 @@ class Kernel:
         self.data.ensure(new)
         self.tools.build()
         self.write_skills()
-        before = {a.name for a in old.actions} | {q.name for q in old.queries}
-        after = {a.name for a in new.actions} | {q.name for q in new.queries}
+        before = {a.name for a in old.actions}
+        after = {a.name for a in new.actions}
         added = sorted(after - before)
         removed = sorted(before - after)
         parts = []

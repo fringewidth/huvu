@@ -11,6 +11,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Two Android phones with the app installed, one logged in as each person. A second phone matters for approvals and for "is it you?".
 1. A laptop with the web app open.
 1. The Fire TV, for the shared-device checks.
+1. OwnTracks on both phones, each set up with the QR code from `uv run huvu tracker add <username>`, for the location checks.
 1. To have something that needs an approval before any driver exists, put `"huvu.set_mode" = "ask"` under `[policy]` in `backend/huvu.toml`, and restart the backend. Then "huvu, set the house mode to away" needs a yes.
 
 ## Logging in
@@ -99,6 +100,19 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. On your phone, open the menu. Where you're recognized should show the TV. Tap "not there". The TV should stop saying your name.
 1. Leave the TV alone for 10 minutes after someone is recognized. It should stop saying their name.
 1. On the TV, use the D-pad to move through the list, and the back button to close it.
+
+## Location (OwnTracks)
+
+1. Scan the QR code with the phone's camera and open the link. OwnTracks should open with its settings filled in, in HTTP mode.
+1. In OwnTracks, tap the button that sends your location now. A few seconds later, open its list of regions. You should see `home` and `near_home`.
+1. Walk or drive out of home. Ask huvu "where am I?". It should say you're outside home, or in near_home.
+1. Come back home. Within a minute of arriving, ask huvu where you are. It should say home.
+1. From the other phone, ask huvu where you are. It should say it can't tell, since your location is yours alone.
+1. Ask huvu "remember this place as the corner shop" while you stand somewhere new. Within about 15 minutes, `corner shop` should appear in OwnTracks's regions on your phone, and not on the other phone.
+1. Ask huvu to share the corner shop with the household. Within about 15 minutes it should appear on the other phone too.
+1. Ask huvu to forget the corner shop. On an iPhone it should go from OwnTracks's regions. On Android it stays in the list, and huvu ignores it.
+1. Turn on flight mode, walk out of home, walk back in, and turn flight mode off. huvu should still learn that you left and came back, a little late.
+1. Run `uv run huvu device list` on the backend. Each tracker should be listed with the kind `tracker`.
 
 ## What doesn't work yet (don't test)
 

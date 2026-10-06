@@ -1,7 +1,9 @@
 """The source contract: what a driver implements, and what the kernel gives it.
 
-A source owns its own storage, processing, querying and retrieval. The
-kernel never tells it where to keep things. It only asks the source
+A source owns its own working storage and processing. The kernel never
+tells it where to keep things, except its history: rows for analysis go
+through `ctx.record` into the kernel's history tables, which the model
+reads with data_sql (data.py). It only asks the source
 questions through the methods below, and hears from it through the context.
 
 Every method has a default, so a driver implements only what it has. A
@@ -13,6 +15,7 @@ what it pushed.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -46,8 +49,7 @@ class Source:
         self._ctx = ctx
 
     def describe(self) -> SourceSpec:
-        """The source's values, events, queries, actions and history
-        tables. Called at load, after `bind`, and again each time the source
+        """The source's values, events, actions and history tables. Called at load, after `bind`, and again each time the source
         calls `ctx.respec()`. The kernel builds the model's tools, the
         trigger catalog, the history tables and the source's skill from
         it."""
@@ -68,16 +70,11 @@ class Source:
         such as HA entities. The kernel merges every source's answer."""
         return []
 
-    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
-        """Runs a query. `caller.user` is whom it's for, so a source with
-        per-person data (a calendar) answers with that person's; it is None
-        for the household."""
-        raise SourceError(f"{self.ctx.name} has no query {name!r}")
-
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         """Runs an action. The kernel calls this only after the action
         policy allowed it, so the source does no permission checks.
-        `caller.user` is whom it's for, as in `query`."""
+        `caller.user` is whom it's for, so a source with per-person data
+        acts on that person's; it is None for the household."""
         raise SourceError(f"{self.ctx.name} has no action {name!r}")
 
     async def watch(self, value: str, params: dict[str, Any]) -> None:
@@ -91,6 +88,18 @@ class Source:
     async def feeds(self) -> list[Feed]:
         """Live feeds this source can stream, for the frontend's list."""
         return []
+
+    async def ingest(self, body: Any, caller: Caller) -> Any:
+        """Takes data a device posts to the source (POST /api/ingest/<name>),
+        such as a phone's location. `caller.user` is whose device it is, and
+        `caller.device` which one. The return value is the HTTP reply's JSON
+        body. A source with no data arriving from outside leaves this alone,
+        and the route answers 404."""
+        raise NotIngesting(f"{self.ctx.name} takes no data from devices")
+
+
+class NotIngesting(SourceError):
+    """A source that doesn't implement `ingest`."""
 
 
 class SourceContext:
@@ -107,6 +116,17 @@ class SourceContext:
 
     def now(self) -> datetime:
         return self._kernel.now()
+
+    def member_groups(self, user: str) -> list[str]:
+        """The groups a user is a member of (not a guest), for a source
+        whose things can be shared with a group."""
+        return self._kernel.accounts.member_groups(user)
+
+    def user_name(self, user: str) -> str:
+        """What to call a user in an event's summary: their name, or their
+        username if they're gone."""
+        found = self._kernel.accounts.user(user)
+        return found.name if found else user
 
     async def emit(
         self,
@@ -172,6 +192,12 @@ class SourceContext:
         and `group`, with the same meaning as on events. See data.py."""
         self._kernel.data.record(self.name, table, row, at=at or self._kernel.now(), user=user, group=group)
 
+    def rows(self, table: str, where: str, args: Sequence[Any] = (), *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
+        """Reads the source's own history rows back, every person's, for a
+        source that works from its past. `where` and `order` are SQL the
+        driver writes; values go in `args`."""
+        return self._kernel.data.rows(self.name, table, where, args, order=order, limit=limit)
+
     async def respec(self) -> None:
         """Tells the kernel the source's spec changed, such as when the
         scripts in Home Assistant change. The kernel calls `describe` again,
@@ -181,11 +207,6 @@ class SourceContext:
     async def read(self, keys: list[str]) -> dict[str, Reading]:
         """Reads values from any source, by their keys (`ha.entity_state[light.porch]`)."""
         return await self._kernel.state.get(keys)
-
-    async def query(self, source: str, name: str, args: dict[str, Any], caller: Caller | None = None) -> Result:
-        """Runs another source's query, for the caller this source is
-        answering, or for the kernel."""
-        return await self._kernel.registry.get(source).query(name, args, caller or Caller(kind="kernel"))
 
     async def watch(self, key: str, callback) -> None:
         """Calls `callback(key, reading)` on each change of another source's

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .db import dumps
+from .push import api_json
 from .registry import suggest
 from .spec import Caller
 
@@ -63,8 +64,9 @@ class ScriptRunner:
                 raise ScriptError(f"grant {grant!r} names no tool{suggest(grant, known)}")
 
     async def run(self, trigger: Trigger, payload: dict[str, Any], dry: bool) -> dict[str, Any]:
-        """Runs the trigger's script once. In a dry run, queries run for
-        real, while actions and wakes are recorded and skipped."""
+        """Runs the trigger's script once. In a dry run, reads (state_get,
+        data_sql) run for real, while actions and wakes are recorded and
+        skipped."""
         path = self._dir / f"{trigger.id}.py"
         path.write_text(trigger.spec.script or "")
         caller = Caller(kind="script", trigger=trigger.id, user=trigger.user, group=trigger.group)
@@ -133,7 +135,8 @@ class ScriptRunner:
         else:
             try:
                 result = await self._kernel.tools.call(tool, args, caller)
-                reply = {"result": result.data}
+                # state_get answers with Reading models, which plain JSON can't hold.
+                reply = {"result": api_json(result.data)}
             except Exception as err:
                 record["error"] = str(err)
                 reply = {"error": str(err)}

@@ -5,8 +5,8 @@ loads a skill's body only when it needs it. That is how the model learns
 what huvu can do without every action's schema in every session: each
 source becomes a skill named `huvu-<source>`, whose body is the driver's
 hand-written guide (when to use it, the gotchas) followed by a reference
-huvu generates from the driver's spec (actions, queries, values, events,
-tables), so it can't drift from the code.
+huvu generates from the driver's spec (actions, values, events, tables),
+so it can't drift from the code.
 
 The skills are written into the backend's data folder at every start, and
 again when a source's spec changes while it runs (Kernel.respec), and
@@ -42,8 +42,8 @@ OWNED = (
 
 
 def signature(name: str, schema: dict[str, Any]) -> str:
-    """`home_turn_on(entity_id, brightness?: number)`: an action or query as
-    the model calls it, with optional arguments marked."""
+    """`home_turn_on(entity_id, brightness?: number)`: an action as the
+    model calls it, with optional arguments marked."""
     properties = schema.get("properties") or {}
     required = set(schema.get("required") or [])
     parts = []
@@ -57,7 +57,7 @@ def render(spec: SourceSpec) -> str:
     lines = [
         "---",
         f"name: {PREFIX}{spec.name}",
-        f"description: {json.dumps(_one_line(spec.description) + f' Load before using huvu actions, queries or values of {spec.name}.')}",
+        f"description: {json.dumps(_one_line(spec.description) + f' Load before using huvu actions, values or tables of {spec.name}.')}",
         "metadata:",
         "  hermes:",
         "    tags: [huvu]",
@@ -77,16 +77,13 @@ def render(spec: SourceSpec) -> str:
             note = "; ".join(n for n in notes if n)
             lines.append(f"- `{signature(f'{spec.name}_{action.name}', action.input_schema)}`: {action.description}" + (f" ({note})" if note else ""))
         lines.append("")
-    if spec.queries:
-        lines += ["## Queries", "", "Run with `query`, as `query({\"name\": ..., \"args\": {...}})`.", ""]
-        lines += [f"- `{signature(f'{spec.name}_{q.name}', q.input_schema)}`: {q.description}" for q in spec.queries]
-        lines.append("")
     if spec.values:
         lines += ["## Values", "", "Read with `state_get`; triggers can watch them.", ""]
         for value in spec.values:
             params = f"[{','.join(value.params)}]" if value.params else ""
             unit = f", {value.unit}" if value.unit else ""
-            lines.append(f"- `{spec.name}.{value.name}{params}`: {value.description} ({value.type}, {value.updates}{unit})")
+            personal = ", only the person `user` names can read it" if value.personal else ""
+            lines.append(f"- `{spec.name}.{value.name}{params}`: {value.description} ({value.type}, {value.updates}{unit}{personal})")
         lines.append("")
     if spec.events:
         lines += ["## Events", "", "Search them with `events_search`; triggers can watch them.", ""]

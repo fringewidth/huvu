@@ -31,6 +31,7 @@ import asyncio
 import json
 import sqlite3
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -130,6 +131,20 @@ class DataStore:
         names = ", ".join(f'"{k}"' for k in values)
         marks = ", ".join("?" * len(values))
         self._conn.execute(f'INSERT INTO "{source}_{table}" ({names}) VALUES ({marks})', list(values.values()))
+
+    def rows(self, source: str, table: str, where: str, args: Sequence[Any], *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
+        """A source's own rows, for a source that works from its own past,
+        such as the location source's latest fix. `where` and `order` are
+        SQL the driver writes, never text from a model or a device; values
+        go in `args`. JSON columns come back as text."""
+        if self._kernel.registry.spec(source).table(table) is None:
+            raise SourceError(f"{source} read table {table!r}, which its spec doesn't declare")
+        tail = " LIMIT ?" if limit is not None else ""
+        cursor = self._conn.execute(
+            f'SELECT * FROM "{source}_{table}" WHERE {where} ORDER BY {order}{tail}', [*args, *([limit] if limit is not None else [])]
+        )
+        names = [d[0] for d in cursor.description]
+        return [dict(zip(names, r, strict=True)) for r in cursor.fetchall()]
 
     async def sql(self, query: str, viewer: Viewer, limit: int = SQL_LIMIT) -> dict[str, Any]:
         """Runs one read-only statement for `viewer`, and returns at most

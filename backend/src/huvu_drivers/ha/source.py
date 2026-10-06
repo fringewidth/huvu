@@ -45,13 +45,13 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from huvu.config import secret
 from huvu.registry import suggest
 from huvu.source import Source, SourceError
-from huvu.spec import Caller, ColumnSpec, EventSpec, Match, QuerySpec, Reading, Result, SourceSpec, TableSpec, ValueSpec
+from huvu.spec import Caller, ColumnSpec, EventSpec, Match, Reading, Result, SourceSpec, TableSpec, ValueSpec
 
 from .client import Connect, HAClient, HAError, connect_websocket
 from .history import Actor, Attribution, SensorBuckets
@@ -67,8 +67,6 @@ REFRESH_DEBOUNCE = 2.0
 FLUSH_EVERY = 30.0
 # A script call waits this long for HA to finish the script.
 ACT_TIMEOUT = 120.0
-HISTORY_MAX = 200
-HISTORY_HOURS_MAX = 240
 
 REGISTRY_EVENTS = ("entity_registry_updated", "area_registry_updated", "device_registry_updated", "label_registry_updated")
 GONE = {"unavailable", "unknown"}
@@ -100,6 +98,13 @@ VALUES = [
     ValueSpec(name="entity_state", description="An exposed Home Assistant entity's state, as HA says it: on, off, a mode, a number as text", type="string", params=ENTITY, updates="on_demand"),
     ValueSpec(name="entity_number", description="An exposed entity's state as a number, for sensors and comparisons", type="number", params=ENTITY, updates="on_demand"),
     ValueSpec(name="entity_attributes", description="An exposed entity's attributes: brightness, target temperature, fan mode, assumed_state", type="object", params=ENTITY, updates="on_demand"),
+    ValueSpec(name="areas", description="Every area with its exposed entities, their states, and the scripts that work them", type="list", updates="on_demand"),
+    ValueSpec(
+        name="problems",
+        description="Whether huvu is connected to Home Assistant, its version, and what is wrong with the setup: scripts left out, missing descriptions, unknown labels",
+        type="object",
+        updates="on_demand",
+    ),
 ]
 
 EVENTS = [
@@ -111,15 +116,6 @@ EVENTS = [
     EventSpec(type="script_run", description="Someone other than huvu ran one of the household's scripts.", data={"script": "string", "area": "string", "actor": "string"}),
 ]
 
-QUERIES = [
-    QuerySpec(
-        name="history",
-        description="An entity's state changes from Home Assistant's own recorder, which keeps about 10 days. For longer, or for patterns, use data_sql on the tables.",
-        input_schema={"type": "object", "properties": {"entity_id": {"type": "string"}, "hours": {"type": "number", "description": "How far back, at most 240. Default 24."}}, "required": ["entity_id"]},
-    ),
-    QuerySpec(name="areas", description="Every area with its exposed entities and the scripts that work them."),
-    QuerySpec(name="problems", description="What is wrong with the Home Assistant setup, as huvu sees it: scripts left out, missing descriptions, unknown labels."),
-]
 
 _ACTOR = ColumnSpec(name="actor", type="text", description="Who caused it: huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button, a remote seen through a power plug)")
 _HA_USER = ColumnSpec(name="ha_user", type="text", description="The Home Assistant user id behind it, if any")
@@ -220,7 +216,6 @@ class HomeAssistant(Source):
             guide=_guide(name),
             values=VALUES,
             events=EVENTS,
-            queries=QUERIES,
             actions=[action(s) for s in self._known_scripts().values() if usable(s)],
             tables=TABLES,
         )
@@ -487,8 +482,12 @@ class HomeAssistant(Source):
 
     async def read(self, value: str, params: dict[str, Any]) -> Reading:
         entity_id = str(params.get("entity_id"))
-        if not self._connected:
+        if value == "problems":
+            reading = Reading(value=self._setup(), at=self.ctx.now())
+        elif not self._connected:
             reading = Reading(reason="Home Assistant is not connected right now")
+        elif value == "areas":
+            reading = Reading(value=self._area_list(), at=self.ctx.now())
         elif entity_id not in self._states:
             raise SourceError(self._unknown(entity_id))
         else:
@@ -567,33 +566,7 @@ class HomeAssistant(Source):
                 data["response"] = result["response"]
         return Result(data=data, labels=["house"])
 
-    async def query(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
-        handlers = {"history": self._history, "areas": self._areas_query, "problems": self._problems_query}
-        handler = handlers.get(name)
-        if handler is None:
-            raise SourceError(f"{self.ctx.name} has no query {name!r}")
-        return Result(data=await handler(args), labels=["house"])
-
-    async def _history(self, args: dict[str, Any]) -> dict[str, Any]:
-        entity_id = str(args.get("entity_id"))
-        if entity_id not in self._exposed:
-            raise SourceError(self._unknown(entity_id))
-        hours = min(float(args.get("hours") or 24), HISTORY_HOURS_MAX)
-        now = self.ctx.now()
-        found = await self._require().call(
-            "history/history_during_period",
-            start_time=(now - timedelta(hours=hours)).isoformat(),
-            end_time=now.isoformat(),
-            entity_ids=[entity_id],
-            minimal_response=True,
-            no_attributes=True,
-            significant_changes_only=False,
-        )
-        rows = (found or {}).get(entity_id) or []
-        changes = [{"at": datetime.fromtimestamp(r.get("lc") or r.get("lu") or 0).astimezone(), "state": r.get("s")} for r in rows]
-        return {"entity_id": entity_id, "hours": hours, "changes": changes[-HISTORY_MAX:], "truncated": len(changes) > HISTORY_MAX}
-
-    async def _areas_query(self, args: dict[str, Any]) -> list[dict[str, Any]]:
+    def _area_list(self) -> list[dict[str, Any]]:
         areas: dict[str, dict[str, Any]] = {}
         for entity_id in sorted(self._exposed):
             state = self._states.get(entity_id)
@@ -606,7 +579,7 @@ class HomeAssistant(Source):
                 areas.setdefault(script.area or "no area", {"entities": [], "actions": []})["actions"].append(f"{self.ctx.name}_{script.object_id}")
         return [{"area": name, **body} for name, body in sorted(areas.items())]
 
-    async def _problems_query(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _setup(self) -> dict[str, Any]:
         client = self._client
         return {"connected": self._connected, "ha_version": client.version if client else None, "problems": self._problems}
 
@@ -620,7 +593,9 @@ Many devices here are infrared: HA only assumes their state from the last button
 
 A script may wait for a person's approval; its label in HA decides, and the result says so. A script that returns data gives it back as `response`.
 
-Every change of an exposed entity and every script run is in the tables below, with who caused it (`actor`): huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button). `user_id` is the huvu user when known. Numeric sensors are in 5-minute buckets. Use these to learn what each person prefers; `{name}_history` only reads HA's own recorder, which keeps about 10 days."""
+Every change of an exposed entity and every script run is in the tables below, with who caused it (`actor`): huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button). `user_id` is the huvu user when known. Numeric sensors are in 5-minute buckets. Use these with data_sql for any question about the past, such as when a light was last on, and to learn what each person prefers. They start when huvu first connected to HA.
+
+`{name}.areas` lists every area with its entities and scripts. `{name}.problems` says whether huvu is connected to HA and what is wrong with the setup; read it when a script is missing or something fails."""
 
 
 def _name(state: dict[str, Any]) -> str:

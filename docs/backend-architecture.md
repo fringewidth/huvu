@@ -32,6 +32,7 @@ Each person is a user with a username and a password, added from the command lin
 
 1. **A personal device** (a phone, a browser) belongs to the user who logged in on it.
 1. **A shared device** (the Fire TV, the speaker hardware still to be built) belongs to a group. It can't type a password, so it pairs: it shows a code, and a member confirms it from their phone, choosing the group if they're in more than one.
+1. **A tracker** is OwnTracks on a user's phone, added from the command line (`uv run huvu tracker add <user>`). Its token works on `POST /api/ingest/{source}` and nowhere else, and it is revoked apart from the phone's login. See [Location](#location).
 1. **Every device has its own token**, stored hashed, so a lost phone is logged out alone.
 1. **Phones are taken to be on their user's person.** Approvals, "is it you?" questions and notifications go to phones.
 1. **Every device has one conversation**, and each conversation runs on one Hermes session. So a session belongs to a user and a device, or to a group on a shared device. A turn never reaches another device.
@@ -78,31 +79,33 @@ class Source:
     async def run(self) -> None: ...                            # long-lived part
     async def read(self, value: str, params: dict) -> Reading: ...
     async def search(self, text: str) -> list[Match]: ...
-    async def query(self, name: str, args: dict, caller: Caller) -> Result: ...
     async def act(self, name: str, args: dict, caller: Caller) -> Result: ...
     async def watch(self, value: str, params: dict) -> None: ...
     async def fetch(self, ref: str) -> Blob: ...
     async def feeds(self) -> list[Feed]: ...
+    async def ingest(self, body: Any, caller: Caller) -> Any: ...
 ```
 
-1. `describe` lists the source's values, events, queries, actions and history tables, each with a schema and a one-line description, plus `guide`: the hand-written part of the source's Hermes skill (when to use it, the gotchas). The types are in `spec.py`. The kernel binds the source before it calls `describe`, so `describe` can read the source's own folder.
+1. `describe` lists the source's values, events, actions and history tables, each with a schema and a one-line description, plus `guide`: the hand-written part of the source's Hermes skill (when to use it, the gotchas). The types are in `spec.py`. The kernel binds the source before it calls `describe`, so `describe` can read the source's own folder.
 1. `run` is the long-lived part: a Pulsar consumer, a websocket, a polling loop. It reports through `self.ctx`: `ctx.emit(type, summary, ...)` for events, `ctx.update(value, reading, ...)` for values and `ctx.record(table, row, ...)` for history rows. If it raises, the kernel logs a `source_error` event and starts it again with a backoff (5 s, doubling to 5 min). A run that lasted at least a minute resets the backoff to 5 s, so a source that loses its connection once a month (HA restarting for an update) comes back in 5 s, not 5 min.
 1. `read` answers `on_demand` values. Pushed values are answered from what the source pushed.
 1. `search` finds the source's things by name, area or alias, such as HA entities. Each match names the actions that work the thing, so the model learns how to work a device where it finds it.
-1. `query` covers reads. `act` covers writes; the kernel calls it only after the action policy allows it. Both get the `Caller`, whose `user` says whom the call is for and `group` which group's shared device it came through, so a source with per-person data, such as a calendar, answers with that person's.
+1. `act` covers writes; the kernel calls it only after the action policy allows it. It gets the `Caller`, whose `user` says whom the call is for and `group` which group's shared device it came through, so a source with per-person data, such as a calendar, acts on that person's.
+1. **There are no queries** (removed 2026-10-06). A read is either what is true now, which is a value (`state_get`, on_demand when it is computed on each read), or what happened over time, which is a history table the model reads with `data_sql`. HA's former `ha_history` query read HA's recorder, which `ha_changes` covers from the day huvu connected; `ha_areas` and `ha_problems` became values. One read path means one scoping rule for each kind of data, and no per-source read tools the model has to learn.
 1. `watch` asks the source to push changes for one value. A source that pushes everything anyway can leave it alone. HA uses it: its values are `on_demand`, and it pushes only the entities a trigger watches.
 1. `fetch` returns the binary content behind a ref (`tuya:album/8f2c`), such as a decrypted snapshot. The frontend gets it through a media URL.
 1. `feeds` lists live feeds the source can stream, for the frontend's list.
+1. `ingest` takes data a device posts to the source, for a source whose data arrives from outside instead of being fetched, such as a phone's location. The route is `POST /api/ingest/{source}`, authed by the device's token (a bearer header, or Basic auth with the token as the password, for apps that can't set headers). `caller.user` is whose device it is. What `ingest` returns is the reply's body. A source without it answers `404`.
 
-`self.ctx` also gives a source its own folder (`ctx.data_dir`), a logger, `ctx.now()`, and reads, queries and watches on other sources, for derived sources. An event type a source emits must be in its spec, or the kernel refuses it, and so must a table it records into and every column of the row.
+`self.ctx` also gives a source its own folder (`ctx.data_dir`), a logger, `ctx.now()`, reads and watches on other sources' values, for derived sources, and `ctx.rows(table, where, args)`, which reads the source's own history rows back, everyone's, for a source that works from its past (the location source's latest fix). An event type a source emits must be in its spec, or the kernel refuses it, and so must a table it records into and every column of the row.
 
-**A spec can change while the source runs.** The HA driver's actions are the scripts in Home Assistant, and those change when someone edits HA. The source calls `ctx.respec()`, and the kernel (`Kernel.respec`) calls `describe` again, adds any new history tables and columns, rebuilds the tool box, rewrites the skills, and logs a `source.respec` event that names the actions and queries added and removed. The MCP tool list doesn't change, because source actions run through `act`, so no Hermes session loses its prompt cache. A trigger script whose grant names an action that is gone fails at its next run, as a `trigger.error` event the dream reads.
+**A spec can change while the source runs.** The HA driver's actions are the scripts in Home Assistant, and those change when someone edits HA. The source calls `ctx.respec()`, and the kernel (`Kernel.respec`) calls `describe` again, adds any new history tables and columns, rebuilds the tool box, rewrites the skills, and logs a `source.respec` event that names the actions added and removed. The MCP tool list doesn't change, because source actions run through `act`, so no Hermes session loses its prompt cache. A trigger script whose grant names an action that is gone fails at its next run, as a `trigger.error` event the dream reads.
 
-Every argument and result is plain JSON. Sources start as in-process modules. A heavy source can later move to another machine behind HTTP (`GET /describe`, `POST /query/{name}`, `POST /act/{name}`, events pushed to the core) without changing anything else.
+Every argument and result is plain JSON. Sources start as in-process modules. A heavy source can later move to another machine behind HTTP (`GET /describe`, `POST /read/{value}`, `POST /act/{name}`, events and rows pushed to the core) without changing anything else.
 
 ### Values, events and actions
 
-A value is what is true now: `ha.entity_state[light.porch]`, `tuya.battery`, `location.eta_home_min`. It changes silently, and only watchers hear each change. An event is something that happened, and it goes into the event log. A source decides what counts as an event. ETA changes every minute, so the location source emits `location.left_home` and `location.arrived_home`, not every ETA change.
+A value is what is true now: `ha.entity_state[light.porch]`, `tuya.battery`, `location.place[mom]`. It changes silently, and only watchers hear each change. An event is something that happened, and it goes into the event log. A source decides what counts as an event. A phone sends a location fix every 15 minutes or so, so the location source emits `location.arrived` and `location.left` at waypoints, not every fix.
 
 ```json
 {"name": "ha.entity_state", "params": {"entity_id": "string"}, "type": "string",
@@ -125,7 +128,7 @@ A doorbell event's time is `house`. The snapshot's content is `external`. The la
 
 ### Derived and built-in sources
 
-A source can read other sources through the core's query and watch API. "Who's home" is a `presence` source that combines phone location, ESPresense rooms through HA and the last unlock. Sources are code the repo owner reviews and commits, so this costs nothing in trust.
+A source can read other sources' values through the core's read and watch API. "Who's home" is a `presence` source that combines phone location, ESPresense rooms through HA and the last unlock. Sources are code the repo owner reviews and commits, so this costs nothing in trust.
 
 State that no device owns lives in a built-in source named `huvu`, behind the same contract: the house mode (normal, away, guests, sleeping), pending approvals, aliases. `huvu.mode` works in a trigger condition the same way `ha.entity_state` does.
 
@@ -141,7 +144,7 @@ Decided and built on 2026-10-06 (`huvu_drivers/ha/`). How to set up HA for it, f
 1. **Every change says who caused it.** HA's context on each change gives four actors: `huvu` (huvu's token belongs to its own HA user), `ha_user` (someone in the HA app, mapped to a huvu user by the `users` option), `automation` (no user but a parent context), and `device` (neither: a switch, the device's own button). A change inside a script run takes the run's actor. For huvu's own runs the driver also knows the huvu user, because it matches the run to the call it has in flight. huvu's token must belong to a separate HA user, or huvu's actions would look like that person's, and that user must be an administrator to read the registries.
 1. **History** goes into three tables: `ha_changes` (every state change of an exposed entity, and every change of an attribute a person chooses, such as brightness or a target temperature, with the actor), `ha_script_runs` (every run, by anyone; the arguments only for huvu's runs, since HA doesn't report them for others), and `ha_sensor_5min` (numeric sensors as time-weighted 5-minute buckets, with a row per bucket even when nothing changed, so the latest row before a time is the value then). Buckets live only while the connection does, so a gap in the connection is a gap in the rows.
 1. **Events** go to the log only for what a person would call an event: locks, covers, alarms, people, and door, window, smoke and leak sensors, plus any domain in the `event_domains` option. Transitions to or from `unavailable` stay out. Script runs by anyone but huvu are `ha.script_run` events; huvu's own are `action.ran` already.
-1. **Queries**: `ha_history` (HA's recorder, which keeps about 10 days by default), `ha_areas`, and `ha_problems` (scripts left out, missing descriptions, unknown labels, a token on a family member's user). The query names are reserved: a script named `history` is left out.
+1. **Two more values**: `ha.areas` (every area with its entities and the scripts that work them) and `ha.problems` (whether HA is connected, its version, and scripts left out, missing descriptions, unknown labels, a token on a family member's user). History before huvu connected is in HA's recorder only, which huvu doesn't read.
 1. **Infrared is a gap in the data.** A press on a physical IR remote never reaches HA, so the dream would only learn from what huvu itself did. A power-metering plug on each IR device worth learning about closes the gap: its watts show the real state, and the change shows as `device`.
 1. **Not built**: cameras and their snapshots, live feeds from HA's go2rtc, and naming the automation behind an `automation` change.
 
@@ -235,6 +238,10 @@ The core passes each name to its source, or answers from the last reading the so
 
 The model finds values in two steps. The kinds of value are few, so each source's skill lists them (see [Skills](#skills)). The things they apply to (hundreds of HA entities) are too many, so the model searches with `state_search`. Aliases from the `huvu` source come first. Each source answers for its own things, matching names, areas and aliases, and each result carries its current value and the actions that work it.
 
+### Personal values
+
+A value marked `personal` in its spec belongs to one person, named by its `user` param: `location.place[mom]`. Only that person reads it, through `state_get`, the situation block or a trigger. Members of their groups are refused too, since group membership means trust about the house, not about where someone is. A trigger reads what its user may, and hears only the events its user could see in the log, so nobody can watch another person's arrivals through a trigger. The kernel itself, and a derived source reading through `ctx`, read everything.
+
 ### Times for the model
 
 The core, sources, triggers and the frontend use ISO timestamps. The MCP layer turns every timestamp the model sees into a local time with its age:
@@ -256,7 +263,7 @@ A trigger is a condition over source data that wakes Hermes when it comes true. 
   "note": "Turn on the porch light. User asked for this on 2026-10-02.",
   "when": [
     {"value": "clock.time", "op": "between", "arg": ["00:00", "05:00"]},
-    {"value": "location.eta_home_min", "op": "<=", "arg": 10},
+    {"event": "location.arrived", "where": {"waypoint": "near_home"}},
     {"value": "ha.entity_state", "params": {"entity_id": "light.porch"}, "op": "==", "arg": "off"}
   ],
   "repeat": "daily",
@@ -264,6 +271,8 @@ A trigger is a condition over source data that wakes Hermes when it comes true. 
   "expires": null
 }
 ```
+
+This one fires when its person's phone enters the `near_home` waypoint between midnight and 5, if the porch light is off. An ETA would need a maps API inside the backend, so the waypoint's size stands in for it (see [Location](#location)).
 
 1. `note` comes first. It says why the trigger exists and what to do. It goes back to the model in the wake.
 1. `when` is a flat list, and all of it must hold. A predicate is a value check (`value`, optional `params`, `op`, `arg`) or an event check (`{"event": "tuya.doorbell"}`). For "any of these", register two triggers.
@@ -307,7 +316,21 @@ A trigger with nobody to ask (a group profile's cron job, which has no device) i
 
 A trigger can carry a script: a Python function the model writes, run when `when` matches. It can call the tools the trigger declared, and it ends by acting, waking the model, or doing nothing. The engine keeps watching, edges, rearm and expiry, so scripts don't rewrite them. The script lives in a file and runs in its own process (`script_host.py`), which talks to the core over its stdin and stdout, one JSON line per message. It can call only the tools named in the trigger's `grants`, through the same tool box Hermes uses, and actions still go through the policy. It has 30 s. It is not sandboxed: the agent already has a terminal, and it's there to help.
 
-`triggers_test` checks a trigger without registering it: each check's current reading and result, the last few events an event check would have matched, and a dry run of the script against them. Queries run for real, actions are recorded without running, and the model gets back what the script would have done. The dream then reviews real runs from `trigger.run` and `trigger.error` events.
+`triggers_test` checks a trigger without registering it: each check's current reading and result, the last few events an event check would have matched, and a dry run of the script against them. Reads (`state_get`, `data_sql`) run for real, actions are recorded without running, and the model gets back what the script would have done. The dream then reviews real runs from `trigger.run` and `trigger.error` events.
+
+## Location
+
+Decided on 2026-10-06. The driver is `huvu_drivers/location.py`.
+
+Each family member runs OwnTracks on their phone, in significant-change mode, posting over HTTP to `POST /api/ingest/location` with Basic auth: their username and their tracker's token. `uv run huvu tracker add <user>` makes the tracker and prints a QR code, an `owntracks:///config?inline=` link that sets the app up in one tap. In this mode Android sends a fix about every 15 minutes from Wi-Fi and cell towers, and iOS sends one after about 500 m of movement, plus a ping now and then.
+
+1. **Waypoints.** A waypoint is a named circle: a centre and a radius. It is OwnTracks's word, and huvu uses it everywhere. The phone watches its waypoints through the OS's region monitoring and posts a transition the moment it enters or leaves one, so arrivals come at once. huvu holds the master list. OwnTracks fetches nothing on its own, so huvu sends each tracker the waypoints its person sees as a `setWaypoints` command in the reply to its next post, whenever they changed since the last one sent. `setWaypoints` only adds and overwrites (OwnTracks keys a waypoint by its `tst`), so after a removal `clearWaypoints` goes first. Only iOS does that; a removed waypoint stays on an Android phone, and huvu ignores its crossings.
+1. **Who owns a waypoint.** The person who named it, who can share it with a group. Members' phones then get it too. `home` and `near_home` (a few km around home) come from the config and belong to the household's group. One named at a shared device nobody is recognized at belongs to that device's group.
+1. **Values and events.** Every value is personal, with a `user` param: `place` (the smallest waypoint the person is inside, or `elsewhere`), `inside`, `fix`, `distance_home_km`, `battery`, `wifi`, and `waypoints`. The fix-based ones go stale after 2 hours, so a phone that stopped posting reads as unknown. `place` stays right while the phone is still, so it has no max age. Only crossings reach the event log, as `location.arrived` and `location.left`, the person's alone, with `stayed_min` on a departure and `delay_min` on both.
+1. **Late and repeated posts.** OwnTracks retries a post that failed and may send a queue late. A fix or transition it sends twice is stored once. A crossing older than the latest one huvu knows for that waypoint is stored and changes nothing. A payload huvu can't read is logged and dropped with a `200`, since a refused post would jam the phone's queue.
+1. **Storage.** Every fix and transition, with the raw payload, is a row in `location_fixes` and `location_transitions`, kept for good, with the person as `user_id`, so `data_sql` shows each person only their own. `location_transitions.changed` marks the crossings that became events; repeats and late ones are kept too, with `changed` false. The source's own `location.db` holds only what it works from: the waypoints, each person's latest crossing of each, and what each tracker was last sent. `location_waypoint_add` with `from` and `until` covers "remember where I was then": huvu takes the median of the person's fixes in that window, and reports how many it used and how far they spread.
+1. **Privacy.** Location is private to its person, from everyone, members of their groups included (see [Personal values](#personal-values)).
+1. **Maps is not a source.** Routes, ETA and geocoding have no state and no events, so they are a Hermes tool. Triggers use `near_home` in place of an ETA.
 
 ## Actions and the policy
 
@@ -348,7 +371,7 @@ Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a se
 
 ### MCP tools
 
-Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; a source's actions and queries run through `act` and `query` by name, so a new driver adds nothing to a session's tool list.
+Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; a source's actions run through `act` by name, so a new driver adds nothing to a session's tool list.
 
 | Tool | What it does |
 |---|---|
@@ -356,10 +379,10 @@ Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; 
 | `state_search` | Finds values by name, area or alias |
 | `events_search`, `events_get` | Full-text search over the event log, and one event |
 | `events_digest` | A day's or an hour's digest |
-| `sources_list` | Every source with its values, events, queries, actions and tables |
+| `sources_list` | Every source with its values, events, actions and tables |
 | `data_sql` | One read-only SQLite query over the history tables and the event log, scoped to the caller. See [History tables](#history-tables) |
 | `triggers_register`, `triggers_test`, `triggers_list`, `triggers_remove`, `triggers_pause`, `triggers_resume` | Trigger management |
-| `act`, `query` | Run a source action or query by name (`ha_turn_on`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
+| `act` | Runs a source action by name (`ha_bedroom_ac_set`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
 | `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |
 
@@ -367,7 +390,7 @@ A result with outside content comes back as `{"data": ..., "provenance": "extern
 
 ### Skills
 
-Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, queries, values, events, and history tables with their columns, the standard columns and the indexes, which is the data dictionary the dream works from. A session sees one line per skill in its skill index, about 30 tokens and cached, and loads a skill's body with `skill_view` when it needs that source. So what huvu can do grows with drivers without growing every session's prompt.
+Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, values (marked when they are personal), events, and history tables with their columns, the standard columns and the indexes, which is the data dictionary the dream works from. A session sees one line per skill in its skill index, about 30 tokens and cached, and loads a skill's body with `skill_view` when it needs that source. So what huvu can do grows with drivers without growing every session's prompt.
 
 huvu writes the skills into its data folder at every start and at every respec (`skills_dir`, default `<data_dir>/skills`), and links each into the repo's gitignored `hermes-skills/` (`hermes_skills_dir`), making the folder and repairing the links as needed and removing those of sources that are gone. Every profile reads `hermes-skills/` through `skills.external_dirs` (`setup.sh` sets it), so nothing needs setting up again; Hermes follows the links (`os.walk(followlinks=True)`). Anything else in the folder is left alone. The files are read-only: Hermes lets the model edit a skill wherever it lives, and huvu would overwrite the edit at the next start, so what the model learns about the house goes into its own skills and memory. This needs Hermes to read the backend's disk; if the two ever run on different machines, the plugin would fetch the skills instead.
 
@@ -423,6 +446,7 @@ backend/
   src/huvu_drivers/   the drivers, one package or module per source
     ha/               Home Assistant: client.py (WebSocket), scripts.py (scripts as actions),
                       history.py (who caused a change, sensor buckets), source.py (the driver)
+    location.py       where each person is, from OwnTracks
   tests/              fakes.py (a fake house and Hermes), fake_ha.py (a fake Home Assistant)
 hermes-plugin/huvu/   the Hermes plugin
 ```
@@ -441,6 +465,8 @@ Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFI
 1. **Native push against a real Firebase project.** Phones register FCM tokens, and notifications, pending approvals and "is it you?" questions go to them through FCM's HTTP v1 API (`native_push.py`), signed with the service account key in `HUVU_FCM_CREDENTIALS`. It was tested with a fake FCM only. iOS also needs the APNs key uploaded to the Firebase project. A phone that connects later still catches up from the lists (`GET /api/approvals`, `/api/identify`, `/api/notifications`, which keeps 3 days).
 1. **Finer roles.** Groups have two roles, member and guest. Kids who may approve the porch light but not the front door would need a third, or per-action rules.
 1. **Turns across a restart.** A turn running when the backend stops ends as failed. Hermes may still finish it, unseen.
+1. **OwnTracks on real phones.** The location driver was tested against payloads written from OwnTracks's docs. Still to check on a phone: that a `setWaypoints` reply over HTTP makes regions on Android and on iOS, that OwnTracks queues posts while offline and sends them later, and how often Android's significant mode really posts. A late arrival still fires triggers on that event; `delay_min` says how late, but a trigger can't filter on it yet.
+1. **Missed crossings.** If a phone misses a transition, `place` stays wrong until the next crossing of that waypoint. Each fix carries the phone's own list of waypoints it is inside (`inregions`, kept in `location_fixes.regions`), which could correct it. Not done, because an absent field may not mean "inside none".
 1. **The HA driver against a live HA.** It was tested against a fake HA that answers the way HA's WebSocket API is documented and coded. These were taken from HA's source and not seen on a live instance: `homeassistant/expose_entity/list`, `script/config`, `config/entity_registry/get_entries` (for aliases), `return_response` on a script call, and that a script's own service calls run in the script's context. `ha_problems` and the driver's warnings show the first of these going wrong.
 1. **History retention.** History rows are kept for good. At the sizes estimated (a few hundred change rows and about 14,000 sensor rows a day) that is a few million rows a year, which SQLite handles; if it grows past that, old sensor buckets roll up to hours.
 

@@ -1,7 +1,7 @@
 """The registry: every loaded source, its spec, and name resolution.
 
-Every name a model or a trigger writes (a value key, an event type, a query,
-an action) resolves here. An unknown name fails with the nearest real one in
+Every name a model or a trigger writes (a value key, an event type, an
+action) resolves here. An unknown name fails with the nearest real one in
 the message, so a small model can fix its call on the next try.
 """
 
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from .names import UnknownName, ValueRef, make_ref, split_key
 from .source import Source, SourceContext, SourceError
-from .spec import ActionSpec, EventSpec, QuerySpec, SourceSpec, ValueSpec
+from .spec import ActionSpec, EventSpec, SourceSpec, ValueSpec
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -154,13 +154,6 @@ class Registry:
         if spec is None:
             known = [f"{s.name}.{e.type}" for s in self.specs() for e in s.events]
             raise UnknownName(f"unknown event {qualified}{suggest(qualified, known)}")
-        return spec
-
-    def resolve_query(self, source: str, name: str) -> QuerySpec:
-        spec = self.spec(source).query(name)
-        if spec is None:
-            known = [q.name for q in self.spec(source).queries]
-            raise UnknownName(f"{source} has no query {name!r}{suggest(name, known)}")
         return spec
 
     def resolve_action(self, source: str, name: str) -> ActionSpec:
