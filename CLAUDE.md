@@ -77,6 +77,7 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
   docs/frontend-contract.md      what the frontend expects from the backend, today and planned
   docs/frontend-changes.md       what the frontend still has to do to catch up with the backend
   docs/v0.md                     what is left before the family uses huvu daily: decisions, setup, builds, first tests
+  docs/sanity-check.md           the hands-on check of every feature a person touches, written for humans, run before the family gets a build
   backend/                  the Python backend's kernel (no drivers yet)
     src/huvu/               the kernel: sources, state, event log, triggers, policy, MCP, Hermes, conversations, HTTP; file map in docs/backend-architecture.md
     src/huvu_drivers/       the drivers, one module per data source; empty so far
@@ -84,6 +85,10 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
     huvu.toml.example       config; secrets come from the environment
   hermes-plugin/huvu/       Hermes plugin: session ids on huvu tool calls, the situation block
 ```
+
+## Sanity checklist
+
+Every new feature that a person touches, and every change to how one behaves, gets a check in `docs/sanity-check.md` in the same change. Write it for humans, not developers: what to do, and what they should see. Put it under the screen or feature it belongs to. Move it out of "What doesn't work yet" once it works.
 
 ## Known gaps / not yet done
 
