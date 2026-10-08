@@ -83,6 +83,42 @@ async def test_porch_light_fires_on_the_rising_edge_once_a_night(kernel, clock, 
     assert len(wakes(hermes)) == 2
 
 
+REMINDER = {
+    "note": "Remind them to water the plants.",
+    "when": [{"value": "clock.time", "op": "==", "arg": "08:00"}],
+    "repeat": "daily",
+    "script": 'def run(ctx):\n    ctx.call("huvu_notify", {"text": "Water the plants."})\n',
+    "grants": ["huvu_notify"],
+}
+
+
+async def test_a_daily_reminder_is_a_clock_trigger_with_a_script(kernel, clock, hermes):
+    await tick_clock(kernel)
+    await kernel.triggers.register(TriggerSpec.model_validate(REMINDER), OWNER)
+    await settle(kernel)
+    # 23:50: not yet.
+    assert kernel.notifications("me") == []
+
+    clock.advance(minutes=8 * 60 + 10)
+    await tick_clock(kernel)
+    await settle(kernel)
+    assert [n["text"] for n in kernel.notifications("me")] == ["Water the plants."]
+    # The script did it all: the model was never woken.
+    assert wakes(hermes) == []
+
+    # Later that morning, nothing more.
+    clock.advance(minutes=1)
+    await tick_clock(kernel)
+    await settle(kernel)
+    assert len(kernel.notifications("me")) == 1
+
+    # The next morning at 8, again.
+    clock.advance(days=1, minutes=-1)
+    await tick_clock(kernel)
+    await settle(kernel)
+    assert len(kernel.notifications("me")) == 2
+
+
 async def test_whichever_part_comes_true_last_fires_it(kernel, clock, hermes):
     """At 23:58 the owner is already 8 minutes away. The window opens at
     00:00, and the trigger fires then."""

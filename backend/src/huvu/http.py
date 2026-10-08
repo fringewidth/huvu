@@ -89,6 +89,13 @@ class Situation(BaseModel):
     values: list[str]
 
 
+class Thinking(BaseModel):
+    session: str
+    text: str
+    # True for the first piece of a burst of thinking.
+    start: bool = False
+
+
 def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     kernel = kernel or Kernel(config)
     accounts = kernel.accounts
@@ -360,6 +367,15 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         return JSONResponse(api_json(reply))
 
     # For the huvu Hermes plugin
+
+    @app.post("/api/thinking")
+    async def thinking(request: Request, body: Thinking) -> dict[str, bool]:
+        """The model's reasoning summary as it streams, from the huvu Hermes
+        plugin, for the stage to show while a turn runs."""
+        known, user, group = mcp_caller(config, accounts, bearer(request))
+        if not known:
+            raise HTTPException(401, "unauthorized")
+        return {"shown": kernel.conversations.think(body.session, body.text, body.start, user, group)}
 
     @app.post("/api/situation")
     async def situation(request: Request, body: Situation) -> dict[str, str]:

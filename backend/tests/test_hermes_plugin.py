@@ -46,6 +46,23 @@ def test_the_guide_goes_into_every_session_prompt():
 
     ctx = Ctx()
     plugin.register(ctx)
-    assert ctx.hooks == ["pre_tool_call", "pre_llm_call"]
+    assert ctx.hooks == ["pre_tool_call", "pre_llm_call", "on_stream_delta"]
     assert "huvu-<source>" in ctx.sections["huvu"] and "huvu_notify" in ctx.sections["huvu"]
     assert len(ctx.sections["huvu"]) <= 4000
+
+
+def test_reasoning_deltas_go_to_the_backend_in_bursts(monkeypatch):
+    plugin = load()
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(plugin, "_post", lambda path, body: sent.append((path, body)) or {})
+    plugin._on_stream_delta(delta="Weighing ", kind="reasoning", session_id="s1", turn_id="t1", iteration=1)
+    plugin._on_stream_delta(delta="a script.", kind="reasoning", session_id="s1", turn_id="t1", iteration=1)
+    # The answer's own text isn't thinking.
+    plugin._on_stream_delta(delta="Done.", kind="text", session_id="s1", turn_id="t1", iteration=1)
+    # The next model response in the same turn starts a new burst.
+    plugin._on_stream_delta(delta="Checking.", kind="reasoning", session_id="s1", turn_id="t1", iteration=2)
+    assert sent == [
+        ("/api/thinking", {"session": "s1", "text": "Weighing ", "start": True}),
+        ("/api/thinking", {"session": "s1", "text": "a script.", "start": False}),
+        ("/api/thinking", {"session": "s1", "text": "Checking.", "start": True}),
+    ]

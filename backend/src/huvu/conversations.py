@@ -68,8 +68,20 @@ COMPACTED = (
 TURN_ASK_CHARS = 200
 TURN_ANSWER_CHARS = 300
 # Hermes's own tools that are the agent's housekeeping, not something to
-# show the owner.
-HIDDEN_TOOLS = {"memory", "skill_manage", "skill_view", "skills_list", "session_search", "todo", "clarify"}
+# show the owner. The tool search bridge's lookups are among them; its
+# `tool_call` reaches here under the name of the tool it ran.
+HIDDEN_TOOLS = {
+    "memory",
+    "skill_manage",
+    "skill_view",
+    "skills_list",
+    "session_search",
+    "todo",
+    "clarify",
+    "hermes_tool_search",
+    "tool_search",
+    "tool_describe",
+}
 
 
 class Action(BaseModel):
@@ -127,6 +139,9 @@ class LiveTurn:
     stop_requested: bool = False
     # Token counts from Hermes's last event, cache reads included.
     usage: dict[str, Any] | None = None
+    # Set after huvu's words beside a tool call ("On it, setting that up."),
+    # so what it writes next starts a new paragraph.
+    paragraph_due: bool = False
     ended: bool = False
 
 
@@ -377,8 +392,14 @@ class ConversationHub:
             if live.stop_requested and live.run_id:
                 self._spawn(self._kernel.hermes.stop(live.profile, live.run_id))
         elif name == "assistant.delta" and data.get("delta"):
-            live.turn.answer += data["delta"]
-            self._emit(live, "answer.delta", {"text": data["delta"]})
+            self._say(live, data["delta"])
+        elif name == "assistant.commentary" and data.get("text"):
+            # What huvu says beside its tool calls is part of its answer: the
+            # first thing the person sees while the tools run. Hermes has
+            # sometimes sent it as deltas already.
+            if not data.get("already_streamed"):
+                self._say(live, data["text"])
+            live.paragraph_due = True
         elif name == "tool.started":
             self._tool_started(live, data.get("tool_name") or "", data.get("args") or {})
         elif name in ("tool.completed", "tool.failed"):
@@ -428,6 +449,27 @@ class ConversationHub:
             if part.get("id") == part_id:
                 part["result"] = result
         self._emit(live, "part.update", {"id": part_id, "result": result})
+
+    def think(self, session: str, text: str, start: bool, user: str | None, group: str | None) -> bool:
+        """A piece of the model's reasoning summary for the turn running in
+        `session`, from the huvu Hermes plugin. The stage shows it while the
+        turn runs; it isn't kept with the turn. `start` begins a new burst of
+        thinking. A session that belongs to another profile is ignored."""
+        owner = self._kernel.sessions.owner(session)
+        if owner is None or (owner.user, owner.group) != (user, group):
+            return False
+        live = next((l for l in self._live.values() if l.turn.hermes_session == session and not l.ended), None)
+        if live is None or not text:
+            return False
+        self._emit(live, "thinking.delta", {"text": text, "start": start})
+        return True
+
+    def _say(self, live: LiveTurn, text: str) -> None:
+        if live.paragraph_due and live.turn.answer.strip():
+            text = "\n\n" + text.lstrip()
+        live.paragraph_due = False
+        live.turn.answer += text
+        self._emit(live, "answer.delta", {"text": text})
 
     def _emit(self, live: LiveTurn, name: str, data: dict[str, Any]) -> None:
         payload = {"turn": live.turn.id, "conversation": live.turn.conversation_id, **data}

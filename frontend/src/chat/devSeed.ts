@@ -10,7 +10,7 @@ export function devSeed(): Turn[] {
   // Dated yesterday, like real history would be, so the stage treats them
   // as old turns: they don't grow the garland or get announced.
   const at = Date.now() - 86_400_000;
-  return SEED.map((t, i) => ({ id: `seed-${i}`, at, feed: null, notice: null, parts: [], running: false, stopping: false, ending: null, ...t }));
+  return SEED.map((t, i) => ({ id: `seed-${i}`, at, feed: null, notice: null, thinking: "", parts: [], running: false, stopping: false, ending: null, ...t }));
 }
 
 const tool = (id: string, toolName: string, args: Record<string, unknown>, result: unknown = {}): RichPart => ({

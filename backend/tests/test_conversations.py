@@ -52,6 +52,45 @@ async def test_a_turn_streams_answer_parts_and_end(kernel, hermes: FakeHermes):
     assert not turn.running and len(turn.parts) == 3
 
 
+async def test_words_beside_tool_calls_open_the_answer(kernel, hermes: FakeHermes):
+    hermes.script = [
+        ("run.started", {"run_id": "run_c"}),
+        # Hermes sent the preamble as deltas already, then marks it.
+        ("assistant.delta", {"delta": "On it, setting that up."}),
+        ("assistant.commentary", {"text": "On it, setting that up.", "already_streamed": True}),
+        ("tool.started", {"tool_name": "mcp__huvu__triggers_list", "args": {}}),
+        ("tool.completed", {"tool_name": "mcp__huvu__triggers_list", "preview": "[]"}),
+        # A preamble sent only as commentary.
+        ("assistant.commentary", {"text": "Checking the clock too."}),
+        ("assistant.delta", {"delta": "Done: every day at 9."}),
+        ("run.completed", {}),
+    ]
+    live = await kernel.conversations.ask("c1", "remind me to water the plants at 9", user="me")
+    events = await collect(kernel, live)
+    shown = "".join(d["text"] for n, d in events if n == "answer.delta")
+    [turn] = kernel.conversations.turns("c1")
+    assert turn.answer == shown == "On it, setting that up.\n\nChecking the clock too.\n\nDone: every day at 9."
+
+
+async def test_thinking_reaches_the_turn_and_stays_out_of_the_answer(kernel, family, hermes: FakeHermes):
+    shown: list[bool] = []
+
+    async def think(session_id: str) -> None:
+        shown.append(kernel.conversations.think(session_id, "Weighing a script ", True, "me", None))
+        shown.append(kernel.conversations.think(session_id, "against a wake.", False, "me", None))
+        # Another profile can't put words in this turn.
+        shown.append(kernel.conversations.think(session_id, "nope", False, "mom", None))
+
+    hermes.script = [("run.started", {"run_id": "run_t"}), think, ("assistant.delta", {"delta": "Done."}), ("run.completed", {})]
+    live = await kernel.conversations.ask("c1", "remind me at 9", user="me")
+    events = await collect(kernel, live)
+    assert shown == [True, True, False]
+    thoughts = [d for n, d in events if n == "thinking.delta"]
+    assert [(d["text"], d["start"]) for d in thoughts] == [("Weighing a script ", True), ("against a wake.", False)]
+    [turn] = kernel.conversations.turns("c1")
+    assert turn.answer == "Done."
+
+
 async def test_a_turn_reaches_its_own_device_and_no_other(kernel, family, hermes):
     from .test_triggers import push_events
 

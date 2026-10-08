@@ -25,9 +25,12 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## Talking to huvu in writing
 
-1. Write a question and send it. On the phone, send with the send button; Enter makes a new line. On the laptop, Enter sends. Your words should fly up to the top next to "YOU", in plain letters. huvu's answer should write itself in, in slanted serif letters.
+1. Write a question and send it. On the phone, send with the send button; Enter makes a new line. On the laptop, Enter sends. Your words should fly up to the top next to "YOU", in plain letters. huvu's answer should write itself in, in upright serif letters.
+1. Ask huvu to remind you of something every day at a time, such as "remind me to water the plants every day at 9". Within a few seconds it should say it's on it, and within about ten it should say it's done. The reminder should show in the menu under your triggers.
+1. Ask something that needs thought, such as a small puzzle. While huvu works, a faint line of its thinking should show under the answer and change as it thinks. It should fade away once the answer is done. (Only with a model that sends its thinking, such as gpt-6-sol.)
 1. While huvu answers, look at the garden. A little more should grow as the words come in.
 1. Ask for something long, such as a recipe, and scroll down through the answer, then back up to the top. The answer should stay on screen. It should not jump to the history while you read.
+1. Read a few paragraphs of that long answer. The letters should be smaller than in a short answer and the lines well spaced, easy to read for a minute or two without strain.
 1. At the top of the answer, scroll up once more. The screen should fold into a list of all earlier questions, one per line. Tap one. It should open large again. Scroll again, and it folds back.
 1. Ask something, then tap "stop" while huvu answers. The button should say "stopping", and the answer should end a moment later. huvu may finish its sentence first. That is expected.
 1. Tap "edit" next to one of your earlier questions, change it, and send. That question and everything after it should go away, and huvu should answer the new question.

@@ -44,6 +44,10 @@ export interface Turn {
   // the conversation.
   notice: Notice | null;
   answer: string;
+  // The model's reasoning summary, the current burst of it, while the
+  // turn runs. The stage shows it faintly under the answer; it is never
+  // kept, and a turn that has ended has none.
+  thinking: string;
   parts: RichPart[];
   running: boolean;
   // Asked to stop, and waiting for the backend to say how it ended.
@@ -51,7 +55,7 @@ export interface Turn {
   ending: Ending;
 }
 
-export type Reply = Partial<Pick<Turn, "ask" | "answer" | "parts" | "ending">>;
+export type Reply = Partial<Pick<Turn, "ask" | "answer" | "thinking" | "parts" | "ending">>;
 
 export interface ThreadState {
   turns: Turn[];
@@ -86,7 +90,7 @@ function newTurnId(): string {
 }
 
 function blank(id: string, at: number): Turn {
-  return { id, at, ask: "", feed: null, notice: null, answer: "", parts: [], running: false, stopping: false, ending: null };
+  return { id, at, ask: "", feed: null, notice: null, answer: "", thinking: "", parts: [], running: false, stopping: false, ending: null };
 }
 
 function set(turns: Turn[]): void {
@@ -130,11 +134,11 @@ async function read(id: string, replies: (signal: AbortSignal) => AsyncGenerator
       known.add(id);
       patch(id, reply);
     }
-    patch(id, { running: false, stopping: false });
+    patch(id, { running: false, stopping: false, thinking: "" });
   } catch (err) {
     if (abort.signal.aborted) return;
     console.error("thread: reply failed", err);
-    patch(id, { running: false, stopping: false, ending: "failed" });
+    patch(id, { running: false, stopping: false, thinking: "", ending: "failed" });
   } finally {
     if (streams.get(id) === abort) streams.delete(id);
   }

@@ -16,8 +16,8 @@ by default). The links are made or repaired at every start too, so nothing
 needs setting up again when the data folder is wiped or a driver comes or
 goes. Anything else in that folder is left alone. The files are read-only:
 Hermes lets the model edit a skill wherever it lives, and huvu would
-overwrite the edit at the next start, so what the model learns about the
-house belongs in its own skills and memory.
+overwrite the edit at the next start, so what the model learns belongs in its
+own skills and memory.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ log = logging.getLogger("huvu.skills")
 PREFIX = "huvu-"
 OWNED = (
     "huvu wrote this skill from its driver and rewrites it at every start and whenever the source changes, so don't edit it; "
-    "put what you learn about the house in your own skills or memory."
+    "put what you learn in your own skills or memory."
 )
 
 

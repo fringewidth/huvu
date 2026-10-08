@@ -47,7 +47,46 @@ configure() {
   hermes $p config set HUVU_URL "$huvu_url" >/dev/null
   hermes $p config set mcp_servers.huvu.url "$huvu_url/mcp" >/dev/null
   hermes $p config set mcp_servers.huvu.headers.Authorization 'Bearer ${HUVU_MCP_TOKEN}' >/dev/null
-  hermes $p config set auxiliary.background_review.enabled false >/dev/null
+  # Hermes's background review: after a turn, a forked review saves what it
+  # learned about the person to memory and skills, which load into every new
+  # session. Its "memory updated" line stays off the API server, so it never
+  # lands in an answer on the stage.
+  hermes $p config set auxiliary.background_review.enabled true >/dev/null
+  hermes $p config set display.platforms.api_server.memory_notifications off >/dev/null
+  # The model's reasoning summary reaches plugins only on this opt-in. The
+  # huvu plugin forwards it to the backend, and the stage shows it faintly
+  # while a turn runs.
+  hermes $p config set plugins.stream_reasoning_deltas true >/dev/null
+  # Hermes's coding-agent prompt blocks: build-run-verify, "run date in the
+  # terminal", and the rest. huvu is no coding agent, and they cost about
+  # 1,200 tokens on every request. Tool-use enforcement stays: GPT models
+  # tend to promise an action and end the turn without calling the tool.
+  hermes $p config set agent.execution_guidance false >/dev/null
+  hermes $p config set agent.task_completion_guidance false >/dev/null
+  # Hermes's bundled skills (Apple Notes, Manim, arXiv and 60 more) cost about
+  # 1,700 tokens of index on every request. huvu's own skills come from
+  # skills.external_dirs, and skills huvu writes itself are never removed.
+  hermes $p skills opt-out --remove --yes >/dev/null
+  # huvu's triggers are the only scheduler: the clock is a value like any
+  # other, a script handles what needs no thought, and a wake handles what
+  # does. A Hermes cron job made from the API server has nowhere to deliver,
+  # costs a model turn per run, and never shows in the app.
+  hermes $p tools disable --platform api_server cronjob >/dev/null
+  # Every huvu-* skill is pinned fully loaded, so the model never spends a
+  # round trip on skill_view before acting. The list is what the backend
+  # wrote at its last start: run this again after adding a source.
+  hermes $p config set skills.auto_load "$(python3 -c '
+import json, os, sys
+print(json.dumps(sorted(n for n in os.listdir(sys.argv[1]) if n.startswith("huvu-"))))
+' "$root/hermes-skills")" >/dev/null
+  # A new profile is blank, so it takes the default profile's model. OAuth
+  # logins (ChatGPT, Claude) stay in the default's auth.json and are shared.
+  if [ -n "$1" ]; then
+    local k
+    for k in model.provider model.default model.base_url agent.reasoning_effort; do
+      hermes $p config set "$k" "$(hermes config get "$k" --raw | tail -1)" >/dev/null
+    done
+  fi
   skills_dir "$1"
   hermes $p plugins enable huvu >/dev/null
 }

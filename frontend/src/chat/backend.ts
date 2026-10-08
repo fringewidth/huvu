@@ -28,6 +28,8 @@ export interface TurnEventData {
   ask?: string;
   at?: string;
   text?: string;
+  // On thinking.delta: the first piece of a new burst of thinking.
+  start?: boolean;
   part?: RichPart;
   id?: string;
   result?: unknown;
@@ -35,7 +37,7 @@ export interface TurnEventData {
   answer?: string;
 }
 
-export const TURN_EVENTS = new Set(["turn.started", "answer.delta", "part", "part.update", "turn.ended"]);
+export const TURN_EVENTS = new Set(["turn.started", "answer.delta", "thinking.delta", "part", "part.update", "turn.ended"]);
 
 // A turn as the backend keeps it (`GET /api/conversation`).
 export interface KeptTurn {
@@ -67,6 +69,7 @@ export async function* followTurn(id: string, signal: AbortSignal): AsyncGenerat
 async function* readTurn(res: Response): AsyncGenerator<Reply> {
   if (!res.body) throw new Error("chat: the backend sent no stream");
   let answer = "";
+  let thinking = "";
   let parts: RichPart[] = [];
   let ended = false;
   for await (const { name, data } of sse<TurnEventData>(res.body)) {
@@ -76,6 +79,9 @@ async function* readTurn(res: Response): AsyncGenerator<Reply> {
     } else if (name === "answer.delta") {
       answer += data.text ?? "";
       yield { answer: answer.trim() };
+    } else if (name === "thinking.delta") {
+      thinking = data.start ? (data.text ?? "") : thinking + (data.text ?? "");
+      yield { thinking };
     } else if (name === "part" && data.part) {
       const part = data.part;
       parts = [...parts.filter((p) => p.kind !== "tool" || part.kind !== "tool" || p.id !== part.id), part];
@@ -86,7 +92,7 @@ async function* readTurn(res: Response): AsyncGenerator<Reply> {
     } else if (name === "turn.ended") {
       ended = true;
       // The whole answer, which is the truth however the deltas went.
-      yield { answer: (data.answer ?? answer).trim(), ending: data.ending ?? null };
+      yield { answer: (data.answer ?? answer).trim(), thinking: "", ending: data.ending ?? null };
     }
   }
   if (!ended) throw new Error("chat: the stream ended before the turn did");

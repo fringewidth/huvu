@@ -9,12 +9,12 @@ The backend is an interface to data, a holder of state, and the link to the fron
 | Backend | Hermes |
 |---|---|
 | Sources, state, the event log, digests | The model, prompts, the system prompt |
-| Data triggers (conditions over sources) | Time-only schedules: the dream, the morning and evening chats, "check in 2 hours" |
+| Triggers, the only scheduler: conditions over sources, the clock included | What to do when a trigger wakes it |
 | The action policy and pending approvals | Memory and skills |
 | Provenance labels on data | What it trusts, and its own memory writes |
 | The MCP server and its formatting for the model | What to look up, and when |
 | Frontend sessions, and turning Hermes output into frontend parts | Its own sessions |
-| Users, devices, and which profile serves whom | One profile per user, with that user's memory, skills and cron jobs |
+| Users, devices, and which profile serves whom | One profile per user, with that user's memory and skills |
 
 Hermes reaches the backend through the backend's MCP server. The backend reaches Hermes through Hermes's API server: it starts sessions for chats and for trigger wakes there.
 
@@ -62,7 +62,7 @@ It ends when someone else is confirmed, when it's released from the device, the 
 
 Each user has their own Hermes profile, named after their username. Each group's shared devices run in the group's profile: the default group uses Hermes's default profile, and any other group a profile named after it. Users and groups share one namespace for that reason. A profile has its own memory, skills, sessions and cron jobs, so one person's preferences never reach another's answers. One Hermes gateway serves every profile: a profile's routes live under `/p/<profile>/`, each with its own API key. Knowledge everyone shares lives in the backend, where every profile reads it through MCP.
 
-Each profile sends huvu's MCP server its own token, so the backend knows whose Hermes is calling, even for a cron job whose session the backend never saw. Users' and groups' profile keys and tokens live in the database. The default group's come from the environment (`HERMES_API_KEY`, `HUVU_MCP_TOKEN`).
+Each profile sends huvu's MCP server its own token, so the backend knows whose Hermes is calling, even for a session the backend never saw. Users' and groups' profile keys and tokens live in the database. The default group's come from the environment (`HERMES_API_KEY`, `HUVU_MCP_TOKEN`).
 
 ## Sources
 
@@ -256,7 +256,7 @@ The absolute time stays next to the age, because a tool result stays in the cont
 
 ## Triggers
 
-A trigger is a condition over source data that wakes Hermes when it comes true. Hermes registers triggers through MCP. The backend evaluates them. Time-only schedules are Hermes cron jobs, not triggers. The backend's clock exists only as a condition inside data triggers.
+A trigger is a condition over source data that wakes Hermes when it comes true. Hermes registers triggers through MCP. The backend evaluates them. Triggers are huvu's only scheduler, decided on 2026-10-07: Hermes's cron toolset is off in every profile (`setup.sh`). A Hermes cron job made from the API server has nowhere to deliver its output, costs a model turn on every run, and never shows in the app. The clock is a source like any other, so "every day at 8" is a trigger on `clock.time` with `repeat: daily`, "weekdays" adds `clock.weekday` with `in`, and a one-off reminder pairs `clock.date` with `clock.time`. A script does what needs no thought, such as a reminder through `huvu_notify`, with no model call; a trigger without a script wakes the model.
 
 ```json
 {
@@ -310,7 +310,7 @@ A trigger set up from a shared device nobody is recognized at has no user yet, s
 1. The first yes recognizes that person at the device (see [Who is at a shared device](#who-is-at-a-shared-device)), and the device's waiting triggers become theirs and go live. The other questions are withdrawn.
 1. If everyone says no, or nobody answers within 5 minutes, the waiting triggers are dropped.
 
-A trigger with nobody to ask (a group profile's cron job, which has no device) is refused.
+A trigger with nobody to ask (one registered from a group profile's wake, which has no device) is refused.
 
 ### Scripts
 
@@ -352,8 +352,7 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 
 ### What Hermes owns
 
-1. **The dream.** A Hermes cron job with a prompt huvu writes. It reads `events_digest`, `trigger.run` and `trigger.error` events, fixes or deletes broken triggers, registers new ones, updates its own memory and skills, and writes proposals for the morning chat. It is also where preferences are learned: it queries the history tables with `data_sql`, starting from where the last dream stopped, looks for repeated actions by a person in a similar context, for corrections (someone changing what huvu did a few minutes later), and for manual actions a trigger could do, checks each candidate for support, consistency and recency, keeps the claim in memory with the query that supports it, and proposes it in the morning chat. A trigger is registered only after the person says yes. The dream prompt itself is not written yet.
-1. **Time-only schedules**, as Hermes cron jobs.
+1. **The dream.** A daily trigger at night with no script, one per person, whose note is the dream prompt, so the wake starts it in the person's own profile. It reads `events_digest`, `trigger.run` and `trigger.error` events, fixes or deletes broken triggers, registers new ones, updates its own memory and skills, and writes proposals for the morning chat. It is also where preferences are learned: it queries the history tables with `data_sql`, starting from where the last dream stopped, looks for repeated actions by a person in a similar context, for corrections (someone changing what huvu did a few minutes later), and for manual actions a trigger could do, checks each candidate for support, consistency and recency, keeps the claim in memory with the query that supports it, and proposes it in the morning chat. A trigger is registered only after the person says yes. The dream prompt itself is not written yet.
 1. **What it learns.** Which tools and values it uses often, that `state_search` exists, what you call the hall light. This goes in its own memory and skills, written during the dream. Little goes into the model's memory beyond that.
 1. **The situation block** at the start of a session: time, where you are, the house, pending approvals. The huvu Hermes plugin adds it on a session's first turn, from `POST /api/situation`. The values in it are set in the plugin's environment (`HUVU_SITUATION`).
 
@@ -365,7 +364,7 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 
 ### The huvu plugin
 
-Hermes connects to an MCP server once, with fixed headers. The profile's token says which user is calling, and the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call. The backend strips it and looks the session up in `hermes_sessions`, which names its device. A session that belongs to another user than the calling profile's is ignored. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns), and a system prompt section with huvu's guidance: how to find and work things, provenance, approvals, pausing noisy triggers, telling the person about changes. Hermes never shows the model an MCP server's own instructions (it keeps the initialize result only for capabilities), so the plugin's section is the one place huvu can say these things.
+Hermes connects to an MCP server once, with fixed headers. The profile's token says which user is calling, and the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call. The backend strips it and looks the session up in `hermes_sessions`, which names its device. A session that belongs to another user than the calling profile's is ignored. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns), and a system prompt section with huvu's guidance (`GUIDE`): who the agent is among its group's agents, the exact `tool_call` shapes of the everyday calls (find, read, act, notify, a reminder trigger with its script, search the past), and how to answer: one short line saying it's on it before any tool call, then the outcome, plus provenance, approvals, privacy and telling the person about changes. Hermes never shows the model an MCP server's own instructions (it keeps the initialize result only for capabilities), so the plugin's section is the one place huvu can say these things.
 
 Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a session that had read `external` content got stricter policy, its triggers waited for the owner's tap, and its memory and skill writes went to Hermes's approval gate. It was judged more complexity than current models need. Two guards stay without it. Provenance labels still mark outside content for the model, and `requires_human` actions always need a person's tap.
 
@@ -390,7 +389,7 @@ A result with outside content comes back as `{"data": ..., "provenance": "extern
 
 ### Skills
 
-Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, values (marked when they are personal), events, and history tables with their columns, the standard columns and the indexes, which is the data dictionary the dream works from. A session sees one line per skill in its skill index, about 30 tokens and cached, and loads a skill's body with `skill_view` when it needs that source. So what huvu can do grows with drivers without growing every session's prompt.
+Every source is a Hermes skill, `huvu-<source>` (`skills.py`). Its body is the driver's `guide` followed by a reference huvu generates from the spec: actions with their arguments, values (marked when they are personal), events, and history tables with their columns, the standard columns and the indexes, which is the data dictionary the dream works from. Every `huvu-*` skill is pinned fully loaded in every session (`skills.auto_load`, set by `setup.sh` from the skills the backend wrote at its last start, so run it again after adding a source). Loading skills on demand cost a model round trip each, and Hermes's own prompt tells the model to load any skill that is even partly relevant, so a plain reminder took four minutes and six model calls; pinned, with the call shapes in the guide, it takes one call and about 7 seconds (measured 2026-10-07). The cost is the skills' size on every request, mostly from the prompt cache.
 
 huvu writes the skills into its data folder at every start and at every respec (`skills_dir`, default `<data_dir>/skills`), and links each into the repo's gitignored `hermes-skills/` (`hermes_skills_dir`), making the folder and repairing the links as needed and removing those of sources that are gone. Every profile reads `hermes-skills/` through `skills.external_dirs` (`setup.sh` sets it), so nothing needs setting up again; Hermes follows the links (`os.walk(followlinks=True)`). Anything else in the folder is left alone. The files are read-only: Hermes lets the model edit a skill wherever it lives, and huvu would overwrite the edit at the next start, so what the model learns about the house goes into its own skills and memory. This needs Hermes to read the backend's disk; if the two ever run on different machines, the plugin would fetch the skills instead.
 
@@ -408,7 +407,7 @@ The backend multiplexes on top of that (`conversations.py`):
 1. **Edit and retry rewind**, always through a fresh session with the transcript of the turns that stay. Hermes can fork a session but its API can't cut one short; its CLI and chat gateways can (`/undo`, `rewind_user_turn`), so a rewind endpoint upstream would let a rewind within the cache window keep its cache. Both sessions stay until the sweep.
 1. **A client joins a turn from its start.** A delta doesn't say where its text goes, so a client that opens while a turn runs can't add later deltas to a snapshot. `GET /api/turns/{turn}/events` replays the turn's events so far from the turn's own history, then follows it live, the way the turn's own stream does.
 1. **Stop lets Hermes finish.** A stop asks Hermes to stop and keeps relaying until Hermes's stream ends, so the turn has every token Hermes produced and ends the way Hermes reports: complete if it finished anyway, stopped if it was cut off. Only a Hermes that hasn't ended 15 s later is cut off by huvu. The frontend and the backend agree on how every turn ended.
-1. **Old sessions are swept.** Once a day, the Hermes sessions huvu started that haven't been used for 30 days are deleted through Hermes's API. The event log and the turns huvu keeps for the stage stay. Hermes's own sessions (cron jobs, the dream) are untouched, and Hermes prunes nothing by itself (`hermes sessions prune` only touches ended sessions).
+1. **Old sessions are swept.** Once a day, the Hermes sessions huvu started that haven't been used for 30 days are deleted through Hermes's API. The event log and the turns huvu keeps for the stage stay. Sessions huvu didn't start are untouched, and Hermes prunes nothing by itself (`hermes sessions prune` only touches ended sessions).
 
 The relay turns Hermes's events into frontend events. Hermes's housekeeping tools (memory, skills, session search) and huvu's reads stay hidden. huvu's actions show as notes. Hermes tools with an adapter (`web_search`) get the fields the stage reads; any other tool shows as a generic note.
 
@@ -452,6 +451,24 @@ hermes-plugin/huvu/   the Hermes plugin
 ```
 
 Run it with `uv run huvu` from `backend/` (it reads `huvu.toml`, or `$HUVU_CONFIG`), and the tests with `uv run pytest`.
+
+## Agents in a group (proposed, not built)
+
+huvu is each person's own agent, and it lives next to the agents of the other people in its group. The house is one of the sources they share, not what huvu is about. Each agent keeps its person's memory in its own Hermes profile, and no agent reads another's. Two needs pull against each other. A person must be able to keep things from the rest of the family: a son's late-night bike rides stay his. A plan the whole family makes, such as a vacation in November, should reach every agent without each person telling their own.
+
+The difference is whose fact it is. The proposal, from 2026-10-07:
+
+1. **Private by default.** What a person tells their agent stays in their profile. This is how it works already.
+1. **One channel between agents: a group notebook in the backend.** Each entry holds the fact, the agent that wrote it, its audience and when it stops mattering. The audience is the group, or the group without someone, for a surprise. The agents never talk to each other directly, so the notebook is the whole channel, and each person can see in the app what their agent shared.
+1. **Writing needs consent.** An agent writes only facts that concern the others. When it isn't sure, it asks its person at the time ("should the others' agents know about November?"), and it learns their sharing habits so it asks less over time.
+1. **Consensus in the dream.** Each night, each agent posts what it learned that day that concerns the group, and reads what the others posted. When two entries disagree, such as two dates for the vacation, it asks the people and never picks one.
+
+Shared devices leak around all of this. Location is personal, but the front door lock is the group's: it logs whose finger opened it, and every member's dream reads the group's events. The attribution is what the dream learns preferences from, so it can't simply go. Two parts would close most of the gap:
+
+1. **Personal attribution on shared devices.** Every member's agent sees "the front door opened at 23:04". Only the person's own agent sees that it was them.
+1. **Discretion.** An agent learns from what it sees and never tells its person what another member did. This belongs in the plugin's guide.
+
+Still to decide, and a question of values more than design: a member asks their agent "did anyone go out last night?" The proposal is that it says a door opened and never says who.
 
 ## Open questions
 

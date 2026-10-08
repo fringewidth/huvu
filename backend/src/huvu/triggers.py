@@ -1,8 +1,10 @@
 """Triggers: conditions over source data that wake Hermes when they come true.
 
 Hermes registers a trigger through MCP, and the engine here evaluates it.
-Time-only schedules are Hermes cron jobs, not triggers; the clock exists
-here only as one condition inside a data trigger.
+Triggers are huvu's only scheduler, and Hermes's cron toolset is off in
+every profile. The clock is a source like any other, so "every day at 8"
+is a trigger on `clock.time` with `repeat: daily`; a script does what needs
+no thought, such as a reminder, and a trigger without one wakes the model.
 
 A trigger's `when` is a flat list, and all of it must hold. A value check
 holds while its value matches. An event check holds at the moment the
@@ -83,32 +85,42 @@ REPLAY = 5
 
 
 class ValueCheck(Strict):
-    value: str
-    params: dict[str, Any] | None = None
-    op: Op
-    arg: Any
+    value: str = Field(description="A value key, such as clock.time, clock.weekday or ha.entity_state.")
+    params: dict[str, Any] | None = Field(default=None, description="The value's params, such as {\"entity_id\": \"light.porch\"}.")
+    op: Op = Field(description="between takes [from, to] and wraps past midnight; in takes a list.")
+    arg: Any = Field(description="What to compare with: \"09:00\" for a time, [\"mon\", \"fri\"] for in.")
 
 
 class EventCheck(Strict):
-    event: str
+    event: str = Field(description="A qualified event type, such as location.arrived.")
     # Fields of the event's `data` that must equal these values.
-    where: dict[str, Any] | None = None
+    where: dict[str, Any] | None = Field(default=None, description="Fields of the event's data that must equal these values.")
 
 
 class TriggerSpec(Strict):
     """What a model registers."""
 
     note: str = Field(description="Why the trigger exists and what to do when it fires. It comes back in the wake.")
-    when: list[ValueCheck | EventCheck] = Field(min_length=1)
-    repeat: Repeat = "no"
+    when: list[ValueCheck | EventCheck] = Field(
+        min_length=1,
+        description="Checks that must all hold. A time is a check on clock.time, so every day at 9 is "
+        "[{\"value\": \"clock.time\", \"op\": \"==\", \"arg\": \"09:00\"}] with repeat daily.",
+    )
+    repeat: Repeat = Field(default="no", description="no: fire once. yes: fire again once `when` turns false. daily: at most once a day.")
     reset: list[ValueCheck] | None = None
-    include: list[str] = Field(default_factory=list)
-    expires: str | None = None
+    include: list[str] = Field(default_factory=list, description="Value keys to bring along in the wake.")
+    expires: str | None = Field(default=None, description="2h, tomorrow 09:00 or ISO. A repeat=no trigger without one expires in 7 days.")
     # A Python function `run(ctx)`, run when `when` matches, in place of a
     # plain wake. See scripts.py.
-    script: str | None = None
+    script: str | None = Field(
+        default=None,
+        description="Python defining run(ctx), run in place of waking you when `when` matches. Use one whenever the "
+        "action needs no thought, such as a reminder. ctx.call(tool, args) calls a tool named in `grants`; "
+        "ctx.wake(text) wakes you after all; ctx.log(...) logs. A reminder: "
+        "def run(ctx):\n    ctx.call(\"huvu_notify\", {\"text\": \"Water the plants.\"})",
+    )
     # The tools the script may call.
-    grants: list[str] = Field(default_factory=list)
+    grants: list[str] = Field(default_factory=list, description="The tools the script may call, such as [\"huvu_notify\"].")
 
     @field_validator("note")
     @classmethod

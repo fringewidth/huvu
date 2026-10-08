@@ -1,5 +1,5 @@
 // Small caps labels used across the stage: YOU, chips, hints.
-export const capsClass = "font-display text-[10px] font-semibold uppercase tracking-[0.3em]";
+export const capsClass = "font-caps text-[10px] font-semibold uppercase tracking-[0.3em]";
 
 // Numbers a short list of things to pick: choices, live feeds.
 export const NUMERALS = ["i.", "ii.", "iii.", "iv.", "v.", "vi.", "vii.", "viii."];

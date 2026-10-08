@@ -29,6 +29,7 @@ The answer is Server-Sent Events. Every event's data carries `turn` and `convers
 |---|---|
 | `turn.started` | `ask`, `at` |
 | `answer.delta` | `text`, appended to the answer |
+| `thinking.delta` | `text`, and `start` on the first piece of a burst: the model's reasoning summary while the turn runs. A burst replaces the one before. Never kept with the turn, and only some models send it (`gpt-6-sol` does, `gpt-6-luna` doesn't). It reaches the backend from the huvu Hermes plugin (`POST /api/thinking`, with the profile's MCP token), since Hermes's session stream doesn't carry reasoning |
 | `part` | `part`: a whole `RichPart`, added to the turn |
 | `part.update` | `id`, `result`: a tool part's result, once the tool finishes |
 | `turn.ended` | `ending` (`null`, `"failed"` or `"stopped"`) and the whole `answer` |

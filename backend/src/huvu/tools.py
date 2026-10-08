@@ -186,7 +186,8 @@ class ToolBox:
             Tool("sources_list", "Every source with its values, events, actions and tables.", _schema({}), self._sources_list),
             Tool(
                 "triggers_register",
-                "Registers a trigger: a condition over source data that wakes you when it comes true. Write `note` first: why it exists and what to do. "
+                "Registers a trigger: a condition over source data, the clock included, that acts when it comes true. Write `note` first: why it exists and what to do. "
+                "A reminder, or any action that needs no thought, gets a `script` and `grants` and runs without waking you; without a script, it wakes you. "
                 "`when` is a flat list that must all hold. `repeat` is no, yes or daily. `include` lists values to bring along in the wake. "
                 "`expires` takes 2h, tomorrow 09:00 or ISO; a repeat=no trigger without one expires in 7 days. "
                 "On a shared device with nobody recognized, the trigger waits until someone confirms on their phone that it was them; the result says so.",
@@ -195,7 +196,7 @@ class ToolBox:
                 writes=True,
             ),
             Tool("triggers_test", "Checks a trigger without registering it: each check's current reading and result, recent matching events, and what its script would do.", TRIGGER_SCHEMA, self._triggers_test),
-            Tool("triggers_list", "Every live trigger of the person you're helping, or the household's.", _schema({}), self._triggers_list),
+            Tool("triggers_list", "Every live trigger of the person you're helping, or the group's.", _schema({}), self._triggers_list),
             Tool("triggers_remove", "Removes a trigger.", _schema({"id": {"type": "string"}}, ["id"]), self._triggers_remove, writes=True),
             Tool(
                 "triggers_pause",

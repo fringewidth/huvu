@@ -1,7 +1,9 @@
 @import "tailwindcss";
 @import "@fontsource-variable/syne";
+@import "@fontsource-variable/dm-sans";
 @import "@fontsource-variable/bodoni-moda/opsz.css";
 @import "@fontsource-variable/bodoni-moda/opsz-italic.css";
+@import "@fontsource-variable/newsreader/opsz.css";
 
 :root {
   /* The color tokens (--paper, --ivory, --sindoor, --thread, --marigold)
@@ -27,8 +29,18 @@ body {
   --color-sindoor: var(--sindoor);
   --color-thread: var(--thread);
   --color-marigold: var(--marigold);
-  --font-display: 'Syne Variable', system-ui, sans-serif;
+  /* Running sans text: the user's words, the voice transcript, notes,
+     reasons and errors. Syne's descenders are short flat stubs, so a g
+     read like an a; DM Sans has real tails. */
+  --font-display: 'DM Sans Variable', system-ui, sans-serif;
+  /* Uppercase labels (YOU, EDIT, TO HUVU) and the wordmark, which have no
+     descenders and carry huvu's look. */
+  --font-caps: 'Syne Variable', system-ui, sans-serif;
   --font-bodoni: 'Bodoni Moda Variable', 'Didot', Georgia, serif;
+  /* huvu's answers and notices: a serif drawn for reading on screens, since
+     Bodoni's hairlines tire the eye over a paragraph. Bodoni stays for
+     short display lines. */
+  --font-reading: 'Newsreader Variable', Georgia, serif;
 }
 
 /* Text sits straight on the garden with no box behind it, so it needs to
@@ -42,6 +54,13 @@ body {
   text-shadow:
     0 0 3px var(--paper),
     0 0 16px var(--paper);
+}
+
+/* huvu's thinking keeps its newest lines; once a burst runs past them,
+   the older ones fade out at the top. A mask, so the garden behind it
+   shows through. */
+.thinking-text {
+  mask-image: linear-gradient(to bottom, transparent, black 1.6em);
 }
 
 /* Placeholder texture for panels whose content hasn't arrived. */

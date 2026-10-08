@@ -1,6 +1,6 @@
 """The `huvu` source: state no device owns, behind the same contract.
 
-The house mode, the aliases between what the owner says and what devices
+The family mode, the aliases between what the owner says and what devices
 are called, pending approvals, and notifications to the owner. `huvu.mode`
 works in a trigger condition the same way `ha.entity_state` does, and the
 agent changes it through actions that go through the same policy.
@@ -39,15 +39,15 @@ class HuvuSource(Source):
     def describe(self) -> SourceSpec:
         return SourceSpec(
             name="huvu",
-            description="State no device owns: house mode, aliases, approvals, notifications.",
+            description="State no device owns: family mode, aliases, approvals, notifications.",
             guide=(
                 "Aliases map what people call a thing to its value key, and state_search puts them first: when someone names a thing "
                 "their own way and you find it, set an alias. huvu_notify reaches a person's phone whenever you want, and is how you "
-                "tell them about anything you changed on your own. The house mode (normal, away, guests, sleeping) works in trigger "
+                "tell them about anything you changed on your own. The family mode (normal, away, guests, sleeping) works in trigger "
                 "conditions like any value."
             ),
             values=[
-                ValueSpec(name="mode", description=f"House mode: {', '.join(MODES)}", type="string", labels=["owner"]),
+                ValueSpec(name="mode", description=f"Family mode: {', '.join(MODES)}", type="string", labels=["owner"]),
                 ValueSpec(
                     name="alias",
                     description="The value key an alias points to, such as 'hall light'",
@@ -68,13 +68,13 @@ class HuvuSource(Source):
                 ),
             ],
             events=[
-                EventSpec(type="mode_changed", description="The house mode changed.", data={"mode": "string"}),
+                EventSpec(type="mode_changed", description="The family mode changed.", data={"mode": "string"}),
                 EventSpec(type="notified", description="huvu sent the owner a notification."),
             ],
             actions=[
                 ActionSpec(
                     name="set_mode",
-                    description="Sets the house mode.",
+                    description="Sets the family mode.",
                     input_schema=_object({"mode": {"type": "string", "enum": MODES}}, ["mode"]),
                     autonomy="notify",
                 ),
@@ -159,7 +159,7 @@ class HuvuSource(Source):
             raise SourceError(f"mode must be one of {', '.join(MODES)}")
         self._put("mode", mode)
         await self.ctx.update("mode", mode, labels=["owner"])
-        await self.ctx.emit("mode_changed", f"house mode set to {mode}", data={"mode": mode}, labels=["owner"])
+        await self.ctx.emit("mode_changed", f"family mode set to {mode}", data={"mode": mode}, labels=["owner"])
         return Result(data={"mode": mode}, labels=["owner"])
 
     async def _set_alias(self, args: dict[str, Any], caller: Caller) -> Result:

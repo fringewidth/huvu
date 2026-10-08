@@ -45,8 +45,8 @@ interface TurnViewProps {
 // Short answers are set huge; longer ones step down as they stream in.
 const HERO_TIERS = [
   { under: 90, narrow: 34, wide: 46, lh: 1.1 },
-  { under: 240, narrow: 26, wide: 34, lh: 1.18 },
-  { under: Infinity, narrow: 20, wide: 24, lh: 1.35 },
+  { under: 240, narrow: 24, wide: 30, lh: 1.25 },
+  { under: Infinity, narrow: 18, wide: 20, lh: 1.55 },
 ];
 const ROW = { narrow: 17, wide: 19, lh: 1.35 };
 
@@ -178,7 +178,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
                 animate="shown"
                 exit="leave"
                 style={{ fontSize: size.fontSize, lineHeight: size.lineHeight, transformOrigin: "0 0" }}
-                className={`halo m-0 whitespace-pre-wrap font-bodoni italic [text-wrap:pretty] ${
+                className={`halo m-0 whitespace-pre-wrap font-reading [text-wrap:pretty] ${
                   hero ? "text-ivory" : "fade-bottom max-h-[2.7em] overflow-hidden text-ivory/75"
                 }`}
               >
@@ -189,6 +189,23 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
             )}
           </AnimatePresence>
         )}
+        {/* huvu's reasoning summary while it works: faint, the newest lines
+            of the current burst, gone once the turn ends. */}
+        <AnimatePresence>
+          {hero && answerShown && turn.running && turn.thinking && (
+            <m.div
+              key="thinking"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6, ease: EASE }}
+              aria-live="polite"
+              className={`${turn.thinking.length > 180 ? "thinking-text" : ""} mt-4 flex max-h-[4.5em] flex-col justify-end overflow-hidden font-reading text-[15px] leading-[1.5] text-ivory/45 sm:text-[16px]`}
+            >
+              <p className="halo m-0 whitespace-pre-wrap">{turn.thinking.replace(/\*\*/g, "")}</p>
+            </m.div>
+          )}
+        </AnimatePresence>
         {turn.ending && !turn.running && (
           <div className="mt-3 flex items-center gap-4">
             <span className={`${capsClass} text-sindoor`}>{turn.ending === "failed" ? "huvu couldn't answer" : "stopped"}</span>
