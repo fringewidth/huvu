@@ -1,9 +1,9 @@
-import { call, HttpError } from "../net/http";
+import { call } from "../net/http";
 import { audioContext, rms } from "./audio";
 import { acquireMic, type Mic } from "./mic";
 
 // huvu's voice: the backend says a turn's answer while huvu writes it
-// (GET /api/turns/{id}/speech, Kokoro on the backend), a sentence at a
+// (GET /api/turns/{id}/speech, Edge's voices on the backend), a sentence at a
 // time, as raw 16-bit mono PCM. Each piece is scheduled right after the one
 // before, so the sentences play without gaps. It plays through an analyser
 // so the garden can grow the garland with it, and while it plays, the mic
@@ -148,8 +148,7 @@ export async function speak(turnId: string): Promise<void> {
         if (sources.size === 0) finish();
       } catch (err) {
         if (abort.signal.aborted) return;
-        if (err instanceof HttpError && err.status === 503) console.warn("speaker: huvu has no voice on this backend");
-        else console.error("speaker: playback failed", err);
+        console.error("speaker: playback failed", err);
         finish();
       }
     })();

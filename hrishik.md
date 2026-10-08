@@ -26,10 +26,4 @@ Speech, once per backend machine:
 echo 'GROQ_API_KEY=gsk_...' >> backend/.env
 ```
 
-huvu speaks with Edge's voices, which need nothing. Kokoro, the offline fallback, is optional:
-
-```sh
-mkdir -p backend/data/models && cd backend/data/models
-curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
-curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
-```
+huvu speaks with Edge's voices, which need nothing set up.

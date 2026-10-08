@@ -43,7 +43,7 @@ A comment line (`: keepalive`) comes every 15 s while nothing else does. Droppin
 
 `POST /api/transcribe` takes one recorded ask as the request body, with its `Content-Type` (`audio/webm`, `audio/mp4`, `audio/ogg`), and answers `{"text": "..."}`. 503 means no speech to text is set up, 429 that Groq's rate limit hit both models, and 502 any other Groq failure. The client then falls back to its own recognition where it has one.
 
-`GET /api/turns/{turn}/speech` streams huvu saying a turn's answer, for a turn of this device's own conversation, running or ended: raw PCM, 16-bit little-endian mono at 24,000 Hz, with no header, a sentence at a time as huvu writes. The stream ends after the last sentence. 503 means the backend has no voice.
+`GET /api/turns/{turn}/speech` streams huvu saying a turn's answer, for a turn of this device's own conversation, running or ended: raw PCM, 16-bit little-endian mono at 24,000 Hz, with no header, a sentence at a time as huvu writes. The stream ends after the last sentence.
 
 `GET /api/turns/{turn}/events` streams one turn of this device's own conversation from its start: everything that happened so far, then live until `turn.ended`. A turn that already ended comes as `turn.started`, its parts and `turn.ended`. A client that opens while a turn runs uses this, since a delta doesn't say where its text goes and can't be added to a snapshot of the answer. The frontend also uses it for a turn the push stream mentions that it has no stream of.
 

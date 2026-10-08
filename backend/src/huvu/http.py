@@ -272,7 +272,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     @app.get("/api/speech")
     async def speech(me: Device = device) -> dict[str, bool]:
         """What huvu can do with sound here: hear (speech to text) and speak."""
-        return {"listen": kernel.hearing.available(), "speak": kernel.voice.available()}
+        return {"listen": kernel.hearing.available(), "speak": True}
 
     @app.post("/api/transcribe")
     async def transcribe(request: Request, me: Device = device) -> dict[str, str]:
@@ -292,8 +292,6 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         speech.py). Works for a running turn and an ended one."""
         if not kernel.conversations.owns(me.id, turn_id):
             raise HTTPException(404, f"no turn {turn_id!r}")
-        if not kernel.voice.available():
-            raise HTTPException(503, "huvu has no voice: Kokoro is chosen and its model isn't installed")
         audio = kernel.voice.speak(kernel.conversations.replay(turn_id))
         return StreamingResponse(audio, media_type=f"audio/L16;rate={SAMPLE_RATE};channels=1", headers={"Cache-Control": "no-cache"})
 

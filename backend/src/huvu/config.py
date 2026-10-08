@@ -25,9 +25,7 @@
     tier = "pro"
 
     [speech]
-    engine = "edge"          # edge (Microsoft's voices, online) or kokoro (local)
-    voice = "en-IN-NeerjaExpressiveNeural"   # an Edge voice, or a Kokoro one such as af_heart
-    lang = "en-us"           # Kokoro only: how text is read, en-us or en-gb
+    voice = "en-US-AvaNeural"   # an Edge voice: uv run edge-tts --list-voices
     speed = 1.0
     stt_model = "whisper-large-v3"   # on Groq, with GROQ_API_KEY
 
@@ -98,12 +96,8 @@ class Config:
     # The folder every Hermes profile reads through skills.external_dirs.
     # huvu links each skill into it at every start. None skips the links.
     hermes_skills_dir: Path | None = None
-    # huvu's voice (speech.py): a Kokoro voice, how its text is read, and
-    # how fast. A Hindi voice such as hf_alpha reads English with en-us.
-    speech_engine: str = "edge"
-    # None: the engine's default (speech.DEFAULT_VOICES).
-    speech_voice: str | None = None
-    speech_lang: str = "en-us"
+    # huvu's voice (speech.py): an Edge voice, and how fast it speaks.
+    speech_voice: str = "en-US-AvaNeural"
     speech_speed: float = 1.0
     # The model behind each tier (Tier in spec.py). Conversations run on
     # pro; a trigger's wakes on its own tier, basic by default.
@@ -150,9 +144,7 @@ def load(path: Path | None = None) -> Config:
         models={**DEFAULT_MODELS, **raw.get("models", {})},
         dream_at=str(dream.get("at", "04:00")),
         dream_tier=str(dream.get("tier", "pro")),
-        speech_engine=speech.get("engine", "edge"),
-        speech_voice=speech.get("voice"),
-        speech_lang=speech.get("lang", "en-us"),
+        speech_voice=speech.get("voice", "en-US-AvaNeural"),
         speech_speed=float(speech.get("speed", 1.0)),
         groq_api_key=secret("GROQ_API_KEY"),
         stt_model=speech.get("stt_model", "whisper-large-v3"),
@@ -163,8 +155,6 @@ def load(path: Path | None = None) -> Config:
             raise ValueError(f"models.{tier}: the tiers are {', '.join(DEFAULT_MODELS)}")
     if config.dream_tier not in DEFAULT_MODELS:
         raise ValueError(f"dream.tier must be one of {', '.join(DEFAULT_MODELS)}")
-    if config.speech_engine not in ("edge", "kokoro"):
-        raise ValueError(f"speech.engine must be edge or kokoro, not {config.speech_engine!r}")
     if config.auth_mode not in ("on", "off"):
         raise ValueError(f"auth.mode must be on or off, not {config.auth_mode!r}")
     for key, level in config.policy.items():

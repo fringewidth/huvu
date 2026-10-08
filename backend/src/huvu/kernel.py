@@ -94,7 +94,6 @@ class Kernel:
         self.data = DataStore(self)
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None
-        self._warming: asyncio.Task[None] | None = None
 
         self.registry.add("clock", ClockSource())
         self.registry.add("huvu", self.huvu)
@@ -120,10 +119,6 @@ class Kernel:
         if self.native_push.sender is None:
             log.info("native push is off: HUVU_FCM_CREDENTIALS is not set")
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
-        if self.voice.available():
-            self._warming = asyncio.create_task(self.voice.warm(), name="kernel:voice")
-        else:
-            log.info("huvu has no voice: the Kokoro model isn't in %s", self.config.data_dir / "models")
         await self.kernel_event("started", f"kernel started with sources {', '.join(self.registry.names)}")
 
     def write_skills(self) -> None:
@@ -162,7 +157,6 @@ class Kernel:
         await self.registry.stop()
         await self.hermes.close()
         await self.native_push.close()
-        self.voice.close()
         await self.hearing.close()
         self.data.close()
         self.db.close()

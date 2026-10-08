@@ -210,14 +210,9 @@ def test_a_turn_is_spoken_as_audio(server, monkeypatch):
     laptop = server.login("web")
     with httpx.stream("POST", f"{server.base}/api/chat", json={"id": "t_said", "ask": "hi"}, headers=laptop) as res:
         "".join(res.iter_text())
-    # No voice (Kokoro chosen, its model not installed): the app is told so.
-    monkeypatch.setattr(Voice, "available", lambda self: False)
-    assert httpx.get(f"{server.base}/api/turns/t_said/speech", headers=laptop).status_code == 503
-
     async def pcm(self, text: str) -> bytes:
         return b"\x01\x00" * len(text)
 
-    monkeypatch.setattr(Voice, "available", lambda self: True)
     monkeypatch.setattr(Voice, "pcm", pcm)
     res = httpx.get(f"{server.base}/api/turns/t_said/speech", headers=laptop)
     assert res.status_code == 200 and res.headers["content-type"].startswith("audio/L16")

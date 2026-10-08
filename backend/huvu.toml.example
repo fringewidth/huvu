@@ -64,10 +64,9 @@ advanced = "gpt-6-astra"
 at = "04:00"
 tier = "pro"
 
-# huvu's voice (Edge, or Kokoro from data/models) and speech to text (Groq,
-# GROQ_API_KEY). Edge voices: en-IN-NeerjaExpressiveNeural, en-IN-NeerjaNeural, en-IN-PrabhatNeural,
-# en-US-AvaMultilingualNeural and more (`uv run edge-tts --list-voices`).
+# huvu's voice (an Edge voice) and speech to text (Groq, GROQ_API_KEY).
+# Voices: en-US-AvaNeural, en-IN-NeerjaExpressiveNeural, en-IN-PrabhatNeural
+# and more (`uv run edge-tts --list-voices`).
 [speech]
-engine = "edge"
-voice = "en-IN-NeerjaExpressiveNeural"
+voice = "en-US-AvaNeural"
 stt_model = "whisper-large-v3"
