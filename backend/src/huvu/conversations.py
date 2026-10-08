@@ -139,9 +139,6 @@ class LiveTurn:
     stop_requested: bool = False
     # Token counts from Hermes's last event, cache reads included.
     usage: dict[str, Any] | None = None
-    # Set after huvu's words beside a tool call ("On it, setting that up."),
-    # so what it writes next starts a new paragraph.
-    paragraph_due: bool = False
     ended: bool = False
 
 
@@ -369,7 +366,8 @@ class ConversationHub:
     async def _relay(self, live: LiveTurn, message: str) -> None:
         ending: Ending = "failed"
         try:
-            async for event in self._kernel.hermes.chat(live.profile, live.turn.hermes_session or "", message):
+            model = self._kernel.config.model("pro")
+            async for event in self._kernel.hermes.chat(live.profile, live.turn.hermes_session or "", message, model=model):
                 ending = self._translate(live, event, ending)
         except asyncio.CancelledError:
             ending = "stopped"
@@ -399,7 +397,11 @@ class ConversationHub:
             # sometimes sent it as deltas already.
             if not data.get("already_streamed"):
                 self._say(live, data["text"])
-            live.paragraph_due = True
+            # Those words are finished: the paragraph breaks now, not when
+            # huvu writes again, so its voice says their last sentence while
+            # the tools run instead of going quiet in the middle.
+            if live.turn.answer.strip() and not live.turn.answer.endswith("\n\n"):
+                self._say(live, "\n\n")
         elif name == "tool.started":
             self._tool_started(live, data.get("tool_name") or "", data.get("args") or {})
         elif name in ("tool.completed", "tool.failed"):
@@ -468,9 +470,11 @@ class ConversationHub:
         return True
 
     def _say(self, live: LiveTurn, text: str) -> None:
-        if live.paragraph_due and live.turn.answer.strip():
-            text = "\n\n" + text.lstrip()
-        live.paragraph_due = False
+        # huvu's own break after a paragraph that already has one.
+        if live.turn.answer.endswith("\n\n"):
+            text = text.lstrip("\n")
+            if not text:
+                return
         live.turn.answer += text
         self._emit(live, "answer.delta", {"text": text})
 
@@ -486,6 +490,8 @@ class ConversationHub:
             return
         live.turn.ending = ending
         live.turn.running = False
+        # A break after words beside a last tool call, with nothing after.
+        live.turn.answer = live.turn.answer.rstrip()
         self._save(live.turn, insert=False)
         if live.turn.hermes_session:
             self._kernel.sessions.touch(live.turn.hermes_session)
