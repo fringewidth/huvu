@@ -32,11 +32,11 @@ def test_a_long_run_on_is_cut_at_a_comma():
 async def test_the_answer_is_spoken_a_sentence_at_a_time(kernel, monkeypatch):
     said: list[str] = []
 
-    async def pcm(self, text: str) -> bytes:
+    async def clip(self, text: str) -> bytes:
         said.append(text)
         return text.encode()
 
-    monkeypatch.setattr(Voice, "pcm", pcm)
+    monkeypatch.setattr(Voice, "clip", clip)
 
     async def events():
         yield "turn.started", {"ask": "hi"}
@@ -49,7 +49,8 @@ async def test_the_answer_is_spoken_a_sentence_at_a_time(kernel, monkeypatch):
 
     audio = [chunk async for chunk in kernel.voice.speak(events())]
     assert said == ["On it, setting that up.", "Done.", "Every day at 9."]
-    assert b"".join(audio) == "".join(said).encode()
+    # Each clip framed by its length.
+    assert audio == [len(s).to_bytes(4, "big") + s.encode() for s in said]
 
 
 async def test_an_ask_goes_to_groq_with_the_familys_names(kernel):

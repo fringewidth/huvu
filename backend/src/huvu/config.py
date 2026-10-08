@@ -83,7 +83,8 @@ def _choice(tier: str, raw: Any) -> ModelChoice:
         return ModelChoice(raw["model"], raw.get("provider"))
     raise ValueError(f"models.{tier} must be a model name or {{ model = ..., provider = ... }}")
 # Secrets setup.sh keeps, for when the environment doesn't have them.
-ENV_FILE = REPO / "backend" / ".env"
+# HUVU_ENV_FILE moves it, as the container does, onto its data volume.
+ENV_FILE = Path(os.environ.get("HUVU_ENV_FILE") or REPO / "backend" / ".env")
 
 
 @dataclass
@@ -152,7 +153,9 @@ def load(path: Path | None = None) -> Config:
     fcm = secret("HUVU_FCM_CREDENTIALS")
     config = Config(
         data_dir=(base / raw.get("data_dir", "data")).resolve(),
-        public_url=raw.get("public_url", "http://localhost:3001").rstrip("/"),
+        # HUVU_PUBLIC_URL wins, so the container's address lives in its
+        # compose file, next to the tunnel that makes it.
+        public_url=(os.environ.get("HUVU_PUBLIC_URL") or raw.get("public_url", "http://localhost:3001")).rstrip("/"),
         host=raw.get("host", "0.0.0.0"),
         port=int(raw.get("port", 3001)),
         cors_origins=list(raw.get("cors_origins", ["*"])),
@@ -188,7 +191,7 @@ def load(path: Path | None = None) -> Config:
 
 
 def secret(name: str) -> str | None:
-    """From the environment, or else from backend/.env."""
+    """From the environment, or else from backend/.env (HUVU_ENV_FILE)."""
     found = os.environ.get(name)
     if not found and ENV_FILE.exists():
         for line in ENV_FILE.read_text().splitlines():

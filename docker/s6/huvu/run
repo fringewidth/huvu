@@ -1,0 +1,7 @@
+#!/command/with-contenv sh
+# huvu's backend, beside Hermes's gateway (the container's main process).
+# s6 restarts it if it stops; `s6-svc -d /run/service/huvu` stops it, as
+# wipe.sh needs, and `s6-svc -u` brings it back.
+export HOME=/opt/data
+cd /opt/huvu/backend || exit 1
+exec s6-setuidgid hermes /opt/huvu/backend/.venv/bin/huvu serve

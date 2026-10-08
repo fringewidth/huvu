@@ -37,5 +37,35 @@ cd android && JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/
 ~/Library/Android/sdk/platform-tools/adb reverse tcp:3001 tcp:3001
 ```
 
-For the phone on Wi-Fi without USB, build with the laptop's address instead:
-`VITE_BACKEND_URL=http://<laptop ip>:3001 npm run build:phone`.
+For the real thing, build against the host:
+`VITE_BACKEND_URL=https://huvu.hrishik.me npm run build:phone`.
+
+The host (Windows, Docker Desktop): huvu and Hermes in one container, on
+http://localhost:27613, published at https://huvu.hrishik.me by the
+cloudflared already running there.
+
+The tunnel, once: in the Cloudflare dashboard (Zero Trust, Networks,
+Tunnels), on the existing tunnel, add a public hostname `huvu.hrishik.me`
+with service `http://localhost:27613`. (A tunnel run from a local
+config.yml instead gets an ingress rule with the same two values.)
+
+Next to `compose.yaml`, a `.env`:
+
+```sh
+HUVU_PUBLIC_URL=https://huvu.hrishik.me
+GROQ_API_KEY=gsk_...
+```
+
+then:
+
+```sh
+docker compose up -d
+docker compose exec -u hermes huvu hermes model          # log in to ChatGPT (device code)
+docker compose exec -u hermes huvu /opt/huvu/setup.sh hrishik '<password>' Hrishik
+docker compose restart huvu
+```
+
+Wipe someone there: `docker compose exec -u hermes huvu /opt/huvu/wipe.sh hrishik`
+(it stops nothing for you: stop the backend first with
+`docker compose exec huvu s6-svc -d /run/service/huvu`, and bring it back with
+`s6-svc -u`). Update: `docker compose pull && docker compose up -d`.

@@ -1,0 +1,35 @@
+# huvu and Hermes in one image, built on Hermes's official one, so Hermes's
+# runtime stays as Nous packages it. A slim image with Hermes installed
+# from source was tried on 2026-10-08 and dropped: Hermes's package manager
+# didn't recognize the install and built its own runtime without the API
+# server's extras.
+#
+# Hermes's gateway is the container's main process, as in its own image,
+# and huvu's backend runs beside it as an s6 service (docker/s6/huvu). On
+# every start, docker/cont-init/50-huvu writes huvu's skills and runs
+# setup.sh, so the default profile is always set up for huvu.
+#
+# Everything kept lives on one volume at /opt/data: Hermes's profiles and
+# logins, and huvu's database, config and secrets under /opt/data/huvu.
+# See compose.yaml for how to run it, and hrishik.md for the first start.
+FROM nousresearch/hermes-agent:latest
+
+USER root
+
+ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
+    HUVU_ENV_FILE=/opt/data/huvu/.env \
+    UV_CACHE_DIR=/tmp/uv-cache
+
+WORKDIR /opt/huvu
+COPY --chown=hermes:hermes backend/ backend/
+RUN cd backend && uv sync -q --frozen --no-dev && chown -R hermes:hermes .venv
+COPY --chown=hermes:hermes hermes-plugin/ hermes-plugin/
+COPY --chown=hermes:hermes SOUL.md setup.sh wipe.sh ./
+COPY --chown=hermes:hermes docker/huvu.toml docker/huvu.toml
+COPY docker/s6/ /etc/s6-overlay/s6-rc.d/
+COPY docker/cont-init/ /etc/cont-init.d/
+RUN chmod +x setup.sh wipe.sh /etc/cont-init.d/50-huvu /etc/s6-overlay/s6-rc.d/huvu/run && \
+    install -d -o hermes -g hermes hermes-skills
+
+EXPOSE 3001
+CMD ["gateway", "run"]

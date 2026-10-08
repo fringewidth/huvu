@@ -3,21 +3,21 @@
 A turn's answer is spoken while huvu writes it. `speak` follows the turn's
 events, cuts the answer into sentences as each one is finished, and has
 each said while the client plays the one before. So huvu starts talking
-after its first sentence, not after its last. The audio is raw PCM: 16-bit
-little-endian, mono, SAMPLE_RATE Hz, with no header, so the client can play
-each piece as it arrives.
+after its first sentence, not after its last. Each sentence is one MP3 clip,
+as Edge made it (24 kHz mono, 48 kbps), sent as a frame: its length as four
+bytes, big-endian, then the clip. The client decodes each clip itself.
 
 Edge was picked on 2026-10-08: free, no account, the same neural voices as
 Azure, and no load on the backend's CPU. Hermes uses it too. It is an
 unofficial endpoint Microsoft could close, and while it is down huvu is
-silent; its answers still show. Each sentence comes back as MP3 at 24 kHz,
-decoded here with miniaudio. Kokoro, run locally, was tried first and
-removed: it sounded too cheap.
+silent; its answers still show. Kokoro, run locally, was tried first and
+removed: it sounded too cheap. Decoding the MP3 here (miniaudio) was dropped
+too: it had no build for Python 3.14, and MP3 is an eighth the size of PCM
+over a phone's data.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-SAMPLE_RATE = 24000
+MEDIA_TYPE = "application/vnd.huvu.speech"
 # A sentence longer than this with no end in sight is cut at a comma or a
 # space, so a long run-on doesn't keep huvu quiet.
 LONGEST = 240
@@ -79,7 +79,8 @@ class Voice:
         self._voice = config.speech_voice
         self._rate = f"{round((config.speech_speed - 1) * 100):+d}%"
 
-    async def pcm(self, text: str) -> bytes:
+    async def clip(self, text: str) -> bytes:
+        """One sentence as an MP3 clip."""
         import edge_tts
 
         mp3 = b""
@@ -88,7 +89,7 @@ class Voice:
                 mp3 += chunk["data"]
         if not mp3:
             raise RuntimeError(f"Edge said nothing for {text!r}")
-        return await asyncio.to_thread(_decode_mp3, mp3)
+        return mp3
 
     async def speak(self, events: AsyncIterator[tuple[str, dict[str, Any]]]) -> AsyncIterator[bytes]:
         """The audio of a turn's answer, a sentence at a time, from the
@@ -108,15 +109,10 @@ class Voice:
             ready, spoken = sentences(text, spoken, final)
             for sentence in ready:
                 try:
-                    yield await self.pcm(sentence)
+                    clip = await self.clip(sentence)
+                    yield len(clip).to_bytes(4, "big") + clip
                 except Exception:
                     log.exception("voice: couldn't say %r", sentence)
             if final:
                 return
 
-
-def _decode_mp3(mp3: bytes) -> bytes:
-    import miniaudio
-
-    decoded = miniaudio.decode(mp3, output_format=miniaudio.SampleFormat.SIGNED16, nchannels=1, sample_rate=SAMPLE_RATE)
-    return decoded.samples.tobytes()

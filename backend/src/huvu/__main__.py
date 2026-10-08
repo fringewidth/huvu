@@ -17,6 +17,8 @@ Users and devices are managed from here too:
     uv run huvu tracker add mom              prints a QR code and link that set up OwnTracks on her phone
     uv run huvu wipe mom                     deletes her triggers, conversations and event log (see wipe.py)
     uv run huvu wipe --group home            the same for a group's shared devices
+    uv run huvu skills                       writes every source's Hermes skill and exits (setup.sh
+                                             pins them, so a fresh install runs this first)
 
 A new user joins the default group (home) as a member, unless told
 otherwise with --group, --guest or --no-group.
@@ -79,6 +81,8 @@ def main() -> None:
     add_tracker.add_argument("user")
     add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone)")
 
+    commands.add_parser("skills", help="write every source's Hermes skill, then exit")
+
     wipe = commands.add_parser("wipe", help="delete what huvu keeps for a user or a group; the backend must be stopped")
     whom = wipe.add_mutually_exclusive_group(required=True)
     whom.add_argument("user", nargs="?")
@@ -88,11 +92,23 @@ def main() -> None:
     config = config_module.load()
     if args.command in (None, "serve"):
         _serve(config)
+    elif args.command == "skills":
+        _skills(config)
     else:
         try:
             _manage(config, args)
         except AuthError as err:
             sys.exit(f"huvu: {err}")
+
+
+def _skills(config) -> None:
+    from .kernel import Kernel
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    kernel = Kernel(config)
+    kernel.write_skills()
+    kernel.data.close()
+    kernel.db.close()
 
 
 def _serve(config) -> None:

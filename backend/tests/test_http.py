@@ -210,13 +210,13 @@ def test_a_turn_is_spoken_as_audio(server, monkeypatch):
     laptop = server.login("web")
     with httpx.stream("POST", f"{server.base}/api/chat", json={"id": "t_said", "ask": "hi"}, headers=laptop) as res:
         "".join(res.iter_text())
-    async def pcm(self, text: str) -> bytes:
-        return b"\x01\x00" * len(text)
+    async def clip(self, text: str) -> bytes:
+        return b"mp3:" + text.encode()
 
-    monkeypatch.setattr(Voice, "pcm", pcm)
+    monkeypatch.setattr(Voice, "clip", clip)
     res = httpx.get(f"{server.base}/api/turns/t_said/speech", headers=laptop)
-    assert res.status_code == 200 and res.headers["content-type"].startswith("audio/L16")
-    assert res.content == b"\x01\x00" * len("ok")
+    assert res.status_code == 200 and res.headers["content-type"] == "application/vnd.huvu.speech"
+    assert res.content == (6).to_bytes(4, "big") + b"mp3:ok"
     assert httpx.get(f"{server.base}/api/turns/t_said/speech", headers=server.login("phone")).status_code == 404
 
 

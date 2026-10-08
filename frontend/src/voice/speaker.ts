@@ -3,17 +3,14 @@ import { audioContext, rms } from "./audio";
 import { acquireMic, type Mic } from "./mic";
 
 // huvu's voice: the backend says a turn's answer while huvu writes it
-// (GET /api/turns/{id}/speech, Edge's voices on the backend), a sentence at a
-// time, as raw 16-bit mono PCM. Each piece is scheduled right after the one
-// before, so the sentences play without gaps. It plays through an analyser
-// so the garden can grow the garland with it, and while it plays, the mic
-// listens for the user talking over it.
-const SAMPLE_RATE = 24000;
+// (GET /api/turns/{id}/speech, Edge's voices on the backend), one MP3 clip
+// per sentence, each framed by its length as four big-endian bytes. Clips
+// are decoded in order and each is scheduled right after the one before,
+// so the sentences play without gaps. It plays through an analyser so the
+// garden can grow the garland with it, and while it plays, the mic listens
+// for the user talking over it.
 // Mic loudness that counts as talking over huvu.
 const BARGE_IN_RMS = 0.15;
-// Audio gathered before it is scheduled: tiny network pieces would make
-// hundreds of buffers.
-const MIN_SAMPLES = SAMPLE_RATE / 10;
 // How far ahead the first piece starts, so it never starts in the past.
 const LEAD = 0.05;
 
@@ -81,9 +78,8 @@ export async function speak(turnId: string): Promise<void> {
     };
     current = { finish };
 
-    const play = (samples: Float32Array<ArrayBuffer>) => {
-      const buffer = ctx.createBuffer(1, samples.length, SAMPLE_RATE);
-      buffer.copyToChannel(samples, 0);
+    const play = (buffer: AudioBuffer) => {
+      if (done) return;
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(output().analyser);
@@ -123,16 +119,17 @@ export async function speak(turnId: string): Promise<void> {
         const res = await call(`/api/turns/${turnId}/speech`, { signal: abort.signal });
         if (!res.body) throw new Error("speaker: the backend sent no audio");
         const reader = res.body.getReader();
-        // Bytes not yet played: an odd byte waits for its pair.
+        // Bytes of clips not yet whole, and the decodes in order.
         let pending = new Uint8Array(0);
-        const flush = (all: boolean) => {
-          const usable = pending.length - (pending.length % 2);
-          if (usable === 0 || (!all && usable / 2 < MIN_SAMPLES)) return;
-          const view = new DataView(pending.buffer, pending.byteOffset, usable);
-          const samples = new Float32Array(usable / 2);
-          for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
-          pending = pending.slice(usable);
-          play(samples);
+        let decoded: Promise<void> = Promise.resolve();
+        const takeClips = () => {
+          while (pending.length >= 4) {
+            const length = new DataView(pending.buffer, pending.byteOffset, 4).getUint32(0);
+            if (pending.length < 4 + length) return;
+            const clip = pending.slice(4, 4 + length).buffer;
+            pending = pending.slice(4 + length);
+            decoded = decoded.then(() => ctx.decodeAudioData(clip)).then(play, (err) => console.error("speaker: a clip didn't decode", err));
+          }
         };
         while (!done) {
           const { done: ended, value } = await reader.read();
@@ -141,9 +138,9 @@ export async function speak(turnId: string): Promise<void> {
           joined.set(pending);
           joined.set(value, pending.length);
           pending = joined;
-          flush(false);
+          takeClips();
         }
-        flush(true);
+        await decoded;
         streamed = true;
         if (sources.size === 0) finish();
       } catch (err) {

@@ -1,0 +1,15 @@
+# The image takes the backend, the Hermes plugin, the soul and setup.sh.
+# Everything else, and anything local or secret, stays out.
+**/.git
+**/node_modules
+**/__pycache__
+**/*.pyc
+.claude/
+frontend/
+docs/
+hermes-skills/
+backend/.venv/
+backend/data/
+backend/tests/
+backend/.env
+backend/huvu.toml

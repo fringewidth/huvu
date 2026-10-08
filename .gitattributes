@@ -1,0 +1,10 @@
+# Files that run inside the Linux container keep LF line endings, even in a
+# checkout on Windows, where Git would otherwise turn them into CRLF and
+# break them.
+*.sh text eol=lf
+docker/** text eol=lf
+Dockerfile text eol=lf
+compose.yaml text eol=lf
+hermes-plugin/** text eol=lf
+backend/** text eol=lf
+SOUL.md text eol=lf

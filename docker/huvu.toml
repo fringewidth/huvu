@@ -1,0 +1,22 @@
+# huvu's config in the container, copied to /opt/data/huvu/huvu.toml on the
+# first start; edit that copy (docker compose exec huvu vi ...). Secrets come
+# from the environment (compose.yaml's .env) or /opt/data/huvu/.env.
+
+# The address phones use is HUVU_PUBLIC_URL, set in compose.yaml.
+
+[hermes]
+url = "http://localhost:8642"
+
+# A model alone runs on the profile's own login; a table names the Hermes
+# provider too (anthropic is the Claude login, openai-codex the ChatGPT one).
+[models]
+basic = "gpt-6-luna"
+pro = "gpt-6-sol"
+advanced = "gpt-6-astra"
+
+[dream]
+at = "04:00"
+tier = "pro"
+
+[speech]
+voice = "en-US-AvaNeural"

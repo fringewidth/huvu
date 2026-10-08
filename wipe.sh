@@ -42,12 +42,13 @@ if [ -z "$yes" ]; then
 fi
 
 # huvu's side. It refuses while the backend runs.
-(cd "$root/backend" && uv run --quiet huvu wipe "${wipe_args[@]}")
+if [ -x "$root/backend/.venv/bin/huvu" ]; then (cd "$root/backend" && .venv/bin/huvu wipe "${wipe_args[@]}")
+else (cd "$root/backend" && uv run --quiet huvu wipe "${wipe_args[@]}"); fi
 
 # Hermes's sessions. Prune skips open ones, so each is deleted by id.
 sessions=0
 if [ -f "$home/state.db" ]; then
-  for id in $(sqlite3 "$home/state.db" "SELECT id FROM sessions"); do
+  for id in $(python3 -c 'import sqlite3, sys; [print(r[0]) for r in sqlite3.connect(sys.argv[1]).execute("SELECT id FROM sessions")]' "$home/state.db"); do
     hermes $p sessions delete --yes "$id" >/dev/null
     sessions=$((sessions + 1))
   done

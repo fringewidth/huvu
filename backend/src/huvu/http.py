@@ -30,7 +30,7 @@ from .kernel import Kernel
 from .push import api_json, sse
 from .source import NotIngesting, SourceError
 from .spec import Caller
-from .speech import SAMPLE_RATE
+from .speech import MEDIA_TYPE as SPEECH
 from .times import for_model
 from .tools import ToolError
 from .triggers import TriggerError
@@ -287,13 +287,13 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.get("/api/turns/{turn_id}/speech")
     async def turn_speech(turn_id: str, me: Device = device) -> StreamingResponse:
-        """huvu saying a turn's answer while it writes it: raw PCM, 16-bit
-        little-endian mono at SAMPLE_RATE Hz, a sentence at a time (see
+        """huvu saying a turn's answer while it writes it: one framed MP3
+        clip per sentence, a sentence at a time (see
         speech.py). Works for a running turn and an ended one."""
         if not kernel.conversations.owns(me.id, turn_id):
             raise HTTPException(404, f"no turn {turn_id!r}")
         audio = kernel.voice.speak(kernel.conversations.replay(turn_id))
-        return StreamingResponse(audio, media_type=f"audio/L16;rate={SAMPLE_RATE};channels=1", headers={"Cache-Control": "no-cache"})
+        return StreamingResponse(audio, media_type=SPEECH, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/conversation")
     async def conversation(me: Device = device) -> JSONResponse:

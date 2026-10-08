@@ -1,2 +1,8 @@
 # Links to the backend's generated Hermes skills; every Hermes profile reads this folder.
 hermes-skills/
+# Python's compiled files, anywhere (they were committed once, then purged
+# from history on 2026-10-08).
+__pycache__/
+*.pyc
+# Claude Code's git worktrees, local to one machine.
+.claude/worktrees/

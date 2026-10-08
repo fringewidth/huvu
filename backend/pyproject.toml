@@ -13,7 +13,6 @@ dependencies = [
     "segno>=1.6.6",
     "websockets>=17.1",
     "edge-tts>=7.2.8",
-    "miniaudio>=1.71",
 ]
 
 [project.scripts]

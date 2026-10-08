@@ -12,14 +12,19 @@ hermes_home=${HERMES_HOME:-$HOME/.hermes}
 env_file=${HUVU_ENV_FILE:-$root/backend/.env}
 huvu_url=${HUVU_URL:-http://localhost:3001}
 
-huvu() { (cd "$root/backend" && uv run --quiet huvu "$@"); }
+# The backend's own command: its virtualenv's, or through uv in a checkout.
+huvu() {
+  if [ -x "$root/backend/.venv/bin/huvu" ]; then (cd "$root/backend" && .venv/bin/huvu "$@")
+  else (cd "$root/backend" && uv run --quiet huvu "$@"); fi
+}
+random() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
 
 # A secret kept in backend/.env, made the first time.
 secret() {
   local value
   value=$(grep -s "^$1=" "$env_file" | cut -d= -f2- || true)
   if [ -z "$value" ]; then
-    value=${2:-$(openssl rand -hex 32)}
+    value=${2:-$(random)}
     echo "$1=$value" >> "$env_file"
   fi
   echo "$value"
@@ -119,8 +124,8 @@ if huvu user list | cut -f1 | grep -qx "$user"; then
   exit 0
 fi
 
-key=$(openssl rand -hex 32)
-token=$(cd "$root/backend" && HUVU_PASSWORD=$password HUVU_HERMES_KEY=$key uv run --quiet huvu user add "$user" --name "$name" --quiet)
+key=$(random)
+token=$(HUVU_PASSWORD=$password HUVU_HERMES_KEY=$key huvu user add "$user" --name "$name" --quiet)
 [ -d "$home" ] || hermes profile create "$user" --no-alias >/dev/null
 configure "$user" "$home"
 hermes -p "$user" config set API_SERVER_KEY "$key" >/dev/null
