@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from .prompts import whisper_prompt
+
 if TYPE_CHECKING:
     from .kernel import Kernel
 
@@ -51,8 +53,8 @@ class Hearing:
 
     def prompt(self) -> str:
         """Names Whisper should expect: huvu's and the family's."""
-        names = [u.name for u in self._kernel.accounts.users()] + [u.id for u in self._kernel.accounts.users()]
-        return "huvu, " + ", ".join(dict.fromkeys(n for n in names if n)) + "."
+        users = self._kernel.accounts.users()
+        return whisper_prompt([u.name for u in users] + [u.id for u in users])
 
     async def transcribe(self, audio: bytes, content_type: str) -> str:
         if not self._key:

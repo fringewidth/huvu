@@ -16,9 +16,6 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from .dream import Dreams
-from .hearing import Hearing
-from .speech import Voice
 from . import skills
 from .accounts import Accounts
 from .attendance import Attendance
@@ -28,17 +25,20 @@ from .config import Config
 from .conversations import ConversationHub
 from .data import DataStore
 from .db import connect, from_iso, iso
+from .dream import Dreams
 from .events import EventLog
+from .hearing import Hearing
 from .hermes import HermesClient
 from .media import MediaStore
-from .policy import Policy
 from .native_push import FcmClient, NativePush
+from .policy import Policy
 from .push import PushHub
 from .registry import Registry
 from .scripts import ScriptRunner
 from .sessions import SessionBook
 from .source import Source, SourceError
 from .spec import Event, Feed, Label
+from .speech import Voice
 from .state import StateService
 from .tools import ToolBox
 from .triggers import TriggerEngine

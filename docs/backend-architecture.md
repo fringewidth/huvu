@@ -427,7 +427,8 @@ backend/
     data.py           the history tables (analytics.db) and data_sql
     accounts.py       users, devices, pairing, tokens, each user's Hermes profile
     attendance.py     who is at a shared device, confirmed from their phone
-    skills.py         every source as a Hermes skill
+    prompts.py        every text a model reads: guide, MCP and tool text, source descriptions, the skill renderer, wakes, the dream
+    skills.py         writes and links every source's Hermes skill
     source.py         Source (what a driver subclasses) and SourceContext
     registry.py       loaded sources, name resolution with suggestions, supervision
     names.py          value keys

@@ -60,6 +60,7 @@ from pydantic import Field, field_validator
 from .db import dumps, from_iso, iso, loads
 from .events import EventLog, Viewer, sees
 from .names import UnknownName, ValueRef
+from .prompts import TRIGGER_FIELDS
 from .spec import Caller, Event, Reading, Strict, ValueSpec, merge_labels
 from .state import check_personal, is_fresh
 from .times import parse_clock, parse_when
@@ -95,44 +96,40 @@ REPLAY = 5
 
 
 class ValueCheck(Strict):
-    value: str = Field(description="A value key, such as clock.time, clock.weekday or ha.entity_state.")
-    params: dict[str, Any] | None = Field(default=None, description="The value's params, such as {\"entity_id\": \"light.porch\"}.")
-    op: Op = Field(description="between takes [from, to] and wraps past midnight; in takes a list.")
-    arg: Any = Field(description="What to compare with: \"09:00\" for a time, [\"mon\", \"fri\"] for in.")
+    value: str = Field(description=TRIGGER_FIELDS["ValueCheck.value"])
+    params: dict[str, Any] | None = Field(default=None, description=TRIGGER_FIELDS["ValueCheck.params"])
+    op: Op = Field(description=TRIGGER_FIELDS["ValueCheck.op"])
+    arg: Any = Field(description=TRIGGER_FIELDS["ValueCheck.arg"])
 
 
 class EventCheck(Strict):
-    event: str = Field(description="A qualified event type, such as location.arrived.")
+    event: str = Field(description=TRIGGER_FIELDS["EventCheck.event"])
     # Fields of the event's `data` that must equal these values.
-    where: dict[str, Any] | None = Field(default=None, description="Fields of the event's data that must equal these values.")
+    where: dict[str, Any] | None = Field(default=None, description=TRIGGER_FIELDS["EventCheck.where"])
 
 
 class TriggerSpec(Strict):
     """What a model registers."""
 
-    note: str = Field(description="Why the trigger exists and what to do when it fires. It comes back in any wake.")
+    note: str = Field(description=TRIGGER_FIELDS["TriggerSpec.note"])
     when: list[ValueCheck | EventCheck] = Field(
         min_length=1,
-        description="Checks that must all hold. A time is a check on clock.time, so every day at 9 is "
-        "[{\"value\": \"clock.time\", \"op\": \"==\", \"arg\": \"09:00\"}] with repeat daily.",
+        description=TRIGGER_FIELDS["TriggerSpec.when"],
     )
-    repeat: Repeat = Field(default="no", description="no: fire once. yes: fire again once `when` turns false. daily: at most once a day.")
+    repeat: Repeat = Field(default="no", description=TRIGGER_FIELDS["TriggerSpec.repeat"])
     reset: list[ValueCheck] | None = None
-    include: list[str] = Field(default_factory=list, description="Value keys read when it fires, for the script (ctx.include) and any wake.")
-    expires: str | None = Field(default=None, description="2h, tomorrow 09:00 or ISO. A repeat=no trigger without one expires in 7 days.")
+    include: list[str] = Field(default_factory=list, description=TRIGGER_FIELDS["TriggerSpec.include"])
+    expires: str | None = Field(default=None, description=TRIGGER_FIELDS["TriggerSpec.expires"])
     # A Python function `run(ctx)`, run each time `when` matches. See
     # scripts.py and script_host.py.
     script: str = Field(
-        description="Python defining run(ctx), run each time `when` matches. ctx.call(tool, args) calls a tool named in "
-        "`grants` and returns its data. ctx.wake(text) starts an instance of you with the note, what matched and this text. "
-        "ctx.event, ctx.matched and ctx.include hold what fired it; ctx.log(...) logs.",
+        description=TRIGGER_FIELDS["TriggerSpec.script"],
     )
     # The tools the script may call.
-    grants: list[str] = Field(default_factory=list, description="The tools the script may call, such as [\"huvu_notify\"].")
+    grants: list[str] = Field(default_factory=list, description=TRIGGER_FIELDS["TriggerSpec.grants"])
     tier: Tier = Field(
         default="basic",
-        description="The model a ctx.wake from this trigger runs on: basic for routine judgment, pro when it needs more thought, "
-        "advanced for the hardest work. An advanced trigger waits for its person's yes on their phone before it goes live.",
+        description=TRIGGER_FIELDS["TriggerSpec.tier"],
     )
 
     @field_validator("note")

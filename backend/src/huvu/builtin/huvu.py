@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..db import dumps, loads
 from ..names import UnknownName
+from ..prompts import TEXT
 from ..source import Source, SourceError
-from ..triggers import TriggerError
 from ..spec import (
     ActionSpec,
     Caller,
@@ -25,6 +25,7 @@ from ..spec import (
     SourceSpec,
     ValueSpec,
 )
+from ..triggers import TriggerError
 
 if TYPE_CHECKING:
     from ..kernel import Kernel
@@ -41,27 +42,24 @@ class HuvuSource(Source):
     def describe(self) -> SourceSpec:
         return SourceSpec(
             name="huvu",
-            description="State no device owns: family mode, aliases, approvals, notifications.",
+            description=TEXT["huvu.description"],
             guide=(
-                "Aliases map what people call a thing to its value key, and state_search puts them first: when someone names a thing "
-                "their own way and you find it, set an alias. huvu_notify reaches a person's phone whenever you want, and is how you "
-                "tell them about anything you changed on your own. The family mode (normal, away, guests, sleeping) works in trigger "
-                "conditions like any value."
+                TEXT["huvu.guide"]
             ),
             values=[
-                ValueSpec(name="mode", description=f"Family mode: {', '.join(MODES)}", type="string", labels=["owner"]),
+                ValueSpec(name="mode", description=TEXT["huvu.value.mode"].format(modes=", ".join(MODES)), type="string", labels=["owner"]),
                 ValueSpec(
                     name="alias",
-                    description="The value key an alias points to, such as 'hall light'",
+                    description=TEXT["huvu.value.alias"],
                     type="string",
                     params={"alias": "string"},
                     updates="on_demand",
                     labels=["owner"],
                 ),
-                ValueSpec(name="aliases", description="Every alias and the value key it points to", type="object", updates="on_demand", labels=["owner"]),
+                ValueSpec(name="aliases", description=TEXT["huvu.value.aliases"], type="object", updates="on_demand", labels=["owner"]),
                 ValueSpec(
                     name="approvals",
-                    description="The actions waiting for the person's tap: theirs, and those of the groups they're a member of",
+                    description=TEXT["huvu.value.approvals"],
                     type="list",
                     params={"user": "string"},
                     updates="on_demand",
@@ -70,31 +68,31 @@ class HuvuSource(Source):
                 ),
             ],
             events=[
-                EventSpec(type="mode_changed", description="The family mode changed.", data={"mode": "string"}),
-                EventSpec(type="notified", description="huvu sent the owner a notification."),
+                EventSpec(type="mode_changed", description=TEXT["huvu.event.mode_changed"], data={"mode": "string"}),
+                EventSpec(type="notified", description=TEXT["huvu.event.notified"]),
             ],
             actions=[
                 ActionSpec(
                     name="set_mode",
-                    description="Sets the family mode.",
+                    description=TEXT["huvu.action.set_mode"],
                     input_schema=_object({"mode": {"type": "string", "enum": MODES}}, ["mode"]),
                     autonomy="notify",
                 ),
                 ActionSpec(
                     name="set_alias",
-                    description="Points an alias (what the owner calls a thing) at a value key, so search finds it.",
+                    description=TEXT["huvu.action.set_alias"],
                     input_schema=_object({"alias": {"type": "string"}, "value": {"type": "string"}}, ["alias", "value"]),
                     autonomy="silent",
                 ),
                 ActionSpec(
                     name="remove_alias",
-                    description="Removes an alias.",
+                    description=TEXT["huvu.action.remove_alias"],
                     input_schema=_object({"alias": {"type": "string"}}, ["alias"]),
                     autonomy="silent",
                 ),
                 ActionSpec(
                     name="activate_trigger",
-                    description="Turns on a trigger that wakes the advanced model, once its person says yes.",
+                    description=TEXT["huvu.action.activate_trigger"],
                     input_schema=_object({"trigger": {"type": "string"}}, ["trigger"]),
                     requires_human=True,
                     # Set at night by a dream, it waits for the morning.
@@ -102,7 +100,7 @@ class HuvuSource(Source):
                 ),
                 ActionSpec(
                     name="notify",
-                    description="Sends a notification to the phones of the person you're helping, or to the members' phones when you serve a shared device. `image` is a ref from a source, such as a doorbell snapshot.",
+                    description=TEXT["huvu.action.notify"],
                     input_schema=_object(
                         {
                             "text": {"type": "string"},

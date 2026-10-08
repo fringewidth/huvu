@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.routing import Route
 
-from . import mcp_server
+from . import mcp_server, prompts
 from .accounts import AuthError, Device
 from .auth import McpAuth, bearer, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
@@ -29,8 +29,8 @@ from .hearing import HearingError
 from .kernel import Kernel
 from .push import api_json, sse
 from .source import NotIngesting, SourceError
-from .speech import SAMPLE_RATE
 from .spec import Caller
+from .speech import SAMPLE_RATE
 from .times import for_model
 from .tools import ToolError
 from .triggers import TriggerError
@@ -424,21 +424,17 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         if not known:
             raise HTTPException(401, "unauthorized")
         readings = for_model(await kernel.state.get(body.values, accounts.scope(user, group)), kernel.now())
-        lines = [f"Now: {kernel.now():%a %Y-%m-%d %H:%M}"]
+        helping = shared = None
         if user:
             named = accounts.user(user)
-            lines.append(f"You are helping: {named.name if named else user}")
+            helping = named.name if named else user
         else:
-            named = accounts.group(group)
+            group_named = accounts.group(group)
             people = ", ".join(f"{u.name} ({u.id})" for u in accounts.people(group or accounts.default_group()))
-            lines.append(
-                f"You are serving {named.name if named else group} from a shared device; nobody in particular is speaking. "
-                f"The people who use it: {people}. If someone says who they are, call people_identify."
-            )
-        lines += [f"{key} = {r.get('value', r.get('reason'))} ({r.get('at', 'no time')})" for key, r in readings.items()]
+            shared = (group_named.name if group_named else group, people)
+        values = [(key, r.get("value", r.get("reason")), r.get("at", "no time")) for key, r in readings.items()]
         pending = kernel.policy.pending_for(accounts.scope(user, group))
-        lines.append(f"Pending approvals: {len(pending)}" if pending else "Pending approvals: none")
-        return {"text": "\n".join(lines)}
+        return {"text": prompts.situation(f"{kernel.now():%a %Y-%m-%d %H:%M}", helping, shared, values, len(pending))}
 
     return app
 

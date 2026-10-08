@@ -50,8 +50,19 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from huvu.db import dumps, loads
+from huvu.prompts import LOCATION_GUIDE, TEXT
 from huvu.source import Source, SourceError
-from huvu.spec import ActionSpec, Caller, ColumnSpec, EventSpec, Reading, Result, SourceSpec, TableSpec, ValueSpec
+from huvu.spec import (
+    ActionSpec,
+    Caller,
+    ColumnSpec,
+    EventSpec,
+    Reading,
+    Result,
+    SourceSpec,
+    TableSpec,
+    ValueSpec,
+)
 from huvu.times import format_span
 
 log = logging.getLogger("huvu.source.location")
@@ -151,63 +162,47 @@ def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
 
 PERSON = {"user": "string"}
 
-_DEVICE = ColumnSpec(name="device", type="text", description="The huvu device id of the tracker that sent it")
-_RAW = ColumnSpec(name="raw", type="json", description="The whole payload, as OwnTracks sent it")
+_DEVICE = ColumnSpec(name="device", type="text", description=TEXT["location.column.device"])
+_RAW = ColumnSpec(name="raw", type="json", description=TEXT["location.column.raw"])
 
 TABLES = [
     TableSpec(
         name="fixes",
-        description="Every position a person's phone sent: about one every 15 minutes, more while moving. user_id is the person.",
+        description=TEXT["location.table.fixes"],
         columns=[
             _DEVICE,
-            ColumnSpec(name="lat", type="real", description="Latitude"),
-            ColumnSpec(name="lon", type="real", description="Longitude"),
-            ColumnSpec(name="accuracy_m", type="real", description="How far off it may be, in metres; a few hundred is common with GPS off"),
-            ColumnSpec(name="altitude_m", type="real", description="Altitude, metres"),
-            ColumnSpec(name="speed_kmh", type="real", description="Speed, km/h, when the phone knows it"),
-            ColumnSpec(name="battery", type="integer", description="Battery, %"),
-            ColumnSpec(name="battery_status", type="integer", description="0 unknown, 1 unplugged, 2 charging, 3 full"),
-            ColumnSpec(name="wifi", type="text", description="The Wi-Fi network's name; NULL when on none"),
-            ColumnSpec(name="connection", type="text", description="w Wi-Fi, m mobile data, o offline"),
-            ColumnSpec(name="reason", type="text", description="Why the phone sent it: p ping, c a waypoint crossing, u by hand, t timer, r asked for, v the OS's own update"),
-            ColumnSpec(name="regions", type="json", description="The waypoints the phone thought it was inside, by name"),
+            ColumnSpec(name="lat", type="real", description=TEXT["location.table.fixes.column.lat"]),
+            ColumnSpec(name="lon", type="real", description=TEXT["location.table.fixes.column.lon"]),
+            ColumnSpec(name="accuracy_m", type="real", description=TEXT["location.table.fixes.column.accuracy_m"]),
+            ColumnSpec(name="altitude_m", type="real", description=TEXT["location.table.fixes.column.altitude_m"]),
+            ColumnSpec(name="speed_kmh", type="real", description=TEXT["location.table.fixes.column.speed_kmh"]),
+            ColumnSpec(name="battery", type="integer", description=TEXT["location.table.fixes.column.battery"]),
+            ColumnSpec(name="battery_status", type="integer", description=TEXT["location.table.fixes.column.battery_status"]),
+            ColumnSpec(name="wifi", type="text", description=TEXT["location.table.fixes.column.wifi"]),
+            ColumnSpec(name="connection", type="text", description=TEXT["location.table.fixes.column.connection"]),
+            ColumnSpec(name="reason", type="text", description=TEXT["location.table.fixes.column.reason"]),
+            ColumnSpec(name="regions", type="json", description=TEXT["location.table.fixes.column.regions"]),
             _RAW,
         ],
         indexes=[["device", "ts"]],
     ),
     TableSpec(
         name="transitions",
-        description="Every time a person's phone said it entered or left a waypoint, once per post, late ones and repeated crossings included. user_id is the person.",
+        description=TEXT["location.table.transitions"],
         columns=[
             _DEVICE,
-            ColumnSpec(name="waypoint", type="text", description="huvu's name for the waypoint; NULL for a region huvu doesn't know (one made on the phone, or removed)"),
-            ColumnSpec(name="name_on_phone", type="text", description="The waypoint's name as the phone sent it"),
-            ColumnSpec(name="event", type="text", description="enter or leave"),
-            ColumnSpec(name="changed", type="boolean", description="Whether it changed where huvu thinks the person is, and so became a location.arrived or location.left event; false for repeats and crossings older than one already known"),
-            ColumnSpec(name="lat", type="real", description="Latitude where the phone noticed"),
-            ColumnSpec(name="lon", type="real", description="Longitude"),
-            ColumnSpec(name="accuracy_m", type="real", description="How far off the position may be, metres"),
+            ColumnSpec(name="waypoint", type="text", description=TEXT["location.table.transitions.column.waypoint"]),
+            ColumnSpec(name="name_on_phone", type="text", description=TEXT["location.table.transitions.column.name_on_phone"]),
+            ColumnSpec(name="event", type="text", description=TEXT["location.table.transitions.column.event"]),
+            ColumnSpec(name="changed", type="boolean", description=TEXT["location.table.transitions.column.changed"]),
+            ColumnSpec(name="lat", type="real", description=TEXT["location.table.transitions.column.lat"]),
+            ColumnSpec(name="lon", type="real", description=TEXT["location.table.transitions.column.lon"]),
+            ColumnSpec(name="accuracy_m", type="real", description=TEXT["location.table.transitions.column.accuracy_m"]),
             _RAW,
         ],
         indexes=[["waypoint", "ts"], ["device", "ts"]],
     ),
 ]
-
-GUIDE = """\
-Where each person is, from OwnTracks on their phone. A fix comes about every 15 minutes, with GPS off, so it can be a few hundred metres off. Arrivals and departures come at once, because the phone watches its waypoints itself.
-
-A waypoint is a named circle: a centre and a radius. `home` and `near_home` (a few km around home) come from huvu's config. Anyone can name more, such as "office" or "grandma's place". A waypoint belongs to the person who named it; they can share it with a group, and then the group's members get it on their phones too. A new or changed waypoint reaches a phone with its next post, so within about 15 minutes.
-
-Everything here is private to its person. Each value takes `user` (a username, such as location.place[mom]), and only that person can read it or use it in a trigger; data_sql shows each person only their own rows. Never tell anyone where someone else is, and don't try: the reads fail.
-
-For anything about the past (where was I on Saturday, how long do I spend at the office, when do I usually leave), use data_sql on the tables below. `location_transitions` with `changed` = 1 is the clean list of arrivals and departures; `location_fixes` is the raw track.
-
-- To react to someone coming home, use the event `location.arrived` with where {"waypoint": "near_home"}, not a distance: it fires the moment they enter. Triggers see only their own person's events.
-- `location.place` is the smallest waypoint the person is inside, or "elsewhere". It stays right while the phone is still, so it has no max age. The fix, battery, Wi-Fi and distance go stale after 2 hours: a phone that stopped posting (off, out of signal) reads as unknown.
-- To remember a place someone was at, use `location_waypoint_add` with `from` and `until` (ISO 8601 local times): huvu takes the centre of their fixes in that window, and says how many fixes it used and how far they spread. Few fixes or a wide spread means a rough point: say so, and offer to fix it. With no coordinates and no window, it takes their latest fix. For an address, find its coordinates with a maps tool first.
-- An arrival or departure that came in late (phone offline) has `delay_min` in its data.
-"""
-
 
 class LocationSource(Source):
     def __init__(self, options: dict[str, Any] | None = None) -> None:
@@ -217,20 +212,20 @@ class LocationSource(Source):
     def describe(self) -> SourceSpec:
         return SourceSpec(
             name="location",
-            description="Where each person is, from their phone: waypoints (home, office), arrivals and departures. Private to each person.",
-            guide=GUIDE,
+            description=TEXT["location.description"],
+            guide=LOCATION_GUIDE,
             values=[
                 ValueSpec(
                     name="place",
-                    description=f"The smallest waypoint the person is inside, or {ELSEWHERE!r}",
+                    description=TEXT["location.value.place"].format(elsewhere=ELSEWHERE),
                     type="string",
                     params=PERSON,
                     personal=True,
                 ),
-                ValueSpec(name="inside", description="Every waypoint the person is inside, by name", type="list", params=PERSON, personal=True),
+                ValueSpec(name="inside", description=TEXT["location.value.inside"], type="list", params=PERSON, personal=True),
                 ValueSpec(
                     name="fix",
-                    description="The person's latest position: lat, lon, accuracy_m",
+                    description=TEXT["location.value.fix"],
                     type="object",
                     params=PERSON,
                     max_age=FRESH,
@@ -238,17 +233,17 @@ class LocationSource(Source):
                 ),
                 ValueSpec(
                     name="distance_home_km",
-                    description="Straight-line distance from the person's latest fix to home",
+                    description=TEXT["location.value.distance_home_km"],
                     type="number",
                     unit="km",
                     params=PERSON,
                     max_age=FRESH,
                     personal=True,
                 ),
-                ValueSpec(name="battery", description="The person's phone battery", type="number", unit="%", params=PERSON, max_age=FRESH, personal=True),
+                ValueSpec(name="battery", description=TEXT["location.value.battery"], type="number", unit="%", params=PERSON, max_age=FRESH, personal=True),
                 ValueSpec(
                     name="wifi",
-                    description="The Wi-Fi network the person's phone is on, empty when it is on none",
+                    description=TEXT["location.value.wifi"],
                     type="string",
                     params=PERSON,
                     max_age=FRESH,
@@ -256,7 +251,7 @@ class LocationSource(Source):
                 ),
                 ValueSpec(
                     name="waypoints",
-                    description="The waypoints the person sees: their own and those shared with their groups",
+                    description=TEXT["location.value.waypoints"],
                     type="list",
                     params=PERSON,
                     updates="on_demand",
@@ -266,12 +261,12 @@ class LocationSource(Source):
             events=[
                 EventSpec(
                     type="arrived",
-                    description="A person entered a waypoint.",
+                    description=TEXT["location.event.arrived"],
                     data={"waypoint": "string", "delay_min": "number"},
                 ),
                 EventSpec(
                     type="left",
-                    description="A person left a waypoint. `stayed_min` is how long they were inside, when huvu saw them arrive.",
+                    description=TEXT["location.event.left"],
                     data={"waypoint": "string", "stayed_min": "number", "delay_min": "number"},
                 ),
             ],
@@ -279,9 +274,7 @@ class LocationSource(Source):
                 ActionSpec(
                     name="waypoint_add",
                     description=(
-                        "Names a waypoint for the person you're helping. The centre is `lat` and `lon`; or the centre of their fixes "
-                        "between `from` and `until` (ISO 8601); or, with neither, their latest fix. `share` shares it with their group "
-                        "(`group` names which, if they're in several)."
+                        TEXT["location.action.waypoint_add"]
                     ),
                     input_schema=_object(
                         {
@@ -290,7 +283,7 @@ class LocationSource(Source):
                             "lon": {"type": "number"},
                             "from": {"type": "string"},
                             "until": {"type": "string"},
-                            "radius_m": {"type": "number", "description": f"Default {DEFAULT_RADIUS_M}"},
+                            "radius_m": {"type": "number", "description": TEXT["location.action.waypoint_add.arg.radius_m"].format(default=DEFAULT_RADIUS_M)},
                             "share": {"type": "boolean"},
                             "group": {"type": "string"},
                         },
@@ -300,13 +293,13 @@ class LocationSource(Source):
                 ),
                 ActionSpec(
                     name="waypoint_remove",
-                    description="Removes a waypoint the person named, or one of their group's. home and near_home come from the config and stay.",
+                    description=TEXT["location.action.waypoint_remove"],
                     input_schema=_object({"name": {"type": "string"}}, ["name"]),
                     autonomy="silent",
                 ),
                 ActionSpec(
                     name="waypoint_share",
-                    description="Shares one of the person's waypoints with their group (`share`: true), or stops sharing it (false).",
+                    description=TEXT["location.action.waypoint_share"],
                     input_schema=_object({"name": {"type": "string"}, "share": {"type": "boolean"}, "group": {"type": "string"}}, ["name", "share"]),
                     autonomy="silent",
                 ),

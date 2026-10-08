@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
+from . import prompts
 from .db import dumps, from_iso, iso, loads
 from .hermes import HermesError, HermesEvent, Profile
 from .spec import Caller, Event
@@ -56,14 +57,6 @@ HUVU_PREFIX = "mcp__huvu__"
 CACHE_TTL = timedelta(minutes=5)
 # How long a stopped turn may take to end before huvu cuts it off itself.
 STOP_GRACE = 15.0
-# Opens a fresh session that continues a conversation, the way a compacted
-# session continues.
-COMPACTED = (
-    "This conversation is being continued from an earlier session that was compacted. "
-    "What was said so far is below: their messages, and your answers. "
-    "Carry on from where you left off as the same assistant. Don't mention or acknowledge this note; "
-    "just answer their new message at the end."
-)
 # How much of a turn the event log keeps in its summary.
 TURN_ASK_CHARS = 200
 TURN_ANSWER_CHARS = 300
@@ -567,12 +560,11 @@ ADAPTERS: dict[str, Adapter] = {
 
 
 def _note(action: Action, tz: tzinfo | None) -> str:
-    when = f"{action.at.astimezone(tz):%a %Y-%m-%d %H:%M}"
-    return f"(Owner action in the app, {when}: {action.text}. Not a request, no reply needed.)"
+    return prompts.action_note(f"{action.at.astimezone(tz):%a %Y-%m-%d %H:%M}", action.text)
 
 
 def _with_notes(text: str, notes: list[Action], tz: tzinfo | None) -> str:
-    lines = [f"(huvu, {n.at.astimezone(tz):%H:%M}: {n.text}. Not a request, no reply needed.)" for n in notes]
+    lines = [prompts.huvu_note(f"{n.at.astimezone(tz):%H:%M}", n.text) for n in notes]
     return "\n".join([*lines, "", text]) if lines else text
 
 
@@ -589,14 +581,7 @@ def _seeded(kept: list[Turn], text: str, tz: tzinfo | None) -> str:
     happened, not to acknowledge it."""
     if not kept:
         return text
-    lines = [COMPACTED, "", "<earlier>"]
-    for turn in kept:
-        lines += [_note(a, tz) for a in turn.actions]
-        lines.append(f"Them: {turn.ask}")
-        if turn.answer:
-            lines.append(f"You: {turn.answer}")
-    lines += ["</earlier>", "", text]
-    return "\n".join(lines)
+    return prompts.continued([([_note(a, tz) for a in t.actions], t.ask, t.answer) for t in kept], text)
 
 
 def _turn(row) -> Turn:

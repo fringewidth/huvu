@@ -26,6 +26,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from huvu.prompts import TEXT
 from huvu.spec import MEMBER_RE, ActionSpec, Autonomy
 
 # Label id -> (autonomy, requires_human). HA makes a label's id from its
@@ -163,11 +164,11 @@ SELECTORS = {
     "select": _select,
     "boolean": lambda c: {"type": "boolean"},
     "text": lambda c: {"type": "string"},
-    "time": lambda c: {"type": "string", "description": "A time of day, HH:MM:SS."},
-    "date": lambda c: {"type": "string", "description": "A date, YYYY-MM-DD."},
+    "time": lambda c: {"type": "string", "description": TEXT["ha.arg.time"]},
+    "date": lambda c: {"type": "string", "description": TEXT["ha.arg.date"]},
     "duration": lambda c: {"type": "object", "properties": {"hours": {"type": "number"}, "minutes": {"type": "number"}, "seconds": {"type": "number"}}},
-    "color_temp": lambda c: {"type": "number", "description": "In kelvin." if c.get("unit") == "kelvin" else "In mireds."},
-    "color_rgb": lambda c: {"type": "array", "items": {"type": "integer"}, "description": "[red, green, blue], each 0 to 255."},
+    "color_temp": lambda c: {"type": "number", "description": TEXT["ha.arg.color_temp.kelvin"] if c.get("unit") == "kelvin" else TEXT["ha.arg.color_temp.mireds"]},
+    "color_rgb": lambda c: {"type": "array", "items": {"type": "integer"}, "description": TEXT["ha.arg.color_rgb"]},
 }
 
 

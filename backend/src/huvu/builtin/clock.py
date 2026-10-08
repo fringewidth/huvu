@@ -12,6 +12,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
+from ..prompts import TEXT
 from ..source import Source
 from ..spec import Reading, SourceSpec, ValueSpec
 
@@ -22,11 +23,11 @@ class ClockSource(Source):
     def describe(self) -> SourceSpec:
         return SourceSpec(
             name="clock",
-            description="Local time, for conditions inside triggers.",
+            description=TEXT["clock.description"],
             values=[
-                ValueSpec(name="time", description="Local time of day as HH:MM", type="time"),
-                ValueSpec(name="weekday", description="Day of the week: mon, tue, wed, thu, fri, sat, sun", type="string"),
-                ValueSpec(name="date", description="Local date as YYYY-MM-DD", type="string"),
+                ValueSpec(name="time", description=TEXT["clock.value.time"], type="time"),
+                ValueSpec(name="weekday", description=TEXT["clock.value.weekday"], type="string"),
+                ValueSpec(name="date", description=TEXT["clock.value.date"], type="string"),
             ],
         )
 

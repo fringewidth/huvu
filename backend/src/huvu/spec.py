@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .prompts import STANDARD_COLUMNS
+
 # Where a piece of data came from. The labels are facts about the data, so
 # the backend owns them. A tool result with `external` in it reaches the
 # model marked as such (see mcp_server.py).
@@ -162,17 +164,6 @@ class ActionSpec(Strict):
 
 ColumnType = Literal["text", "integer", "real", "boolean", "json"]
 
-# Every history table has these, filled in by the kernel (see data.py), so
-# every source's rows join on the same time and person keys.
-STANDARD_COLUMNS: dict[str, tuple[str, str]] = {
-    "at": ("text", "When it happened: ISO 8601 with the local offset"),
-    "ts": ("real", "The same instant in seconds since the epoch, for ranges and joins"),
-    "local_date": ("text", "The local date, YYYY-MM-DD"),
-    "local_minute": ("integer", "Minutes since local midnight, 0 to 1439"),
-    "weekday": ("integer", "1 is Monday, 7 is Sunday"),
-    "user_id": ("text", "The huvu user it belongs to; NULL if nobody is known"),
-    "group_id": ("text", "The group it belongs to, when it has no user and isn't the whole house's"),
-}
 
 
 class ColumnSpec(Strict):

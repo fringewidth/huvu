@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .prompts import DREAM_NOTE, DREAM_SCRIPT
 from .spec import Caller
 from .triggers import TriggerSpec
 
@@ -22,16 +23,6 @@ if TYPE_CHECKING:
     from .kernel import Kernel
 
 NAMESPACE = "dream"
-SCRIPT = 'def run(ctx):\n    ctx.wake("Time to dream.")\n'
-
-NOTE = """Your dream. The day is over; look back at it before the next one starts.
-
-1. What happened: events_digest {"day": "yesterday"}, then data_sql over the history tables for the patterns behind it. Start where your last dream stopped; your memory says when.
-2. Your triggers: their trigger.run, trigger.error and wake.done events since then. Fix a script that fails, pause one that misfires, remove one that no longer helps.
-3. Your person: the rhythms they keep, what they do again and again, what they correct you on. Keep what you learn in memory, with the query that shows it, and note when this dream ran.
-4. Act where it helps them: register triggers that would serve them. One on the advanced tier waits for their yes.
-
-Then send one brief with huvu_notify, urgency low. Write it as quick notes, one short line each, never paragraphs: what you noticed, what you changed, what waits for their yes. If the night held nothing worth a note, one line says so."""
 
 
 class Dreams:
@@ -42,10 +33,10 @@ class Dreams:
         config = self._kernel.config
         return TriggerSpec.model_validate(
             {
-                "note": NOTE,
+                "note": DREAM_NOTE,
                 "when": [{"value": "clock.time", "op": "==", "arg": config.dream_at}],
                 "repeat": "daily",
-                "script": SCRIPT,
+                "script": DREAM_SCRIPT,
                 "tier": config.dream_tier,
             }
         )

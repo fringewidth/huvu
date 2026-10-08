@@ -22,92 +22,17 @@ own skills and memory.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
 import stat
 from pathlib import Path
-from typing import Any
 
-from .spec import STANDARD_COLUMNS, SourceSpec
+from .prompts import SKILL_PREFIX as PREFIX
+from .prompts import skill as render
+from .spec import SourceSpec
 
 log = logging.getLogger("huvu.skills")
-
-PREFIX = "huvu-"
-OWNED = (
-    "huvu wrote this skill from its driver and rewrites it at every start and whenever the source changes, so don't edit it; "
-    "put what you learn in your own skills or memory."
-)
-
-
-def signature(name: str, schema: dict[str, Any]) -> str:
-    """`home_turn_on(entity_id, brightness?: number)`: an action as the
-    model calls it, with optional arguments marked."""
-    properties = schema.get("properties") or {}
-    required = set(schema.get("required") or [])
-    parts = []
-    for arg, prop in properties.items():
-        kind = "|".join(str(v) for v in prop["enum"]) if "enum" in prop else prop.get("type", "")
-        parts.append(f"{arg}{'' if arg in required else '?'}{f': {kind}' if kind and kind != 'string' else ''}")
-    return f"{name}({', '.join(parts)})"
-
-
-def render(spec: SourceSpec) -> str:
-    lines = [
-        "---",
-        f"name: {PREFIX}{spec.name}",
-        f"description: {json.dumps(_one_line(spec.description) + f' Load before using huvu actions, values or tables of {spec.name}.')}",
-        "metadata:",
-        "  hermes:",
-        "    tags: [huvu]",
-        "---",
-        "",
-        f"# huvu: {spec.name}",
-        "",
-        OWNED,
-        "",
-    ]
-    if spec.guide.strip():
-        lines += [spec.guide.strip(), ""]
-    if spec.actions:
-        lines += ["## Actions", "", "Run with `act`, as `act({\"name\": ..., \"args\": {...}})`. Every action takes an optional `reason`.", ""]
-        for action in spec.actions:
-            notes = ["asks first" if action.autonomy == "ask" else "", "always needs a person's tap" if action.requires_human else ""]
-            note = "; ".join(n for n in notes if n)
-            lines.append(f"- `{signature(f'{spec.name}_{action.name}', action.input_schema)}`: {action.description}" + (f" ({note})" if note else ""))
-        lines.append("")
-    if spec.values:
-        lines += ["## Values", "", "Read with `state_get`; triggers can watch them.", ""]
-        for value in spec.values:
-            params = f"[{','.join(value.params)}]" if value.params else ""
-            unit = f", {value.unit}" if value.unit else ""
-            personal = ", only the person `user` names can read it" if value.personal else ""
-            lines.append(f"- `{spec.name}.{value.name}{params}`: {value.description} ({value.type}, {value.updates}{unit}{personal})")
-        lines.append("")
-    if spec.events:
-        lines += ["## Events", "", "Search them with `events_search`; triggers can watch them.", ""]
-        for event in spec.events:
-            fields = f" Fields: {', '.join(f'{k} ({v})' for k, v in event.data.items())}." if event.data else ""
-            lines.append(f"- `{spec.name}.{event.type}`: {event.description}{fields}")
-        lines.append("")
-    if spec.tables:
-        standard = ", ".join(STANDARD_COLUMNS)
-        lines += [
-            "## Tables",
-            "",
-            f"History for analysis, kept for good. Query with `data_sql` (SQLite, one read-only statement; JSON functions work). "
-            f"Every table also has the standard columns {standard}: `at` is ISO local time, `ts` seconds since the epoch, "
-            "`local_minute` minutes since local midnight, `weekday` 1 for Monday, and `user_id` whose row it is. "
-            "Join tables of different sources on time (`ts` windows, or the latest row before a time) and on `user_id`.",
-            "",
-        ]
-        for table in spec.tables:
-            lines += [f"### `{spec.name}_{table.name}`", "", _one_line(table.description), ""]
-            lines += [f"- `{c.name}` ({c.type}): {c.description}" for c in table.columns]
-            indexes = [["ts"], ["user_id", "ts"], *table.indexes]
-            lines += ["", "Indexed on " + ", ".join(f"({', '.join(i)})" for i in indexes) + ".", ""]
-    return "\n".join(lines)
 
 
 def write_all(specs: list[SourceSpec], folder: Path) -> None:
@@ -156,8 +81,3 @@ def link_all(specs: list[SourceSpec], folder: Path, links: Path) -> None:
 def _writable(path: Path) -> None:
     for item in [path, *path.rglob("*")]:
         item.chmod(item.stat().st_mode | stat.S_IWUSR)
-
-
-def _one_line(text: str) -> str:
-    line = " ".join(text.split())
-    return line if line.endswith(".") else f"{line}."

@@ -95,6 +95,10 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
   wipe.sh                   wipes what huvu and Hermes keep for a user (or the default group): triggers, conversations, event log, Hermes sessions, memory, model-written skills; the account and settings stay
 ```
 
+## Prompts
+
+Every text a model reads from huvu lives in `backend/src/huvu/prompts.py` (moved there 2026-10-08): the plugin's guide, the MCP instructions, tool and schema descriptions, every source's descriptions and guide (`TEXT`, keyed by where each sits in its spec, such as `location.value.place`), the skill renderer, wakes, the situation block, the note that continues a session, the dream and Whisper's prompt. Code elsewhere picks a text and fills its blanks. New model-facing text goes there too, including a new driver's. Error messages stay where they are raised. `prompts.py` imports nothing from huvu, because the Hermes plugin loads it by path inside Hermes's Python. `SOUL.md` stays a file at the repo root. `tests/test_prompts.py` pins the texts built at run time.
+
 ## Sanity checklist
 
 Every new feature that a person touches, and every change to how one behaves, gets a check in `docs/sanity-check.md` in the same change. Write it for humans, not developers: what to do, and what they should see. Put it under the screen or feature it belongs to. Move it out of "What doesn't work yet" once it works.

@@ -55,7 +55,6 @@ from typing import Any, Literal
 
 from .spec import Autonomy
 
-
 # The repo this backend runs from: backend/src/huvu/config.py, three up.
 REPO = Path(__file__).resolve().parents[3]
 # The model behind each tier, on the ChatGPT login Hermes uses.

@@ -29,9 +29,9 @@ from .accounts import AuthError, Device
 from .data import DataError
 from .events import day_bounds
 from .names import UnknownName
+from .prompts import ACT_REASON, ACTION_REASON, EVENT_TYPE, NEEDS_TAP, TOOLS, signature
 from .registry import suggest
 from .scripts import ScriptError
-from .skills import signature
 from .source import SourceError
 from .spec import Caller, Label, Result, merge_labels
 from .times import RELATIVE_RE, UNITS, parse_when
@@ -87,7 +87,7 @@ class ToolBox:
                 raise ValueError(f"a source can't be named {spec.name!r}; it collides with kernel tools")
             for action in spec.actions:
                 schema = _with_reason(action.input_schema)
-                desc = action.description + (" Always needs a person's tap." if action.requires_human else "")
+                desc = action.description + (NEEDS_TAP if action.requires_human else "")
                 handler = self._action_handler(spec.name, action.name)
                 self._add(Tool(f"{spec.name}_{action.name}", desc, schema, handler, writes=True, exposed=False))
 
@@ -132,33 +132,31 @@ class ToolBox:
         return [
             Tool(
                 "act",
-                "Runs a huvu action by name, such as ha_turn_on, with its args. Each source's skill (huvu-<source>) lists its actions; "
-                "state_search results list the actions that work each thing. An action may wait for a person's approval; the result says so.",
-                _schema({"name": {"type": "string"}, "args": {"type": "object"}, "reason": {"type": "string", "description": "One line: why."}}, ["name"]),
+                TOOLS["act"],
+                _schema({"name": {"type": "string"}, "args": {"type": "object"}, "reason": {"type": "string", "description": ACT_REASON}}, ["name"]),
                 self._act,
                 writes=True,
             ),
             Tool(
                 "state_get",
-                "Reads values by key, such as clock.time or ha.entity_state[light.porch]. Each reading says how old it is. "
-                "Each source's skill (huvu-<source>) lists its values; state_search finds things by name.",
+                TOOLS["state_get"],
                 _schema({"values": {"type": "array", "items": {"type": "string"}}}, ["values"]),
                 self._state_get,
             ),
             Tool(
                 "state_search",
-                "Finds values by what things are called: device names, areas, aliases. Each result has its key and current value.",
+                TOOLS["state_search"],
                 _schema({"query": {"type": "string"}}, ["query"]),
                 self._state_search,
             ),
             Tool(
                 "events_search",
-                "Searches the event log, newest first. `query` words must all match. `since` and `until` take 2h, 3d, today, yesterday or ISO 8601.",
+                TOOLS["events_search"],
                 _schema(
                     {
                         "query": {"type": "string"},
                         "source": {"type": "string"},
-                        "type": {"type": "string", "description": "A qualified type, such as tuya.doorbell"},
+                        "type": {"type": "string", "description": EVENT_TYPE},
                         "since": {"type": "string"},
                         "until": {"type": "string"},
                         "limit": {"type": "integer"},
@@ -166,84 +164,73 @@ class ToolBox:
                 ),
                 self._events_search,
             ),
-            Tool("events_get", "One event by id, with its refs.", _schema({"id": {"type": "string"}}, ["id"]), self._events_get),
+            Tool("events_get", TOOLS["events_get"], _schema({"id": {"type": "string"}}, ["id"]), self._events_get),
             Tool(
                 "events_digest",
-                "A rollup of one day (today, yesterday or YYYY-MM-DD), or one hour of it: counts per event type with a few summaries, and counts per hour.",
+                TOOLS["events_digest"],
                 _schema({"day": {"type": "string"}, "hour": {"type": "integer"}}),
                 self._events_digest,
             ),
             Tool(
                 "data_sql",
-                "Runs one read-only SQLite query over the history every source keeps, for finding patterns and preferences. "
-                "Each source's skill (huvu-<source>) lists its tables (<source>_<table>) and columns. `events` is the event log "
-                "(id, source, type, entity, summary, data as JSON). Every table has at, ts (epoch s), local_date, local_minute "
-                "(minutes since midnight), weekday (1 = Monday), user_id and group_id. JSON functions work. "
-                "Returns columns and rows, at most `limit` (default 200, at most 1000): aggregate in SQL instead of reading rows.",
+                TOOLS["data_sql"],
                 _schema({"sql": {"type": "string"}, "limit": {"type": "integer"}}, ["sql"]),
                 self._data_sql,
             ),
-            Tool("sources_list", "Every source with its values, events, actions and tables.", _schema({}), self._sources_list),
+            Tool("sources_list", TOOLS["sources_list"], _schema({}), self._sources_list),
             Tool(
                 "triggers_register",
-                "Registers a trigger: a condition over source data, the clock included, and a script that runs each time it comes true. "
-                "Write `note` first: why it exists and what to do. The script can call granted tools and can wake an instance of you. "
-                "`when` is a flat list that must all hold. `repeat` is no, yes or daily. `include` lists values to bring along in the wake. "
-                "`expires` takes 2h, tomorrow 09:00 or ISO; a repeat=no trigger without one expires in 7 days. "
-                "On a shared device with nobody recognized, the trigger waits until someone confirms on their phone that it was them; the result says so.",
+                TOOLS["triggers_register"],
                 TRIGGER_SCHEMA,
                 self._triggers_register,
                 writes=True,
             ),
-            Tool("triggers_test", "Checks a trigger without registering it: each check's current reading and result, recent matching events, and what its script would do.", TRIGGER_SCHEMA, self._triggers_test),
-            Tool("triggers_list", "Every live trigger of the person you're helping, or the group's.", _schema({}), self._triggers_list),
-            Tool("triggers_remove", "Removes a trigger.", _schema({"id": {"type": "string"}}, ["id"]), self._triggers_remove, writes=True),
+            Tool("triggers_test", TOOLS["triggers_test"], TRIGGER_SCHEMA, self._triggers_test),
+            Tool("triggers_list", TOOLS["triggers_list"], _schema({}), self._triggers_list),
+            Tool("triggers_remove", TOOLS["triggers_remove"], _schema({"id": {"type": "string"}}, ["id"]), self._triggers_remove, writes=True),
             Tool(
                 "triggers_pause",
-                "Pauses a trigger: it stops firing, and keeps everything else. Use it when a trigger fires too often or misbehaves, "
-                "until the person says what they want. `reason` is one line for them.",
+                TOOLS["triggers_pause"],
                 _schema({"id": {"type": "string"}, "reason": {"type": "string"}}, ["id"]),
                 self._triggers_pause,
                 writes=True,
             ),
             Tool(
                 "triggers_resume",
-                "Resumes a paused trigger. One the wake limit paused can only be resumed by its person, from the app.",
+                TOOLS["triggers_resume"],
                 _schema({"id": {"type": "string"}}, ["id"]),
                 self._triggers_resume,
                 writes=True,
             ),
             Tool(
                 "people_identify",
-                "Asks someone who uses this shared device, on their phone, whether they're the one at it. "
-                "Use it when someone says who they are, or you think you know. `user` is their username or name. "
-                "Once they tap yes, you act for them: their triggers, approvals and notifications.",
+                TOOLS["people_identify"],
                 _schema({"user": {"type": "string"}}, ["user"]),
                 self._people_identify,
                 writes=True,
             ),
             Tool(
                 "people_release",
-                "Forgets who is at this shared device, such as when they say they're leaving.",
+                TOOLS["people_release"],
                 _schema({}),
                 self._people_release,
                 writes=True,
             ),
             Tool(
                 "ui_choices",
-                "Shows the owner buttons under your answer. Picking one sends its text as their next message.",
+                TOOLS["ui_choices"],
                 _schema({"options": {"type": "array", "items": {"type": "string"}}}, ["options"]),
                 self._ui_choices,
             ),
             Tool(
                 "ui_show_feed",
-                "Shows a live feed in your answer. `feed` is a feed id from GET /api/feeds; `caption` says what it shows right now.",
+                TOOLS["ui_show_feed"],
                 _schema({"feed": {"type": "string"}, "caption": {"type": "string"}}, ["feed"]),
                 self._ui_show_feed,
             ),
             Tool(
                 "ui_show_image",
-                "Shows an image in your answer. `ref` is a ref from a source, such as an event's snapshot.",
+                TOOLS["ui_show_image"],
                 _schema({"ref": {"type": "string"}, "caption": {"type": "string"}}, ["ref"]),
                 self._ui_show_image,
             ),
@@ -402,7 +389,7 @@ def _with_reason(schema: dict[str, Any]) -> dict[str, Any]:
     """Every action takes an optional `reason`, one line for the audit log
     and the approval the owner sees."""
     properties = dict(schema.get("properties") or {})
-    properties["reason"] = {"type": "string", "description": "One line: why. Shown to the owner on approvals."}
+    properties["reason"] = {"type": "string", "description": ACTION_REASON}
     return {**schema, "properties": properties}
 
 

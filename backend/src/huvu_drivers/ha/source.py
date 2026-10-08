@@ -49,9 +49,20 @@ from datetime import datetime
 from typing import Any
 
 from huvu.config import secret
+from huvu.prompts import HA_GUIDE, TEXT
 from huvu.registry import suggest
 from huvu.source import Source, SourceError
-from huvu.spec import Caller, ColumnSpec, EventSpec, Match, Reading, Result, SourceSpec, TableSpec, ValueSpec
+from huvu.spec import (
+    Caller,
+    ColumnSpec,
+    EventSpec,
+    Match,
+    Reading,
+    Result,
+    SourceSpec,
+    TableSpec,
+    ValueSpec,
+)
 
 from .client import Connect, HAClient, HAError, connect_websocket
 from .history import Actor, Attribution, SensorBuckets
@@ -95,13 +106,13 @@ NOISE = {"entity_picture", "icon", "supported_features", "supported_color_modes"
 ENTITY = {"entity_id": "string"}
 
 VALUES = [
-    ValueSpec(name="entity_state", description="An exposed Home Assistant entity's state, as HA says it: on, off, a mode, a number as text", type="string", params=ENTITY, updates="on_demand"),
-    ValueSpec(name="entity_number", description="An exposed entity's state as a number, for sensors and comparisons", type="number", params=ENTITY, updates="on_demand"),
-    ValueSpec(name="entity_attributes", description="An exposed entity's attributes: brightness, target temperature, fan mode, assumed_state", type="object", params=ENTITY, updates="on_demand"),
-    ValueSpec(name="areas", description="Every area with its exposed entities, their states, and the scripts that work them", type="list", updates="on_demand"),
+    ValueSpec(name="entity_state", description=TEXT["ha.value.entity_state"], type="string", params=ENTITY, updates="on_demand"),
+    ValueSpec(name="entity_number", description=TEXT["ha.value.entity_number"], type="number", params=ENTITY, updates="on_demand"),
+    ValueSpec(name="entity_attributes", description=TEXT["ha.value.entity_attributes"], type="object", params=ENTITY, updates="on_demand"),
+    ValueSpec(name="areas", description=TEXT["ha.value.areas"], type="list", updates="on_demand"),
     ValueSpec(
         name="problems",
-        description="Whether huvu is connected to Home Assistant, its version, and what is wrong with the setup: scripts left out, missing descriptions, unknown labels",
+        description=TEXT["ha.value.problems"],
         type="object",
         updates="on_demand",
     ),
@@ -110,32 +121,32 @@ VALUES = [
 EVENTS = [
     EventSpec(
         type="state_changed",
-        description="A lock, cover, alarm, person, or door, window, smoke or leak sensor changed state.",
+        description=TEXT["ha.event.state_changed"],
         data={"entity_id": "string", "domain": "string", "device_class": "string", "area": "string", "from": "string", "to": "string", "actor": "string"},
     ),
-    EventSpec(type="script_run", description="Someone other than huvu ran one of the household's scripts.", data={"script": "string", "area": "string", "actor": "string"}),
+    EventSpec(type="script_run", description=TEXT["ha.event.script_run"], data={"script": "string", "area": "string", "actor": "string"}),
 ]
 
 
-_ACTOR = ColumnSpec(name="actor", type="text", description="Who caused it: huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button, a remote seen through a power plug)")
-_HA_USER = ColumnSpec(name="ha_user", type="text", description="The Home Assistant user id behind it, if any")
-_CONTEXT = ColumnSpec(name="context_id", type="text", description="HA's context id; rows of one script run share it")
-_AREA = ColumnSpec(name="area", type="text", description="The area's name in Home Assistant")
+_ACTOR = ColumnSpec(name="actor", type="text", description=TEXT["ha.column.actor"])
+_HA_USER = ColumnSpec(name="ha_user", type="text", description=TEXT["ha.column.ha_user"])
+_CONTEXT = ColumnSpec(name="context_id", type="text", description=TEXT["ha.column.context_id"])
+_AREA = ColumnSpec(name="area", type="text", description=TEXT["ha.column.area"])
 
 TABLES = [
     TableSpec(
         name="changes",
-        description="Every state change of an exposed entity, except numeric sensors (see sensor_5min), and every change of an attribute a person chooses (brightness, target temperature, fan mode). user_id is the huvu user who caused it, when known.",
+        description=TEXT["ha.table.changes"],
         columns=[
-            ColumnSpec(name="entity_id", type="text", description="The entity, such as climate.bedroom_ac"),
-            ColumnSpec(name="name", type="text", description="Its friendly name"),
-            ColumnSpec(name="domain", type="text", description="light, climate, binary_sensor, ..."),
-            ColumnSpec(name="device_class", type="text", description="door, window, power, ..., when it has one"),
+            ColumnSpec(name="entity_id", type="text", description=TEXT["ha.table.changes.column.entity_id"]),
+            ColumnSpec(name="name", type="text", description=TEXT["ha.table.changes.column.name"]),
+            ColumnSpec(name="domain", type="text", description=TEXT["ha.table.changes.column.domain"]),
+            ColumnSpec(name="device_class", type="text", description=TEXT["ha.table.changes.column.device_class"]),
             _AREA,
-            ColumnSpec(name="from_state", type="text", description="The state before; NULL for the first one seen"),
-            ColumnSpec(name="to_state", type="text", description="The state after"),
-            ColumnSpec(name="attributes", type="json", description="The chosen attributes after the change, such as {\"temperature\": 24, \"fan_mode\": \"low\"}"),
-            ColumnSpec(name="assumed", type="boolean", description="HA only assumes this state (an infrared device without a sensor)"),
+            ColumnSpec(name="from_state", type="text", description=TEXT["ha.table.changes.column.from_state"]),
+            ColumnSpec(name="to_state", type="text", description=TEXT["ha.table.changes.column.to_state"]),
+            ColumnSpec(name="attributes", type="json", description=TEXT["ha.table.changes.column.attributes"]),
+            ColumnSpec(name="assumed", type="boolean", description=TEXT["ha.table.changes.column.assumed"]),
             _ACTOR,
             _HA_USER,
             _CONTEXT,
@@ -144,12 +155,12 @@ TABLES = [
     ),
     TableSpec(
         name="script_runs",
-        description="Every run of an exposed script, by anyone. fields has the arguments for runs huvu made; HA doesn't report them for other runs.",
+        description=TEXT["ha.table.script_runs"],
         columns=[
-            ColumnSpec(name="script", type="text", description="The script's object id, as in the action name: bedroom_ac_set"),
-            ColumnSpec(name="name", type="text", description="The script's name"),
+            ColumnSpec(name="script", type="text", description=TEXT["ha.table.script_runs.column.script"]),
+            ColumnSpec(name="name", type="text", description=TEXT["ha.table.script_runs.column.name"]),
             _AREA,
-            ColumnSpec(name="fields", type="json", description="The arguments, such as {\"mode\": \"cool\", \"temperature\": 24}"),
+            ColumnSpec(name="fields", type="json", description=TEXT["ha.table.script_runs.column.fields"]),
             _ACTOR,
             _HA_USER,
             _CONTEXT,
@@ -158,17 +169,17 @@ TABLES = [
     ),
     TableSpec(
         name="sensor_5min",
-        description="Numeric sensors in 5-minute buckets, time-weighted. at is the bucket's start. A sensor that didn't change still has a row per bucket, so the latest row before a time is its value then.",
+        description=TEXT["ha.table.sensor_5min"],
         columns=[
-            ColumnSpec(name="entity_id", type="text", description="The sensor, such as sensor.bedroom_temperature"),
+            ColumnSpec(name="entity_id", type="text", description=TEXT["ha.table.sensor_5min.column.entity_id"]),
             _AREA,
-            ColumnSpec(name="device_class", type="text", description="temperature, humidity, power, ..."),
-            ColumnSpec(name="unit", type="text", description="The unit, such as °C or W"),
-            ColumnSpec(name="mean", type="real", description="The time-weighted mean over the bucket"),
-            ColumnSpec(name="low", type="real", description="The lowest reading in the bucket"),
-            ColumnSpec(name="high", type="real", description="The highest reading in the bucket"),
-            ColumnSpec(name="last", type="real", description="The reading at the bucket's end"),
-            ColumnSpec(name="changes", type="integer", description="How many new readings came in the bucket"),
+            ColumnSpec(name="device_class", type="text", description=TEXT["ha.table.sensor_5min.column.device_class"]),
+            ColumnSpec(name="unit", type="text", description=TEXT["ha.table.sensor_5min.column.unit"]),
+            ColumnSpec(name="mean", type="real", description=TEXT["ha.table.sensor_5min.column.mean"]),
+            ColumnSpec(name="low", type="real", description=TEXT["ha.table.sensor_5min.column.low"]),
+            ColumnSpec(name="high", type="real", description=TEXT["ha.table.sensor_5min.column.high"]),
+            ColumnSpec(name="last", type="real", description=TEXT["ha.table.sensor_5min.column.last"]),
+            ColumnSpec(name="changes", type="integer", description=TEXT["ha.table.sensor_5min.column.changes"]),
         ],
         indexes=[["entity_id", "ts"]],
     ),
@@ -212,8 +223,8 @@ class HomeAssistant(Source):
         name = self.ctx.name
         return SourceSpec(
             name=name,
-            description="Home Assistant: the devices and sensors it exposes to huvu, and the household's scripts, which are the only way to work them.",
-            guide=_guide(name),
+            description=TEXT["ha.description"],
+            guide=HA_GUIDE.format(name=name),
             values=VALUES,
             events=EVENTS,
             actions=[action(s) for s in self._known_scripts().values() if usable(s)],
@@ -582,20 +593,6 @@ class HomeAssistant(Source):
     def _setup(self) -> dict[str, Any]:
         client = self._client
         return {"connected": self._connected, "ha_version": client.version if client else None, "problems": self._problems}
-
-
-def _guide(name: str) -> str:
-    return f"""Home Assistant (HA) runs most of the house's devices. You can read every entity the household exposed to huvu, and you change the house only through the household's scripts: they are the actions below, and there is no other way to work a device. If a script is missing or wrong, tell the person; the household fixes it in HA.
-
-Find things with state_search. An entity's result lists the scripts that work it, and a search finds scripts by name too. `{name}.entity_state[...]` is HA's state as text, `{name}.entity_number[...]` the same as a number (for sensors and trigger comparisons), and `{name}.entity_attributes[...]` the rest: brightness, target temperature, fan mode.
-
-Many devices here are infrared: HA only assumes their state from the last button it sent, and their attributes say `assumed_state: true` (search marks them "assumed state"). For those, say what you sent ("I sent the off signal"), not what the device did, unless a power sensor confirms it.
-
-A script may wait for a person's approval; its label in HA decides, and the result says so. A script that returns data gives it back as `response`.
-
-Every change of an exposed entity and every script run is in the tables below, with who caused it (`actor`): huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button). `user_id` is the huvu user when known. Numeric sensors are in 5-minute buckets. Use these with data_sql for any question about the past, such as when a light was last on, and to learn what each person prefers. They start when huvu first connected to HA.
-
-`{name}.areas` lists every area with its entities and scripts. `{name}.problems` says whether huvu is connected to HA and what is wrong with the setup; read it when a script is missing or something fails."""
 
 
 def _name(state: dict[str, Any]) -> str:
