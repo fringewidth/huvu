@@ -184,6 +184,7 @@ class ConversationHub:
         group: str | None = None,
         actions: list[Action] | None = None,
         turn_id: str | None = None,
+        mode: str = "text",
     ) -> LiveTurn:
         """`conversation_id` is the asking device's id, and `user` its user,
         or `group` its group on a shared device. `turn_id` lets the client
@@ -201,7 +202,7 @@ class ConversationHub:
         tz = self._kernel.now().tzinfo
         self._kernel.attendance.touch(conversation_id)
         notes = self._take_notes(conversation_id)
-        message = _with_notes(_with_actions(text, actions, tz), notes, tz)
+        message = _with_notes(_with_actions(f"{prompts.mode_note(mode)}\n\n{text}", actions, tz), notes, tz)
         if replaces is not None:
             index = next((i for i, t in enumerate(kept) if t.id == replaces), None)
             if index is None:

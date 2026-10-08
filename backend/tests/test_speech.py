@@ -20,6 +20,7 @@ def test_numbers_and_markdown_read_naturally():
     assert sentences("It is 3.5 degrees.", 0, final=True)[0] == ["It is 3.5 degrees."]
     ready, _ = sentences("**Done.** See [the list](http://x.y/z).\n- one\n- two", 0, final=True)
     assert ready == ["Done.", "See the list.", "one", "two"]
+    assert sentences("All set! \U0001F33C\u2600\ufe0f Talk soon.", 0, final=True)[0] == ["All set!", "Talk soon."]
 
 
 def test_a_long_run_on_is_cut_at_a_comma():

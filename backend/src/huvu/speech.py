@@ -67,12 +67,18 @@ def sentences(text: str, start: int, final: bool) -> tuple[list[str], int]:
     return [s for s in (speakable(f) for f in found) if s], start
 
 
+# Emoji, their joiners and variation selectors: the voice would read their
+# names, or stumble.
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]")
+
+
 def speakable(text: str) -> str:
     """The words of a piece of markdown, as they should be read aloud."""
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"^\s*(?:[-*•]|\d+\.)\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"[*_`#>]+", "", text)
+    text = _EMOJI.sub("", text)
     return " ".join(text.split())
 
 

@@ -155,7 +155,7 @@ function follow(id: string, at = Date.now()): void {
 
 // Drops the turns from `keep` on, asks `ask` in their place, and streams
 // the answer into the new turn.
-function answer(keep: number, ask: string): void {
+function answer(keep: number, ask: string, mode: InputMode): void {
   const kept = state.turns.slice(0, keep);
   const gone = state.turns.slice(keep);
   // The backend replaces from the first dropped turn it knows of.
@@ -166,7 +166,7 @@ function answer(keep: number, ask: string): void {
   }
   const turn: Turn = { ...blank(newTurnId(), Date.now()), ask, running: true };
   set([...kept, turn]);
-  void read(turn.id, (signal) => streamTurn({ id: turn.id, ask, replaces, actions: actionsAfterLastAsk(kept) }, signal));
+  void read(turn.id, (signal) => streamTurn({ id: turn.id, ask, replaces, actions: actionsAfterLastAsk(kept), mode }, signal));
 }
 
 function indexOf(id: string): number {
@@ -175,8 +175,11 @@ function indexOf(id: string): number {
   return i;
 }
 
-export function ask(text: string): void {
-  answer(state.turns.length, text);
+// How an ask was made: spoken in voice mode, or typed.
+export type InputMode = "voice" | "text";
+
+export function ask(text: string, mode: InputMode): void {
+  answer(state.turns.length, text, mode);
 }
 
 // Opens a live feed as a turn of its own, with no call to the backend. A
@@ -196,14 +199,14 @@ export function watch(feed: Feed): void {
 }
 
 // Rewind: the turn and everything after it are replaced by a new ask.
-export function edit(id: string, text: string): void {
-  answer(indexOf(id), text);
+export function edit(id: string, text: string, mode: InputMode): void {
+  answer(indexOf(id), text, mode);
 }
 
 // Asks the same thing again. Turns after it are dropped.
-export function retry(id: string): void {
+export function retry(id: string, mode: InputMode): void {
   const i = indexOf(id);
-  answer(i, state.turns[i].ask);
+  answer(i, state.turns[i].ask, mode);
 }
 
 // Asks the backend to stop every reply still coming in. Each keeps

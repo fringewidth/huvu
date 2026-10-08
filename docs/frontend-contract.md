@@ -22,6 +22,7 @@ Every device has one conversation, and the token says which device is asking, so
 1. `id` is the turn's own id, minted by the client (`t_` and ten hex digits). The backend keeps it, so a stop or a rewind names the turn by an id the client already has. Left out, the backend picks one. An id already used answers `409`.
 1. `replaces` is for edit and retry: the turn it names is replaced, with everything after it. The frontend names the first dropped turn the backend has heard of, since a turn that never reached the backend is not there to replace. An unknown id answers `404`.
 1. `actions` is what the user did in the app since the last ask. Today that is opening a live feed: the feed turns after the last real turn (`actionsAfterLastAsk` in `chat/thread.ts`). Opening a feed makes no call of its own. Hermes gets each action as a note in front of the ask, marked as context that needs no reply. The turn stores them, and a rewind replays them in its transcript.
+1. `mode` is how the ask was made: `"voice"` (spoken in voice mode) or `"text"` (typed, and the default). The backend puts one line in front of the message telling the model which, so a spoken answer is written to be heard, with no emojis or markdown (`VOICE_NOTE` and `TEXT_NOTE` in `prompts.py`). Edit and retry send the mode the app is in when they are made.
 
 The answer is Server-Sent Events. Every event's data carries `turn` and `conversation` (the device's id). A status other than 200 ends the turn as failed, and so does a stream that closes before `turn.ended`.
 

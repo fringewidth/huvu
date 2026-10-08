@@ -169,6 +169,19 @@ def action_note(when: str, text: str) -> str:
     return f"(Owner action in the app, {when}: {text}. Not a request, no reply needed.)"
 
 
+# Rides with every ask from the app: how it was made. A spoken answer is
+# heard, not read, so it gets none of what only reads well.
+VOICE_NOTE = (
+    "(huvu: they're talking to you by voice, and your answer is spoken aloud. Write it to be heard: "
+    "plain sentences, no emojis, no markdown, lists or links. Not a request, no reply needed.)"
+)
+TEXT_NOTE = "(huvu: they're typing to you, and your answer is read on screen. Not a request, no reply needed.)"
+
+
+def mode_note(mode: str) -> str:
+    return VOICE_NOTE if mode == "voice" else TEXT_NOTE
+
+
 def huvu_note(time: str, text: str) -> str:
     """Something huvu tells the model on the device's next ask."""
     return f"(huvu, {time}: {text}. Not a request, no reply needed.)"

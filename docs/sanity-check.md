@@ -48,6 +48,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Click the flower. It should move to the middle of the screen, and the text field should go away.
 1. Say a question with your name in it. The flower should grow while you talk, and your words should appear while you speak. About a second after you stop, they should change to the final text, with your name spelled right, and huvu should answer.
 1. Listen to huvu's answer. It should start speaking within a second or two of its first words on screen, and keep speaking without gaps between sentences, while the rest of the answer is still being written.
+1. Ask something by voice that might tempt an emoji, such as "say something cheerful about my morning". The spoken answer, and its words on screen, should have no emojis, no bullet points and no bold text. Switch back to typing and ask the same: emojis and formatting are allowed again.
 1. Hold the space bar, talk, and let go. It should work the same as clicking the flower.
 1. Talk while huvu speaks. huvu should stop speaking.
 1. Scroll the answer. The flower should shrink and dock at the bottom. Tap it, and it should come back to the middle.

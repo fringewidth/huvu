@@ -113,15 +113,18 @@ export function Stage() {
   const heroId = view.kind === "stage" ? (turns.some((t) => t.id === view.focus) ? view.focus : latestStaged) : null;
   const shown = view.kind === "history" ? turns : turns.filter((t) => t.id === heroId);
 
+  // How an ask is made. Fire TV has no input of its own; a choice sent
+  // there is read on screen, so it counts as typed.
+  const inputMode: thread.InputMode = mode === "voice" ? "voice" : "text";
   const submit = (text: string, from?: Snapshot) => {
     const clean = text.trim();
     if (!clean) return;
     if (from) launch("ask", clean, from);
     if (rewindId) {
-      thread.edit(rewindId, clean);
+      thread.edit(rewindId, clean, inputMode);
       setRewindId(null);
     } else {
-      thread.ask(clean);
+      thread.ask(clean, inputMode);
     }
     setView({ kind: "stage", focus: null });
   };
@@ -194,7 +197,7 @@ export function Stage() {
       if (mode === "text" && running) return;
       submit(text);
     },
-    retry: (turn: thread.Turn) => thread.retry(turn.id),
+    retry: (turn: thread.Turn) => thread.retry(turn.id, inputMode),
     show: (section: MenuSection) => setMenu(section),
     registerFocus: (id: string, el: HTMLButtonElement | null) => {
       rowButtons.current.set(id, el);

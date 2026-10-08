@@ -247,7 +247,7 @@ async def test_a_warm_session_continues_and_a_cold_one_starts_over(kernel, herme
     await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
     clock.advance(minutes=4)
     await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
-    assert len(hermes.sessions) == 1 and hermes.messages[-1][1] == "two"
+    assert len(hermes.sessions) == 1 and hermes.messages[-1][1].endswith("\n\ntwo")
     clock.advance(minutes=6)
     await collect(kernel, await kernel.conversations.ask("c1", "three", user="me"))
     assert len(hermes.sessions) == 2
@@ -311,3 +311,13 @@ async def test_a_running_turn_replays_what_came_before(kernel, hermes):
 
 async def _drain(events) -> list[tuple[str, dict]]:
     return [item async for item in events]
+
+
+async def test_every_ask_says_whether_it_was_spoken_or_typed(kernel, hermes):
+    from huvu import prompts
+
+    await collect(kernel, await kernel.conversations.ask("c1", "what's up", user="me", mode="voice"))
+    assert hermes.messages[-1][1] == f"{prompts.VOICE_NOTE}\n\nwhat's up"
+    assert "no emojis" in prompts.VOICE_NOTE
+    await collect(kernel, await kernel.conversations.ask("c1", "and now?", user="me"))
+    assert hermes.messages[-1][1] == f"{prompts.TEXT_NOTE}\n\nand now?"

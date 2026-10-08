@@ -50,6 +50,8 @@ class Ask(BaseModel):
     # What the user did in the app since the last ask. Context for the
     # model, never a request.
     actions: list[Action] = Field(default_factory=list)
+    # How the ask was made: spoken in voice mode, or typed.
+    mode: Literal["voice", "text"] = "text"
 
 
 class NewDevice(BaseModel):
@@ -441,7 +443,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
 async def _ask(kernel: Kernel, ask: Ask, me: Device):
     try:
-        live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, group=me.group, actions=ask.actions, turn_id=ask.id)
+        live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, group=me.group, actions=ask.actions, turn_id=ask.id, mode=ask.mode)
     except KeyError as err:
         raise HTTPException(404, str(err)) from err
     except ValueError as err:

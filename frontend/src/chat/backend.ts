@@ -19,6 +19,9 @@ export interface AskBody {
   // retry). Left out for a new turn at the end.
   replaces?: string;
   actions: Action[];
+  // How the ask was made: spoken in voice mode, or typed. huvu writes a
+  // spoken answer to be heard.
+  mode: "voice" | "text";
 }
 
 // What a turn event's data can carry. Which fields are there depends on
