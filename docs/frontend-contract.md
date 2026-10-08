@@ -80,15 +80,17 @@ The frontend renders a turn as an `answer` string plus `parts` (`RichPart` in `c
 
 ```ts
 type RichPart =
-  | { kind: "image"; src: string }
-  | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown };
+  | { kind: "image"; src: string; after?: number }
+  | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown; after?: number };
 ```
+
+`after` is how much of the answer huvu had said when the part came, counted without leading whitespace. The stage cuts the answer there and shows the part's note between the two pieces, so the words and the tools show in the order they happened. A part without it goes before the answer.
 
 Tool names the stage knows (`frontend/src/stage/parts.ts`):
 
 | `toolName` | Reads | Shows |
 |---|---|---|
-| `web_search` | `args.query`, `result.sources` (an array, only its length is used) | A note above the answer |
+| `web_search` | `args.query`, `result.sources` (an array, only its length is used) | A note in the answer, where huvu searched |
 | `video_feed` | `args.src` (WHEP URL), `args.label`, `args.caption` | A live panel below the answer |
 | `choices` | `args.options` (array of strings) | Buttons, last. Picking one sends its text as a new ask, on Fire TV too (D-pad and select) |
 

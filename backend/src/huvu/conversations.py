@@ -350,9 +350,16 @@ class ConversationHub:
         target = live[0] if len(live) == 1 else None
         if target is not None:
             if kind == "image":
-                part: dict[str, Any] = {"kind": "image", "src": args["src"]}
+                part: dict[str, Any] = {"kind": "image", "src": args["src"], "after": _said(target.turn)}
             else:
-                part = {"kind": "tool", "id": f"{target.turn.id}-p{len(target.turn.parts)}", "toolName": kind, "args": args, "result": {}}
+                part = {
+                    "kind": "tool",
+                    "id": f"{target.turn.id}-p{len(target.turn.parts)}",
+                    "toolName": kind,
+                    "args": args,
+                    "result": {},
+                    "after": _said(target.turn),
+                }
             target.turn.parts.append(part)
             self._emit(target, "part", {"part": part})
         return target is not None
@@ -433,6 +440,7 @@ class ConversationHub:
             "toolName": shown,
             "args": adapter.args(args) if adapter else {},
             "result": None,
+            "after": _said(live.turn),
         }
         live.turn.parts.append(part)
         live.open_tools.setdefault(bare, []).append(part["id"])
@@ -560,6 +568,13 @@ class Adapter:
 ADAPTERS: dict[str, Adapter] = {
     "web_search": Adapter(args=lambda a: {"query": str(a.get("query", ""))}, result=lambda preview: {}),
 }
+
+
+def _said(turn: Turn) -> int:
+    """Where a part goes in the answer: after everything huvu has said so
+    far, so the stage shows each tool between the words around it. Counted
+    without leading whitespace, since the stage trims the answer."""
+    return len(turn.answer.lstrip())
 
 
 def _note(action: Action, tz: tzinfo | None) -> str:

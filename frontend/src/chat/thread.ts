@@ -7,9 +7,11 @@ import type { Feed } from "./feeds";
 // The stage shows turns, never a chat log, so this is the model itself
 // and not something derived from messages. Every change replaces only the
 // turn it touches, so a streaming reply re-renders only its own turn.
+// `after` is how much of the answer huvu had said when the part came, so a
+// note sits between the words around it. Parts without one go first.
 export type RichPart =
-  | { kind: "image"; src: string }
-  | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown };
+  | { kind: "image"; src: string; after?: number }
+  | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown; after?: number };
 export type ToolPart = Extract<RichPart, { kind: "tool" }>;
 export type ImagePart = Extract<RichPart, { kind: "image" }>;
 

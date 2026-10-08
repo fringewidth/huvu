@@ -28,6 +28,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Write a question and send it. On the phone, send with the send button; Enter makes a new line. On the laptop, Enter sends. Your words should fly up to the top next to "YOU", in plain letters. huvu's answer should write itself in, in upright serif letters.
 1. Ask huvu to remind you of something every day at a time, such as "remind me to water the plants every day at 9". Within a few seconds it should say it's on it, and within about ten it should say it's done. The reminder should show in the menu under your triggers.
 1. Ask something that needs thought, such as a small puzzle. While huvu works, a faint line of its thinking should show under the answer and change as it thinks. It should fade away once the answer is done. (Only with a model that sends its thinking, such as gpt-6-sol.)
+1. Ask something that makes huvu search the web more than once, such as "what did OpenAI announce yesterday, and what does it mean?". Each "searched the web" line should show where huvu searched: after the words it said before searching, and before the words it wrote after. The lines should not all gather at the top of the answer.
 1. While huvu answers, look at the garden. A little more should grow as the words come in.
 1. Ask for something long, such as a recipe, and scroll down through the answer, then back up to the top. The answer should stay on screen. It should not jump to the history while you read.
 1. Read a few paragraphs of that long answer. The letters should be smaller than in a short answer and the lines well spaced, easy to read for a minute or two without strain.
@@ -51,6 +52,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Listen to huvu's answer. It should start speaking within a second or two of its first words on screen, and keep speaking without gaps between sentences, while the rest of the answer is still being written.
 1. Ask something by voice that might tempt an emoji, such as "say something cheerful about my morning". The spoken answer, and its words on screen, should have no emojis, no bullet points and no bold text. Switch back to typing and ask the same: emojis and formatting are allowed again.
 1. Hold the space bar, talk, and let go. It should work the same as clicking the flower.
+1. Ask by voice something that makes huvu search the web, and stay quiet while it searches. huvu should say the line before its search, go quiet while it searches, and then say the rest of the answer.
 1. Talk while huvu speaks. huvu should stop speaking.
 1. Scroll the answer. The flower should shrink and dock at the bottom. Tap it, and it should come back to the middle.
 1. Tap "write". The text field should come back, and the conversation should be the same as before.

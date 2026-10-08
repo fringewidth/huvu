@@ -3,7 +3,7 @@ import * as m from "motion/react-m";
 import { AnimatePresence, type Variants } from "motion/react";
 import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
-import { chipsFor, kindOf, partsInSlot, type Slot } from "../stage/parts";
+import { chipsFor, interleave, kindOf, partsInSlot, type Slot } from "../stage/parts";
 import { capsClass, EASE } from "../stage/style";
 import type { ImagePart, RichPart, ToolPart, Turn } from "../chat/thread";
 import type { MenuSection } from "./Menu";
@@ -76,6 +76,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
   const hero = variant === "hero";
   const chips = chipsFor(turn.parts);
   const size = answerSize(turn.answer, variant, wide);
+  const pieces = interleave(turn.answer, hero ? partsInSlot(turn.parts, "note") : []);
 
   // The size the answer had before its latest size change, kept until the
   // next one, so the new copy knows what it is crossfading from.
@@ -163,32 +164,41 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
         </div>
       )}
 
-      {fold("note")}
-
       <div className={`relative z-0 ${hero ? "" : "pointer-events-none"}`}>
+        {/* The answer with huvu's notes where it ran each tool. A row
+            shows the answer alone. With the answer hidden (the phone's
+            voice stage), the notes stay where they were. */}
+        <div className="flex flex-col gap-3 sm:gap-4">
+          {pieces.map((piece, i) =>
+            "notes" in piece ? (
+              <m.div key={i} {...fade}>
+                <HeroParts here={piece.notes} onChoose={actions.choose} />
+              </m.div>
+            ) : (
+              <AnimatePresence key={i} initial={false} mode="popLayout" custom={shape.ratio}>
+                {answerShown && (
+                  <m.p
+                    key={size.key}
+                    custom={shape.ratio}
+                    variants={crossfade}
+                    initial="enter"
+                    animate="shown"
+                    exit="leave"
+                    style={{ fontSize: size.fontSize, lineHeight: size.lineHeight, transformOrigin: "0 0" }}
+                    className={`halo m-0 whitespace-pre-wrap font-reading [text-wrap:pretty] ${
+                      hero ? "text-ivory" : "fade-bottom max-h-[2.7em] overflow-hidden text-ivory/75"
+                    }`}
+                  >
+                    {/* Words fade in one by one only on the answer's first
+                        appearance, not again on every size change. */}
+                    <AnswerText text={piece.text} streaming={turn.running && shape.ratio === 1} />
+                  </m.p>
+                )}
+              </AnimatePresence>
+            ),
+          )}
+        </div>
         {answerShown && turn.running && !turn.answer && <span className="thinking-thread" aria-label="huvu is thinking" />}
-        {turn.answer && (
-          <AnimatePresence initial={false} mode="popLayout" custom={shape.ratio}>
-            {answerShown && (
-              <m.p
-                key={size.key}
-                custom={shape.ratio}
-                variants={crossfade}
-                initial="enter"
-                animate="shown"
-                exit="leave"
-                style={{ fontSize: size.fontSize, lineHeight: size.lineHeight, transformOrigin: "0 0" }}
-                className={`halo m-0 whitespace-pre-wrap font-reading [text-wrap:pretty] ${
-                  hero ? "text-ivory" : "fade-bottom max-h-[2.7em] overflow-hidden text-ivory/75"
-                }`}
-              >
-                {/* Words fade in one by one only on the answer's first
-                    appearance, not again on every size change. */}
-                <AnswerText text={turn.answer} streaming={turn.running && shape.ratio === 1} />
-              </m.p>
-            )}
-          </AnimatePresence>
-        )}
         {/* huvu's reasoning summary while it works: faint, the newest lines
             of the current burst, gone once the turn ends. */}
         <AnimatePresence>

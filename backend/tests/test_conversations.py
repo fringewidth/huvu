@@ -73,6 +73,24 @@ async def test_words_beside_tool_calls_open_the_answer(kernel, hermes: FakeHerme
     assert turn.answer == shown == "On it, setting that up.\n\nChecking the clock too.\n\nDone: every day at 9."
 
 
+async def test_each_part_knows_where_it_falls_in_the_answer(kernel, hermes: FakeHermes):
+    hermes.script = [
+        ("run.started", {"run_id": "run_a"}),
+        ("tool.started", {"tool_name": "web_search", "args": {"query": "first"}}),
+        ("tool.completed", {"tool_name": "web_search", "preview": "[]"}),
+        ("assistant.commentary", {"text": "Looking it up."}),
+        ("tool.started", {"tool_name": "web_search", "args": {"query": "second"}}),
+        ("tool.completed", {"tool_name": "web_search", "preview": "[]"}),
+        ("assistant.delta", {"delta": "Found it."}),
+        ("run.completed", {}),
+    ]
+    live = await kernel.conversations.ask("c1", "look something up", user="me")
+    await collect(kernel, live)
+    [turn] = kernel.conversations.turns("c1")
+    assert turn.answer == "Looking it up.\n\nFound it."
+    assert [p["after"] for p in turn.parts] == [0, len("Looking it up.\n\n")]
+
+
 async def test_thinking_reaches_the_turn_and_stays_out_of_the_answer(kernel, family, hermes: FakeHermes):
     shown: list[bool] = []
 

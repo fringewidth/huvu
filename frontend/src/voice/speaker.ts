@@ -8,7 +8,9 @@ import { acquireMic, type Mic } from "./mic";
 // are decoded in order and each is scheduled right after the one before,
 // so the sentences play without gaps. It plays through an analyser so the
 // garden can grow the garland with it, and while it plays, the mic listens
-// for the user talking over it.
+// for the user talking over it. Only while it plays: between sentences,
+// while huvu runs its tools, there is nothing to talk over, and the mic's
+// gain climbs in the quiet until room noise would cut the rest off.
 // Mic loudness that counts as talking over huvu.
 const BARGE_IN_RMS = 0.15;
 // How far ahead the first piece starts, so it never starts in the past.
@@ -102,7 +104,7 @@ export async function speak(turnId: string): Promise<void> {
     const listenForBargeIn = () => {
       const watch = () => {
         if (done || !mic) return;
-        if (mic.rms() > BARGE_IN_RMS) return finish();
+        if (sources.size > 0 && mic.rms() > BARGE_IN_RMS) return finish();
         raf = requestAnimationFrame(watch);
       };
       acquireMic()
