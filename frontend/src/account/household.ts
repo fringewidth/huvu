@@ -10,7 +10,10 @@ export interface Trigger {
   id: string;
   note: string;
   repeat: string;
-  status: "active" | "unconfirmed" | "paused";
+  // `awaiting`: an advanced trigger waiting for its person's yes.
+  status: "active" | "unconfirmed" | "awaiting" | "paused";
+  // The model its wakes run on: basic, pro or advanced.
+  tier: "basic" | "pro" | "advanced";
   // Who paused it. One the wake limit paused (`limit`) comes back only by
   // a person's tap, here.
   paused_by: "model" | "user" | "limit" | null;
@@ -43,6 +46,13 @@ export async function refreshTriggers(): Promise<void> {
 
 export async function setPaused(id: string, paused: boolean): Promise<void> {
   const trigger = await postJson<Trigger>(`/api/triggers/${id}/${paused ? "pause" : "resume"}`);
+  set({ triggers: state.triggers.map((t) => (t.id === id ? trigger : t)) });
+}
+
+// Says yes to an advanced trigger. On the person's own device the tap is
+// the yes, and the trigger comes back live.
+export async function allow(id: string): Promise<void> {
+  const trigger = await postJson<Trigger>(`/api/triggers/${id}/approve`);
   set({ triggers: state.triggers.map((t) => (t.id === id ? trigger : t)) });
 }
 

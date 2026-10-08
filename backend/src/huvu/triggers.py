@@ -72,7 +72,12 @@ log = logging.getLogger("huvu.triggers")
 
 Op = Literal["==", "!=", "<", "<=", ">", ">=", "between", "in", "contains"]
 Repeat = Literal["no", "yes", "daily"]
-Status = Literal["active", "unconfirmed", "paused", "done", "expired", "removed"]
+Status = Literal["active", "unconfirmed", "awaiting", "paused", "done", "expired", "removed"]
+# Which model a trigger's wakes run on (config.models). Advanced waits for
+# its person's yes before it goes live.
+Tier = Literal["basic", "pro", "advanced"]
+# Statuses of a trigger still alive, firing or not.
+LIVE = ("active", "unconfirmed", "awaiting", "paused")
 # Who paused a trigger. One the wake limit paused resumes only by its user.
 PausedBy = Literal["model", "user", "limit"]
 
@@ -124,6 +129,11 @@ class TriggerSpec(Strict):
     )
     # The tools the script may call.
     grants: list[str] = Field(default_factory=list, description="The tools the script may call, such as [\"huvu_notify\"].")
+    tier: Tier = Field(
+        default="basic",
+        description="The model a ctx.wake from this trigger runs on: basic for routine judgment, pro when it needs more thought, "
+        "advanced for the hardest work. An advanced trigger waits for its person's yes on their phone before it goes live.",
+    )
 
     @field_validator("note")
     @classmethod
@@ -189,6 +199,7 @@ class Trigger:
             "include": self.spec.include or None,
             "script": bool(self.spec.script),
             "grants": self.spec.grants or None,
+            "tier": self.spec.tier,
             "status": self.status,
             "armed": self.armed,
             "created_at": self.created_at,
@@ -254,7 +265,7 @@ class TriggerEngine:
 
     async def load(self) -> None:
         """Reloads stored triggers and activates the live ones."""
-        rows = self._db.execute("SELECT * FROM triggers WHERE status IN ('active', 'unconfirmed', 'paused')").fetchall()
+        rows = self._db.execute(f"SELECT * FROM triggers WHERE status IN ({', '.join('?' * len(LIVE))})", LIVE).fetchall()
         for row in rows:
             trigger = Trigger(
                 id=row["id"],
@@ -386,8 +397,41 @@ class TriggerEngine:
         if unconfirmed:
             await self._kernel.attendance.ask_everyone(trigger.device, "trigger", f"setting up: {spec.note}")
         else:
+            await self._go_live(trigger, caller)
+        return trigger
+
+    async def _go_live(self, trigger: Trigger, caller: Caller) -> None:
+        """Activates a trigger that has its person, or, for an advanced one,
+        asks them first. The ask is a card on their phone that waits a day,
+        so it works the same from a conversation, a wake or a dream: nobody
+        has to be there when the trigger is set."""
+        if trigger.spec.tier != "advanced":
+            await self._activate(trigger)
+            return
+        trigger.status = "awaiting"
+        self._db.execute("UPDATE triggers SET status = 'awaiting' WHERE id = ?", (trigger.id,))
+        asker = Caller(kind=caller.kind, session=caller.session, trigger=caller.trigger, user=trigger.user, device=caller.device, group=caller.group)
+        reason = f"{trigger.spec.note} (wakes the {self._kernel.config.model('advanced')} model)"
+        await self._kernel.policy.request("huvu", "activate_trigger", {"trigger": trigger.id}, asker, reason)
+
+    async def approve(self, trigger_id: str) -> Trigger:
+        """Its person said yes to an advanced trigger: it goes live."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None or trigger.status not in ("awaiting", "active"):
+            raise TriggerError(f"no trigger {trigger_id!r} waiting for a yes")
+        if trigger.status == "awaiting":
+            trigger.status = "active"
+            self._db.execute("UPDATE triggers SET status = 'active' WHERE id = ?", (trigger.id,))
+            await self._kernel.kernel_event("trigger.approved", f"trigger {trigger.id} approved: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
             await self._activate(trigger)
         return trigger
+
+    async def refused(self, trigger_id: str, how: str) -> None:
+        """Its person said no to an advanced trigger, or never answered:
+        it goes. One already approved some other way stays."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is not None and trigger.status == "awaiting":
+            await self._end(trigger, "removed", f"trigger {trigger.id} was {how}: {trigger.spec.note}")
 
     async def confirm(self, device: str, user: str) -> list[Trigger]:
         """Someone was confirmed at a shared device: its waiting triggers
@@ -398,7 +442,7 @@ class TriggerEngine:
             trigger.status = "active"
             self._db.execute("UPDATE triggers SET status = 'active', user_id = ? WHERE id = ?", (user, trigger.id))
             await self._kernel.kernel_event("trigger.confirmed", f"trigger {trigger.id} is {user}'s: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
-            await self._activate(trigger)
+            await self._go_live(trigger, Caller(kind="kernel", user=user, device=device))
         return confirmed
 
     async def drop_unconfirmed(self, device: str, reason: str) -> None:
@@ -423,7 +467,7 @@ class TriggerEngine:
         def mine(t: Trigger) -> bool:
             return t.user == caller.user if caller.user is not None else (t.user is None and t.device == caller.device)
 
-        return [t for t in self._triggers.values() if t.status in ("active", "unconfirmed", "paused") and mine(t)]
+        return [t for t in self._triggers.values() if t.status in LIVE and mine(t)]
 
     async def pause(self, trigger_id: str, caller: Caller, reason: str | None = None) -> Trigger:
         """Pauses one of the caller's live triggers: it stops watching, and

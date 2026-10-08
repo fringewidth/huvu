@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import asyncio
+from datetime import timedelta
+
+import pytest
+
+from huvu.spec import Caller
+from huvu.triggers import TriggerSpec
+
+from .fakes import WAKE
+
+pytestmark = pytest.mark.usefixtures("family")
+
+ME = Caller(kind="hermes", session="s1", user="me")
+BELL = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": WAKE}
+
+
+async def settle(kernel) -> None:
+    for _ in range(3):
+        await asyncio.sleep(0)
+        await asyncio.gather(*kernel.triggers._tasks, return_exceptions=True)
+
+
+async def ring(kernel) -> None:
+    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
+    await settle(kernel)
+
+
+def wake_models(hermes) -> list[str | None]:
+    return [hermes.models[s] for s, _ in hermes.messages if s.startswith("wake-")]
+
+
+async def test_conversations_run_on_pro_and_wakes_on_their_tier(kernel, family, hermes):
+    live = await kernel.conversations.ask(family.me_web.id, "hi", user="me")
+    async for _ in kernel.conversations.subscribe(live):
+        pass
+    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
+
+    basic = await kernel.triggers.register(TriggerSpec.model_validate(BELL), ME)
+    await ring(kernel)
+    assert wake_models(hermes) == ["gpt-6-luna"]
+    await kernel.triggers.remove(basic.id, ME)
+
+    await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "tier": "pro"}), ME)
+    await ring(kernel)
+    assert wake_models(hermes) == ["gpt-6-luna", "gpt-6-sol"]
+
+
+async def test_an_advanced_trigger_waits_for_a_yes_on_the_phone(kernel, family, hermes):
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "tier": "advanced"}), ME)
+    assert trigger.status == "awaiting"
+    [approval] = kernel.policy.pending()
+    assert approval.user == "me" and "Doorbell." in approval.reason and "gpt-6-astra" in approval.reason
+    # A day to answer: a dream sets it at night.
+    assert approval.deadline - kernel.now() == timedelta(days=1)
+    await ring(kernel)
+    assert wake_models(hermes) == []
+
+    await kernel.policy.resolve(approval.id, True, family.me_phone)
+    assert trigger.status == "active"
+    await ring(kernel)
+    assert wake_models(hermes) == ["gpt-6-astra"]
+
+
+async def test_a_no_or_no_answer_drops_it(kernel, family, clock):
+    refused = await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "tier": "advanced"}), ME)
+    [approval] = kernel.policy.pending()
+    await kernel.policy.resolve(approval.id, False, family.me_phone)
+    assert refused.status == "removed"
+
+    ignored = await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "note": "Bell again.", "tier": "advanced"}), ME)
+    clock.advance(days=1, minutes=1)
+    await kernel.policy.expire()
+    assert ignored.status == "removed"
+
+
+async def test_a_tap_on_your_own_device_is_the_yes(kernel, family):
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "tier": "advanced"}), ME)
+    tap = Caller(kind="frontend", user="me", device=family.me_web.id)
+    await kernel.policy.request("huvu", "activate_trigger", {"trigger": trigger.id}, tap)
+    assert trigger.status == "active"
+    # The card still on the phone runs out and leaves it alone.
+    [card] = kernel.policy.pending()
+    await kernel.policy.resolve(card.id, False, family.me_phone)
+    assert trigger.status == "active"
+
+
+async def test_the_model_cant_approve_its_own(kernel, family):
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "tier": "advanced"}), ME)
+    result = await kernel.tools.call("act", {"name": "huvu_activate_trigger", "args": {"trigger": trigger.id}}, ME)
+    assert result.data["status"] in ("pending_approval", "already_pending")
+    assert trigger.status == "awaiting"
+
+
+async def test_everyone_gets_one_dream_and_a_removed_one_stays_gone(kernel):
+    await kernel.dreams.ensure()
+    await kernel.dreams.ensure()
+    dreams = {u: [t for t in kernel.triggers.list(Caller(kind="hermes", user=u)) if t.spec.note.startswith("Your dream.")] for u in ("me", "mom")}
+    assert [len(d) for d in dreams.values()] == [1, 1]
+    [mine] = dreams["me"]
+    assert mine.spec.tier == "pro" and mine.spec.repeat == "daily" and "ctx.wake" in mine.spec.script
+    assert "brief" in mine.spec.note and "quick notes" in mine.spec.note
+    await kernel.triggers.remove(mine.id, ME)
+    await kernel.dreams.ensure()
+    assert not [t for t in kernel.triggers.list(ME) if t.spec.note.startswith("Your dream.")]

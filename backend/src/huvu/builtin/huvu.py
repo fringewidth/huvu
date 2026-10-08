@@ -8,11 +8,13 @@ agent changes it through actions that go through the same policy.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..db import dumps, loads
 from ..names import UnknownName
 from ..source import Source, SourceError
+from ..triggers import TriggerError
 from ..spec import (
     ActionSpec,
     Caller,
@@ -91,6 +93,14 @@ class HuvuSource(Source):
                     autonomy="silent",
                 ),
                 ActionSpec(
+                    name="activate_trigger",
+                    description="Turns on a trigger that wakes the advanced model, once its person says yes.",
+                    input_schema=_object({"trigger": {"type": "string"}}, ["trigger"]),
+                    requires_human=True,
+                    # Set at night by a dream, it waits for the morning.
+                    approval_ttl=timedelta(days=1),
+                ),
+                ActionSpec(
                     name="notify",
                     description="Sends a notification to the phones of the person you're helping, or to the members' phones when you serve a shared device. `image` is a ref from a source, such as a doorbell snapshot.",
                     input_schema=_object(
@@ -147,11 +157,19 @@ class HuvuSource(Source):
             "set_alias": self._set_alias,
             "remove_alias": self._remove_alias,
             "notify": self._notify,
+            "activate_trigger": self._activate_trigger,
         }
         handler = handlers.get(name)
         if handler is None:
             raise SourceError(f"huvu has no action {name!r}")
         return await handler(args, caller)
+
+    async def _activate_trigger(self, args: dict[str, Any], caller: Caller) -> Result:
+        try:
+            trigger = await self._kernel.triggers.approve(args["trigger"])
+        except TriggerError as err:
+            raise SourceError(str(err)) from err
+        return Result(data=trigger.public(), labels=["owner"])
 
     async def _set_mode(self, args: dict[str, Any], caller: Caller) -> Result:
         mode = args["mode"]

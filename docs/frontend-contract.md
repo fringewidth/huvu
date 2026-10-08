@@ -128,7 +128,7 @@ Approvals are answered from phones only. An approval belongs to the user it was 
 
 ### Triggers
 
-`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `when`, `repeat`, `status` (`active`, `unconfirmed`, `paused`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one. A trigger the wake limit paused (`paused_by: "limit"`) resumes only this way, by a person's tap; the model can't.
+`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `when`, `repeat`, `status` (`active`, `unconfirmed`, `awaiting`, `paused`), `tier` (`basic`, `pro` or `advanced`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one. A trigger the wake limit paused (`paused_by: "limit"`) resumes only this way, by a person's tap; the model can't. `POST /api/triggers/{id}/approve` says yes to an `awaiting` trigger: on the person's own device it goes live at once and the trigger comes back; elsewhere it opens an approval like any other.
 
 ### Triggers on a shared device
 

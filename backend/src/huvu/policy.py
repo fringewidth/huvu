@@ -288,6 +288,8 @@ class Policy:
             group=approval.group,
         )
         self._push(approval)
+        if (approval.source, approval.action) == ("huvu", "activate_trigger") and status in ("denied", "expired"):
+            await self._kernel.triggers.refused(approval.args["trigger"], status)
 
     async def expire(self) -> None:
         now = self._kernel.now()

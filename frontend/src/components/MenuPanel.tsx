@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { confirmPairing, refreshDevices, refreshTriggers, revoke, setPaused, useHousehold, type Trigger } from "../account/household";
+import { allow, confirmPairing, refreshDevices, refreshTriggers, revoke, setPaused, useHousehold, type Trigger } from "../account/household";
 import { canPair, errorText, logOut, useSession } from "../account/session";
 import { release, useWaiting } from "../account/waiting";
 import { capsClass } from "../stage/style";
@@ -95,7 +95,8 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
   const toggle = async () => {
     setError(null);
     try {
-      await setPaused(t.id, t.status === "active");
+      if (t.status === "awaiting") await allow(t.id);
+      else await setPaused(t.id, t.status === "active");
     } catch (err) {
       setError(errorText(err));
     }
@@ -105,7 +106,7 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
     <div className={`flex flex-col gap-1.5 border-l pl-3 ${limited ? "border-sindoor" : "border-ivory/15"}`}>
       <p className="m-0 line-clamp-3 font-display text-[15px] font-medium leading-[1.4] text-ivory/85">{t.note}</p>
       <div className="flex items-center gap-3">
-        <span className={`${capsClass} ${limited ? "text-sindoor" : "text-ivory/45"}`}>{state}</span>
+        <span className={`${capsClass} ${limited || t.status === "awaiting" ? "text-sindoor" : "text-ivory/45"}`}>{state}</span>
         {t.fire_count > 0 && <span className={`${capsClass} text-ivory/35`}>fired {t.fire_count}</span>}
         {t.status !== "unconfirmed" && (
           <button
@@ -113,7 +114,7 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
             onClick={() => void toggle()}
             className={`${buttonClass} ml-auto ${limited ? "text-ivory hover:text-sindoor" : "text-ivory/60 hover:text-ivory"}`}
           >
-            {t.status === "active" ? "pause" : "resume"}
+            {t.status === "awaiting" ? "allow" : t.status === "active" ? "pause" : "resume"}
           </button>
         )}
       </div>
@@ -126,7 +127,9 @@ const REPEAT: Record<string, string> = { no: "once", yes: "every time", daily: "
 
 function describe(t: Trigger): string {
   let state = `watching / ${REPEAT[t.repeat] ?? t.repeat}`;
+  if (t.tier !== "basic") state += ` / ${t.tier}`;
   if (t.status === "unconfirmed") state = "waiting for its person to say it's them";
+  else if (t.status === "awaiting") state = "waiting for your yes: it uses the advanced model";
   else if (t.paused_by === "limit") state = "paused: it woke huvu too often";
   else if (t.status === "paused") state = `paused by ${t.paused_by === "user" ? "you" : "huvu"}`;
   return state;

@@ -282,6 +282,12 @@ This one fires when its person's phone enters the `near_home` waypoint between m
 
 Unknown value names are rejected with an error that names the nearest real one, so a small model can fix its call on the next try.
 
+### Tiers
+
+A trigger's `tier` picks the model its wakes run on: `basic` (default), `pro` or `advanced`, mapped to models in `[models]` (luna, sol and astra). Conversations always run on pro. The backend sends the model with each run (`model` on Hermes's session chat), and every wake is a fresh session, so no tier touches another's prompt cache.
+
+An advanced trigger needs its person's yes before it goes live, wherever it was set. Nobody needs to be there when it is set: a conversation, a wake or a dream registers it the same way, as `awaiting`, and the kernel asks for `huvu.activate_trigger` (`requires_human`, a day to answer) for the trigger's user. Yes from their phone, or "allow" tapped in the menu on their own device, makes it live (`trigger.approved`); a no or no answer removes it. The model can ask for that action too, but its ask only opens another card.
+
 ### Evaluation
 
 1. On registration, the engine collects the trigger's inputs and calls `watch` on each source. The clock source pushes every minute, which opens and closes time windows.
@@ -352,7 +358,7 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 
 ### What Hermes owns
 
-1. **The dream.** A daily trigger at night with no script, one per person, whose note is the dream prompt, so the wake starts it in the person's own profile. It reads `events_digest`, `trigger.run` and `trigger.error` events, fixes or deletes broken triggers, registers new ones, updates its own memory and skills, and writes proposals for the morning chat. It is also where preferences are learned: it queries the history tables with `data_sql`, starting from where the last dream stopped, looks for repeated actions by a person in a similar context, for corrections (someone changing what huvu did a few minutes later), and for manual actions a trigger could do, checks each candidate for support, consistency and recency, keeps the claim in memory with the query that supports it, and proposes it in the morning chat. A trigger is registered only after the person says yes. The dream prompt itself is not written yet.
+1. **The dream.** A daily trigger at night, one per person, that the kernel sets up itself (`dream.py`): `clock.time` at `[dream] at` (04:00), on `[dream] tier` (pro), with a script that only wakes the model, and the dream prompt as its note, so the wake starts it in the person's own profile. It ends with a brief to its person through `huvu_notify`, as quick notes, one line each: what it noticed, what it changed, what waits for their yes. A user's dream is made once (`kv` namespace `dream`), so one they remove stays removed. It reads `events_digest`, `trigger.run` and `trigger.error` events, fixes or deletes broken triggers, registers new ones, updates its own memory and skills, and writes proposals for the morning chat. It is also where preferences are learned: it queries the history tables with `data_sql`, starting from where the last dream stopped, looks for repeated actions by a person in a similar context, for corrections (someone changing what huvu did a few minutes later), and for manual actions a trigger could do, checks each candidate for support, consistency and recency, keeps the claim in memory with the query that supports it, and proposes it in the morning chat. A trigger is registered only after the person says yes. The prompt is `NOTE` in `dream.py`.
 1. **What it learns.** Which tools and values it uses often, that `state_search` exists, what you call the hall light. This goes in its own memory and skills, written during the dream. Little goes into the model's memory beyond that.
 1. **The situation block** at the start of a session: time, where you are, the house, pending approvals. The huvu Hermes plugin adds it on a session's first turn, from `POST /api/situation`. The values in it are set in the plugin's environment (`HUVU_SITUATION`).
 
@@ -435,6 +441,7 @@ backend/
     hermes.py         the Hermes API client
     conversations.py  frontend turns on Hermes sessions, and the relay
     wake.py           trigger wakes
+    dream.py          each person's nightly dream: its trigger and its prompt
     speech.py         huvu's voice: Kokoro, a turn's answer spoken a sentence at a time
     hearing.py        speech to text through Groq's Whisper
     wipe.py           what `huvu wipe` deletes for a user or a group

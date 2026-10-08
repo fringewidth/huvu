@@ -62,7 +62,8 @@ async def test_words_beside_tool_calls_open_the_answer(kernel, hermes: FakeHerme
         ("tool.completed", {"tool_name": "mcp__huvu__triggers_list", "preview": "[]"}),
         # A preamble sent only as commentary.
         ("assistant.commentary", {"text": "Checking the clock too."}),
-        ("assistant.delta", {"delta": "Done: every day at 9."}),
+        # huvu's own break, after the one the commentary made.
+        ("assistant.delta", {"delta": "\n\nDone: every day at 9."}),
         ("run.completed", {}),
     ]
     live = await kernel.conversations.ask("c1", "remind me to water the plants at 9", user="me")

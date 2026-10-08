@@ -79,6 +79,9 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Tap "pause" on one. It should say paused by you. Tap "resume". It should be live again.
 1. Ask huvu: "what triggers do I have?". It should name the same ones.
 1. Log in as the other person. Your triggers should not appear in their menu.
+1. Ask huvu to set up something that needs its strongest thinking, and say it should use the advanced model. On your phone, a card should ask you to allow it. In the menu it should say it waits for your yes. Tap "allow" (or yes on the phone). It should say watching, with "advanced" after how often.
+1. Ask for another advanced trigger, and tap no on the phone. It should leave the menu.
+1. In the menu, your dream should be listed: a daily trigger, "Your dream...", on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs.
 
 ## The menu (phone and laptop)
 

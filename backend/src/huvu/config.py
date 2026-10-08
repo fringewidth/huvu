@@ -15,6 +15,15 @@
     [policy]
     "ha.turn_on" = "silent"  # source.action = silent | notify | ask
 
+    [models]                 # the three tiers of model huvu runs on
+    basic = "gpt-6-luna"     # trigger wakes, unless the trigger asks for more
+    pro = "gpt-6-sol"        # conversations, and wakes that need more thought
+    advanced = "gpt-6-astra" # wakes only, and only with the person's yes
+
+    [dream]
+    at = "04:00"             # each person's nightly dream, local time
+    tier = "pro"
+
     [speech]
     voice = "af_heart"       # a Kokoro voice; the first letter is its language
     lang = "en-us"           # how text is read: en-us or en-gb
@@ -49,6 +58,8 @@ from .spec import Autonomy
 
 # The repo this backend runs from: backend/src/huvu/config.py, three up.
 REPO = Path(__file__).resolve().parents[3]
+# The model behind each tier, on the ChatGPT login Hermes uses.
+DEFAULT_MODELS = {"basic": "gpt-6-luna", "pro": "gpt-6-sol", "advanced": "gpt-6-astra"}
 # Secrets setup.sh keeps, for when the environment doesn't have them.
 ENV_FILE = REPO / "backend" / ".env"
 
@@ -92,9 +103,18 @@ class Config:
     speech_voice: str = "af_heart"
     speech_lang: str = "en-us"
     speech_speed: float = 1.0
+    # The model behind each tier (Tier in spec.py). Conversations run on
+    # pro; a trigger's wakes on its own tier, basic by default.
+    models: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_MODELS))
+    # Each person's nightly dream (dream.py): when, and on which tier.
+    dream_at: str = "04:00"
+    dream_tier: str = "pro"
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
+
+    def model(self, tier: str) -> str:
+        return self.models.get(tier) or DEFAULT_MODELS[tier]
 
     @property
     def skills_folder(self) -> Path:
@@ -107,6 +127,7 @@ def load(path: Path | None = None) -> Config:
     auth = raw.get("auth", {})
     hermes = raw.get("hermes", {})
     speech = raw.get("speech", {})
+    dream = raw.get("dream", {})
     base = path.parent if path.exists() else Path.cwd()
     fcm = secret("HUVU_FCM_CREDENTIALS")
     config = Config(
@@ -124,6 +145,9 @@ def load(path: Path | None = None) -> Config:
         policy=dict(raw.get("policy", {})),
         skills_dir=(base / raw["skills_dir"]).resolve() if raw.get("skills_dir") else None,
         hermes_skills_dir=(base / raw["hermes_skills_dir"]).resolve() if raw.get("hermes_skills_dir") else REPO / "hermes-skills",
+        models={**DEFAULT_MODELS, **raw.get("models", {})},
+        dream_at=str(dream.get("at", "04:00")),
+        dream_tier=str(dream.get("tier", "pro")),
         speech_voice=speech.get("voice", "af_heart"),
         speech_lang=speech.get("lang", "en-us"),
         speech_speed=float(speech.get("speed", 1.0)),
@@ -131,6 +155,11 @@ def load(path: Path | None = None) -> Config:
         stt_model=speech.get("stt_model", "whisper-large-v3"),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
+    for tier in config.models:
+        if tier not in DEFAULT_MODELS:
+            raise ValueError(f"models.{tier}: the tiers are {', '.join(DEFAULT_MODELS)}")
+    if config.dream_tier not in DEFAULT_MODELS:
+        raise ValueError(f"dream.tier must be one of {', '.join(DEFAULT_MODELS)}")
     if config.auth_mode not in ("on", "off"):
         raise ValueError(f"auth.mode must be on or off, not {config.auth_mode!r}")
     for key, level in config.policy.items():

@@ -16,6 +16,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
+from .dream import Dreams
 from .hearing import Hearing
 from .speech import Voice
 from . import skills
@@ -89,6 +90,7 @@ class Kernel:
         self.media = MediaStore(self)
         self.voice = Voice(config)
         self.hearing = Hearing(self)
+        self.dreams = Dreams(self)
         self.data = DataStore(self)
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None
@@ -114,6 +116,7 @@ class Kernel:
         await self.registry.start()
         self.write_skills()
         await self.triggers.load()
+        await self.dreams.ensure()
         if self.native_push.sender is None:
             log.info("native push is off: HUVU_FCM_CREDENTIALS is not set")
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
@@ -173,6 +176,8 @@ class Kernel:
                 await self.policy.expire()
                 await self.attendance.expire()
                 await self._sweep_if_due()
+                # A user added while the backend runs gets their dream.
+                await self.dreams.ensure()
             except Exception:
                 log.exception("tick failed")
 
