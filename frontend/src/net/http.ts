@@ -1,7 +1,7 @@
 // The one way to call the backend. Every request carries this device's
 // token, and a 401 means the device was logged out: the session hears it
 // and sends the user back to login, or the TV back to pairing.
-export const BACKEND = "http://localhost:3001";
+export const BACKEND = (import.meta.env.VITE_BACKEND_URL || "http://localhost:3001").replace(/\/$/, "");
 
 let token: string | null = null;
 let onUnauthorized: () => void = () => {};

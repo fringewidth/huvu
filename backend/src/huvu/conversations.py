@@ -360,8 +360,10 @@ class ConversationHub:
     async def _relay(self, live: LiveTurn, message: str) -> None:
         ending: Ending = "failed"
         try:
-            model = self._kernel.config.model("pro")
-            async for event in self._kernel.hermes.chat(live.profile, live.turn.hermes_session or "", message, model=model):
+            choice = self._kernel.config.model("pro")
+            async for event in self._kernel.hermes.chat(
+                live.profile, live.turn.hermes_session or "", message, model=choice.model, provider=choice.provider
+            ):
                 ending = self._translate(live, event, ending)
         except asyncio.CancelledError:
             ending = "stopped"

@@ -77,8 +77,8 @@ class Waker:
         reply = ""
         try:
             live = self._kernel.triggers.get(trigger)
-            model = self._kernel.config.model(live.spec.tier if live else "basic")
-            async for event in self._kernel.hermes.chat(profile, session, render(payload, now), model=model):
+            choice = self._kernel.config.model(live.spec.tier if live else "basic")
+            async for event in self._kernel.hermes.chat(profile, session, render(payload, now), model=choice.model, provider=choice.provider):
                 if event.name == "assistant.delta":
                     reply += event.data.get("delta", "")
                 elif event.name == "assistant.completed" and not reply:

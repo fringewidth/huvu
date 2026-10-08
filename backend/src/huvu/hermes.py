@@ -72,11 +72,13 @@ class HermesClient:
             raise HermesError(f"creating session {session_id}: {res.status_code} {res.text[:300]}")
         return session_id
 
-    async def chat(self, profile: Profile, session_id: str, message: str, *, model: str | None = None) -> AsyncIterator[HermesEvent]:
-        """Runs one turn and yields its events as they arrive. `model`
-        overrides the profile's model for this run only."""
+    async def chat(
+        self, profile: Profile, session_id: str, message: str, *, model: str | None = None, provider: str | None = None
+    ) -> AsyncIterator[HermesEvent]:
+        """Runs one turn and yields its events as they arrive. `model`, and
+        `provider` with it, override the profile's for this run only."""
         path = f"{profile.prefix}/api/sessions/{session_id}/chat/stream"
-        body: dict[str, Any] = {"message": message, **({"model": model} if model else {})}
+        body: dict[str, Any] = {"message": message, **({"model": model} if model else {}), **({"provider": provider} if provider else {})}
         async with self._http.stream("POST", path, json=body, headers=profile.headers) as res:
             if res.status_code != 200:
                 body = (await res.aread()).decode(errors="replace")

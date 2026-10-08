@@ -54,10 +54,13 @@ url = "http://localhost:8642"
 
 # The model behind each tier. Conversations run on pro; a trigger's wakes on
 # its own tier, basic by default; advanced needs the person's yes.
+# A model alone runs on the profile's own login; a table names the Hermes
+# provider too (anthropic is the Claude login, openai-codex the ChatGPT one).
 [models]
 basic = "gpt-6-luna"
 pro = "gpt-6-sol"
 advanced = "gpt-6-astra"
+# pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 
 # Each person's nightly dream, ending with a brief of notes to them.
 [dream]

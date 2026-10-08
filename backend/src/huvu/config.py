@@ -19,6 +19,10 @@
     basic = "gpt-6-luna"     # trigger wakes, unless the trigger asks for more
     pro = "gpt-6-sol"        # conversations, and wakes that need more thought
     advanced = "gpt-6-astra" # wakes only, and only with the person's yes
+    # A model alone runs on the profile's own login. To run a tier on another
+    # Hermes provider, name it: anthropic is the Claude login, openai-codex
+    # the ChatGPT one.
+    # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 
     [dream]
     at = "04:00"             # each person's nightly dream, local time
@@ -58,6 +62,26 @@ from .spec import Autonomy
 REPO = Path(__file__).resolve().parents[3]
 # The model behind each tier, on the ChatGPT login Hermes uses.
 DEFAULT_MODELS = {"basic": "gpt-6-luna", "pro": "gpt-6-sol", "advanced": "gpt-6-astra"}
+
+
+@dataclass(frozen=True)
+class ModelChoice:
+    """A tier's model, and the Hermes provider to run it on; None means the
+    profile's own provider."""
+
+    model: str
+    provider: str | None = None
+
+    def __str__(self) -> str:
+        return self.model
+
+
+def _choice(tier: str, raw: Any) -> ModelChoice:
+    if isinstance(raw, str):
+        return ModelChoice(raw)
+    if isinstance(raw, dict) and isinstance(raw.get("model"), str):
+        return ModelChoice(raw["model"], raw.get("provider"))
+    raise ValueError(f"models.{tier} must be a model name or {{ model = ..., provider = ... }}")
 # Secrets setup.sh keeps, for when the environment doesn't have them.
 ENV_FILE = REPO / "backend" / ".env"
 
@@ -101,7 +125,7 @@ class Config:
     speech_speed: float = 1.0
     # The model behind each tier (Tier in spec.py). Conversations run on
     # pro; a trigger's wakes on its own tier, basic by default.
-    models: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_MODELS))
+    models: dict[str, ModelChoice] = field(default_factory=lambda: {t: ModelChoice(m) for t, m in DEFAULT_MODELS.items()})
     # Each person's nightly dream (dream.py): when, and on which tier.
     dream_at: str = "04:00"
     dream_tier: str = "pro"
@@ -109,8 +133,8 @@ class Config:
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
 
-    def model(self, tier: str) -> str:
-        return self.models.get(tier) or DEFAULT_MODELS[tier]
+    def model(self, tier: str) -> ModelChoice:
+        return self.models.get(tier) or ModelChoice(DEFAULT_MODELS[tier])
 
     @property
     def skills_folder(self) -> Path:
@@ -141,7 +165,7 @@ def load(path: Path | None = None) -> Config:
         policy=dict(raw.get("policy", {})),
         skills_dir=(base / raw["skills_dir"]).resolve() if raw.get("skills_dir") else None,
         hermes_skills_dir=(base / raw["hermes_skills_dir"]).resolve() if raw.get("hermes_skills_dir") else REPO / "hermes-skills",
-        models={**DEFAULT_MODELS, **raw.get("models", {})},
+        models={t: _choice(t, m) for t, m in {**DEFAULT_MODELS, **raw.get("models", {})}.items()},
         dream_at=str(dream.get("at", "04:00")),
         dream_tier=str(dream.get("tier", "pro")),
         speech_voice=speech.get("voice", "en-US-AvaNeural"),

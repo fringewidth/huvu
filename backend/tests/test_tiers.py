@@ -104,3 +104,27 @@ async def test_everyone_gets_one_dream_and_a_removed_one_stays_gone(kernel):
     await kernel.triggers.remove(mine.id, ME)
     await kernel.dreams.ensure()
     assert not [t for t in kernel.triggers.list(ME) if t.spec.note.startswith("Your dream.")]
+
+
+def test_a_tier_can_run_on_another_provider(tmp_path):
+    from huvu.config import ModelChoice, load
+
+    toml = tmp_path / "huvu.toml"
+    toml.write_text('[models]\nbasic = "gpt-6-luna"\npro = { model = "claude-sonnet-5-5", provider = "anthropic" }\n')
+    config = load(toml)
+    assert config.model("pro") == ModelChoice("claude-sonnet-5-5", "anthropic")
+    assert config.model("basic") == ModelChoice("gpt-6-luna") and config.model("advanced").model == "gpt-6-astra"
+    toml.write_text("[models]\npro = { provider = \"anthropic\" }\n")
+    with pytest.raises(ValueError, match="models.pro"):
+        load(toml)
+
+
+async def test_the_chosen_provider_goes_with_the_run(kernel, family, hermes):
+    from huvu.config import ModelChoice
+
+    kernel.config.models["pro"] = ModelChoice("claude-sonnet-5-5", "anthropic")
+    live = await kernel.conversations.ask(family.me_web.id, "hi", user="me")
+    async for _ in kernel.conversations.subscribe(live):
+        pass
+    session = live.turn.hermes_session
+    assert (hermes.models[session], hermes.providers[session]) == ("claude-sonnet-5-5", "anthropic")

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The backend is plain HTTP on the home network (or localhost over adb
+     reverse) until it gets a certificate. Remove this once it does. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
