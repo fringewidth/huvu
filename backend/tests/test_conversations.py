@@ -183,6 +183,21 @@ async def test_a_stop_keeps_what_hermes_sends_until_it_ends(kernel, hermes):
     assert turn.ending == "stopped" and turn.answer == "thinking and more" and hermes.stopped == ["run_5"]
 
 
+async def test_a_stop_before_any_words_leaves_no_placeholder(kernel, hermes):
+    placeholder = "Operation interrupted: waiting for model response (5.2s elapsed)."
+    hermes.script = [
+        ("run.started", {"run_id": "run_5"}),
+        lambda session_id: hermes.stop_requested.wait(),
+        ("assistant.completed", {"content": placeholder, "interrupted": True}),
+        ("run.cancelled", {"interrupted": True}),
+    ]
+    live = await kernel.conversations.ask("c1", "what time is it?", user="me")
+    await asyncio.sleep(0.01)
+    await kernel.conversations.stop(live.turn.id, wait=True)
+    [turn] = kernel.conversations.turns("c1")
+    assert turn.ending == "stopped" and turn.answer == ""
+
+
 async def test_a_turn_hermes_finishes_anyway_is_complete(kernel, hermes):
     hermes.script = await stopped_when(hermes, then=[("assistant.delta", {"delta": ", done"}), ("run.completed", {})])
     live = await kernel.conversations.ask("c1", "slow one", user="me")

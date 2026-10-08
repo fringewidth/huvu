@@ -14,6 +14,7 @@ from huvu.triggers import TriggerSpec
 
 from .test_conversations import collect
 from .test_triggers import push_events
+from .fakes import WAKE
 
 
 @pytest.fixture
@@ -46,7 +47,7 @@ async def test_a_guest_can_be_recognized_but_still_approves_nothing(kernel, fami
     held = await kernel.policy.request("home", "unlock", {}, caller)
     assert kernel.policy.get(held.data["approval"]).group == "home"
     # The trigger is hers, though; it's only trust she lacks.
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), caller)
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "script": WAKE, "when": [{"event": "home.doorbell"}]}), caller)
     assert trigger.user == "sitter" and trigger.status == "active"
 
 
@@ -71,7 +72,7 @@ def test_guests_cant_pair(kernel, family, sitter):
 
 async def test_a_guest_is_asked_too_and_can_own_the_trigger(kernel, family, sitter):
     tv = Caller(kind="hermes", session="s-tv", device=family.tv.id, group="home")
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), tv)
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "script": WAKE, "when": [{"event": "home.doorbell"}]}), tv)
     [question] = kernel.attendance.pending_for("sitter")
     await kernel.attendance.answer(question["id"], True, sitter)
     [trigger] = kernel.triggers.list(Caller(kind="hermes", user="sitter"))
@@ -100,7 +101,7 @@ async def test_a_second_group_keeps_to_itself(kernel, family, hermes):
     assert caller_from(kernel, {"_session": live.turn.hermes_session}, None, "home").device is None
 
     # A trigger set up there asks only its people, and mom isn't one.
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), caller)
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "script": WAKE, "when": [{"event": "home.doorbell"}]}), caller)
     assert kernel.attendance.pending_for("mom") == []
     [question] = kernel.attendance.pending_for("me")
     await kernel.attendance.answer(question["id"], True, family.me_phone)

@@ -1,5 +1,5 @@
-"""Trigger scripts: a Python function the model writes, run when a trigger
-matches, in place of a plain wake.
+"""Trigger scripts: a Python function the model writes, run each time a
+trigger matches. Every trigger has one, and a wake comes only from a script.
 
 The script lives in a file and runs in its own process. It talks to the
 kernel over its stdin and stdout, one JSON line per message, and calls the

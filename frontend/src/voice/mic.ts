@@ -5,6 +5,8 @@ import { audioContext, rms } from "./audio";
 // stays open for a while after its last user lets go. The next listen or
 // the next reply picks it up at once.
 export interface Mic {
+  // The shared stream, for recording an ask. Never stop its tracks.
+  stream: MediaStream;
   rms(): number;
   release(): void;
 }
@@ -56,6 +58,7 @@ export async function acquireMic(): Promise<Mic> {
   }
   let released = false;
   return {
+    stream: shared.stream,
     rms: () => rms(shared.analyser, shared.buf),
     release: () => {
       if (released) return;

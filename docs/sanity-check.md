@@ -46,7 +46,8 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 ## Talking to huvu by voice (laptop, in Chrome)
 
 1. Click the flower. It should move to the middle of the screen, and the text field should go away.
-1. Say a question. The flower should grow while you talk. Your words should appear, and huvu should answer.
+1. Say a question with your name in it. The flower should grow while you talk, and your words should appear while you speak. About a second after you stop, they should change to the final text, with your name spelled right, and huvu should answer.
+1. Listen to huvu's answer. It should start speaking within a second or two of its first words on screen, and keep speaking without gaps between sentences, while the rest of the answer is still being written.
 1. Hold the space bar, talk, and let go. It should work the same as clicking the flower.
 1. Talk while huvu speaks. huvu should stop speaking.
 1. Scroll the answer. The flower should shrink and dock at the bottom. Tap it, and it should come back to the middle.
@@ -119,7 +120,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## What doesn't work yet (don't test)
 
-1. Voice on the phone: speech recognition there is a stand-in that always hears the same few phrases, and huvu's voice is one test recording.
+1. Voice on the phone: it works only while Groq answers. When Groq's rate limit hits, an ask on the phone is lost.
 1. Asking the TV through Alexa. The skill doesn't exist yet, so nothing appears on the TV unless a feed is picked. For the same reason, an approval for the whole household (asked at the TV with nobody recognized) can't be tested yet.
 1. Live camera feeds. The list may appear, but no feed can play yet.
 1. The doorbell. It waits for the Tuya driver.

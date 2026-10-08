@@ -43,6 +43,9 @@ configure() {
   local p=${1:+-p $1} home=$2
   mkdir -p "$home/plugins"
   ln -sfn "$root/hermes-plugin/huvu" "$home/plugins/huvu"
+  # huvu's identity. Copied, not linked: an agent may choose to change it.
+  # Run again after editing the repo's SOUL.md.
+  cp "$root/SOUL.md" "$home/SOUL.md"
   hermes $p config set API_SERVER_ENABLED true >/dev/null
   hermes $p config set HUVU_URL "$huvu_url" >/dev/null
   hermes $p config set mcp_servers.huvu.url "$huvu_url/mcp" >/dev/null

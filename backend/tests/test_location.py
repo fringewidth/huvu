@@ -20,6 +20,7 @@ from huvu.triggers import TriggerSpec
 from huvu_drivers.location import LocationSource, setup_link
 
 from .test_triggers import settle, wakes
+from .fakes import WAKE
 
 HOME = {"lat": 17.4, "lon": 78.4, "radius_m": 150}
 # About 1.1 km north of home.
@@ -118,19 +119,19 @@ async def test_a_late_crossing_says_so(kernel, location, clock):
 
 
 async def test_nobody_triggers_on_someone_elses_location(kernel, location, clock, hermes):
-    peek = {"note": "Tell mom where he is.", "when": [{"value": "location.place[me]", "op": "==", "arg": "home"}]}
+    peek = {"note": "Tell mom where he is.", "script": WAKE, "when": [{"value": "location.place[me]", "op": "==", "arg": "home"}]}
     with pytest.raises(SourceError, match="only they"):
         await kernel.triggers.register(TriggerSpec.model_validate(peek), MOM)
 
     near = {"event": "location.arrived", "where": {"waypoint": "near_home"}}
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Mom is nearly home.", "when": [near], "repeat": "yes"}), MOM)
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Porch light on.", "when": [near], "repeat": "yes"}), ME)
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Mom is nearly home.", "script": WAKE, "when": [near], "repeat": "yes"}), MOM)
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Porch light on.", "script": WAKE, "when": [near], "repeat": "yes"}), ME)
     await location.ingest(crossing(clock, "enter", "near_home"), MY_TRACKER)
     await settle(kernel)
     assert len(wakes(hermes)) == 1
     assert "Porch light on." in wakes(hermes)[0]
 
-    tested = await kernel.triggers.test(TriggerSpec.model_validate({"note": "Mom is nearly home.", "when": [near]}), "mom")
+    tested = await kernel.triggers.test(TriggerSpec.model_validate({"note": "Mom is nearly home.", "script": WAKE, "when": [near]}), "mom")
     assert tested["recent_matching_events"] == []
 
 

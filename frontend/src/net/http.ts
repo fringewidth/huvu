@@ -35,8 +35,8 @@ export class HttpError extends Error {
   }
 }
 
-interface CallInit extends Omit<RequestInit, "body"> {
-  // Sent as the JSON body.
+interface CallInit extends RequestInit {
+  // Sent as the JSON body, in place of `body`.
   json?: unknown;
   // Login and pairing answer 401 for a wrong password or code; that says
   // nothing about this device's token.
@@ -51,7 +51,7 @@ export async function call(path: string, { json, anonymous, headers, ...init }: 
       ...(json === undefined ? {} : { "Content-Type": "application/json" }),
       ...headers,
     },
-    body: json === undefined ? undefined : JSON.stringify(json),
+    body: json === undefined ? init.body : JSON.stringify(json),
   });
   if (res.status === 401 && !anonymous) onUnauthorized();
   if (!res.ok) throw new HttpError(res.status, await detail(res));

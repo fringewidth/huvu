@@ -36,6 +36,14 @@ The answer is Server-Sent Events. Every event's data carries `turn` and `convers
 
 A comment line (`: keepalive`) comes every 15 s while nothing else does. Dropping this stream doesn't stop the turn; `POST /api/turns/{turn}/stop` does, for a turn of this device's own conversation. A stop asks Hermes to stop, and the stream keeps going until Hermes ends: keep reading it, show what arrives, and take `turn.ended` as the answer to how the turn ended. A turn Hermes finished anyway ends with `ending: null`, not `"stopped"`. A new ask while a turn runs stops that turn the same way, and the new turn starts once it has ended (15 s at most). `GET /api/conversation` returns this device's turns, with `id`, `at`, `ask`, `answer`, `parts`, `actions`, `ending` and `running`, for a client that opens later.
 
+### Speech
+
+`GET /api/speech` says what the backend can do with sound: `{"listen": bool, "speak": bool}`.
+
+`POST /api/transcribe` takes one recorded ask as the request body, with its `Content-Type` (`audio/webm`, `audio/mp4`, `audio/ogg`), and answers `{"text": "..."}`. 503 means no speech to text is set up, 429 that Groq's rate limit hit both models, and 502 any other Groq failure. The client then falls back to its own recognition where it has one.
+
+`GET /api/turns/{turn}/speech` streams huvu saying a turn's answer, for a turn of this device's own conversation, running or ended: raw PCM, 16-bit little-endian mono at 24,000 Hz, with no header, a sentence at a time as huvu writes. The stream ends after the last sentence. 503 means the backend has no voice.
+
 `GET /api/turns/{turn}/events` streams one turn of this device's own conversation from its start: everything that happened so far, then live until `turn.ended`. A turn that already ended comes as `turn.started`, its parts and `turn.ended`. A client that opens while a turn runs uses this, since a delta doesn't say where its text goes and can't be added to a snapshot of the answer. The frontend also uses it for a turn the push stream mentions that it has no stream of.
 
 The backend builds parts from Hermes's stream:

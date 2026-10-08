@@ -404,8 +404,11 @@ class ConversationHub:
             self._tool_started(live, data.get("tool_name") or "", data.get("args") or {})
         elif name in ("tool.completed", "tool.failed"):
             self._tool_completed(live, data.get("tool_name") or "", data.get("preview"), failed=name == "tool.failed")
-        elif name == "assistant.completed" and data.get("content") and not live.turn.answer:
+        elif name == "assistant.completed" and data.get("content") and not live.turn.answer and not data.get("interrupted"):
             # A turn that streamed no deltas still has its final text here.
+            # An interrupted one has Hermes's placeholder ("Operation
+            # interrupted: waiting for model response"), which is no answer:
+            # the stage says "stopped" itself.
             live.turn.answer = data["content"]
             self._emit(live, "answer.delta", {"text": data["content"]})
         if name in ("run.completed", "run.cancelled", "run.failed") and isinstance(data.get("usage"), dict):

@@ -25,9 +25,11 @@ from .accounts import AuthError, Device
 from .auth import McpAuth, bearer, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
+from .hearing import HearingError
 from .kernel import Kernel
 from .push import api_json, sse
 from .source import NotIngesting, SourceError
+from .speech import SAMPLE_RATE
 from .spec import Caller
 from .times import for_model
 from .tools import ToolError
@@ -264,6 +266,34 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(404, f"no turn {turn_id!r}")
         events = kernel.conversations.replay(turn_id)
         return StreamingResponse(_sse_stream(events), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/speech")
+    async def speech(me: Device = device) -> dict[str, bool]:
+        """What huvu can do with sound here: hear (speech to text) and speak."""
+        return {"listen": kernel.hearing.available(), "speak": kernel.voice.available()}
+
+    @app.post("/api/transcribe")
+    async def transcribe(request: Request, me: Device = device) -> dict[str, str]:
+        """One recorded ask, as the request body, to text."""
+        if not kernel.hearing.available():
+            raise HTTPException(503, "huvu can't hear: GROQ_API_KEY isn't set")
+        try:
+            text = await kernel.hearing.transcribe(await request.body(), request.headers.get("content-type", ""))
+        except HearingError as err:
+            raise HTTPException(429 if err.limited else 502, str(err)) from err
+        return {"text": text}
+
+    @app.get("/api/turns/{turn_id}/speech")
+    async def turn_speech(turn_id: str, me: Device = device) -> StreamingResponse:
+        """huvu saying a turn's answer while it writes it: raw PCM, 16-bit
+        little-endian mono at SAMPLE_RATE Hz, a sentence at a time (see
+        speech.py). Works for a running turn and an ended one."""
+        if not kernel.conversations.owns(me.id, turn_id):
+            raise HTTPException(404, f"no turn {turn_id!r}")
+        if not kernel.voice.available():
+            raise HTTPException(503, "huvu has no voice: the Kokoro model isn't installed")
+        audio = kernel.voice.speak(kernel.conversations.replay(turn_id))
+        return StreamingResponse(audio, media_type=f"audio/L16;rate={SAMPLE_RATE};channels=1", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/conversation")
     async def conversation(me: Device = device) -> JSONResponse:

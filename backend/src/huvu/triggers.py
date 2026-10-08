@@ -1,10 +1,15 @@
-"""Triggers: conditions over source data that wake Hermes when they come true.
+"""Triggers: conditions over source data that run a script when they come true.
 
 Hermes registers a trigger through MCP, and the engine here evaluates it.
 Triggers are huvu's only scheduler, and Hermes's cron toolset is off in
 every profile. The clock is a source like any other, so "every day at 8"
-is a trigger on `clock.time` with `repeat: daily`; a script does what needs
-no thought, such as a reminder, and a trigger without one wakes the model.
+is a trigger on `clock.time` with `repeat: daily`.
+
+Every trigger is a script, decided 2026-10-08. The script does what needs no
+thought itself, such as a reminder, and wakes a model instance with
+`ctx.wake(...)` when it needs one, on every fire or only on some. So the
+model learns when to wake itself by writing the script, and no prompt has to
+teach it.
 
 A trigger's `when` is a flat list, and all of it must hold. A value check
 holds while its value matches. An event check holds at the moment the
@@ -100,7 +105,7 @@ class EventCheck(Strict):
 class TriggerSpec(Strict):
     """What a model registers."""
 
-    note: str = Field(description="Why the trigger exists and what to do when it fires. It comes back in the wake.")
+    note: str = Field(description="Why the trigger exists and what to do when it fires. It comes back in any wake.")
     when: list[ValueCheck | EventCheck] = Field(
         min_length=1,
         description="Checks that must all hold. A time is a check on clock.time, so every day at 9 is "
@@ -108,16 +113,14 @@ class TriggerSpec(Strict):
     )
     repeat: Repeat = Field(default="no", description="no: fire once. yes: fire again once `when` turns false. daily: at most once a day.")
     reset: list[ValueCheck] | None = None
-    include: list[str] = Field(default_factory=list, description="Value keys to bring along in the wake.")
+    include: list[str] = Field(default_factory=list, description="Value keys read when it fires, for the script (ctx.include) and any wake.")
     expires: str | None = Field(default=None, description="2h, tomorrow 09:00 or ISO. A repeat=no trigger without one expires in 7 days.")
-    # A Python function `run(ctx)`, run when `when` matches, in place of a
-    # plain wake. See scripts.py.
-    script: str | None = Field(
-        default=None,
-        description="Python defining run(ctx), run in place of waking you when `when` matches. Use one whenever the "
-        "action needs no thought, such as a reminder. ctx.call(tool, args) calls a tool named in `grants`; "
-        "ctx.wake(text) wakes you after all; ctx.log(...) logs. A reminder: "
-        "def run(ctx):\n    ctx.call(\"huvu_notify\", {\"text\": \"Water the plants.\"})",
+    # A Python function `run(ctx)`, run each time `when` matches. See
+    # scripts.py and script_host.py.
+    script: str = Field(
+        description="Python defining run(ctx), run each time `when` matches. ctx.call(tool, args) calls a tool named in "
+        "`grants` and returns its data. ctx.wake(text) starts an instance of you with the note, what matched and this text. "
+        "ctx.event, ctx.matched and ctx.include hold what fired it; ctx.log(...) logs.",
     )
     # The tools the script may call.
     grants: list[str] = Field(default_factory=list, description="The tools the script may call, such as [\"huvu_notify\"].")
@@ -128,6 +131,15 @@ class TriggerSpec(Strict):
         if not v.strip():
             raise ValueError("note must say why the trigger exists and what to do")
         return v
+
+
+# A trigger stored before every trigger had a script (2026-10-08) woke the
+# model on every fire. This script keeps it doing that.
+LEGACY_SCRIPT = 'def run(ctx):\n    ctx.wake("It fired.")\n'
+
+
+def _scripted(spec: dict[str, Any]) -> dict[str, Any]:
+    return spec if spec.get("script") else {**spec, "script": LEGACY_SCRIPT}
 
 
 @dataclass
@@ -246,7 +258,7 @@ class TriggerEngine:
         for row in rows:
             trigger = Trigger(
                 id=row["id"],
-                spec=TriggerSpec.model_validate(loads(row["spec"])),
+                spec=TriggerSpec.model_validate(_scripted(loads(row["spec"]))),
                 status=row["status"],
                 armed=bool(row["armed"]),
                 created_at=from_iso(row["created_at"]),
@@ -295,8 +307,7 @@ class TriggerEngine:
             expires = iso(parse_when(expires, self._kernel.now()))
         elif spec.repeat == "no":
             expires = iso(self._kernel.now() + DEFAULT_EXPIRY)
-        if spec.script is not None:
-            self._kernel.scripts.check(spec.script, spec.grants)
+        self._kernel.scripts.check(spec.script, spec.grants)
         return spec.model_copy(update={"expires": expires})
 
     def _resolve(self, trigger: Trigger) -> None:
@@ -653,10 +664,7 @@ class TriggerEngine:
 
     async def _deliver(self, trigger: Trigger, payload: dict[str, Any]) -> None:
         try:
-            if trigger.spec.script:
-                await self._kernel.scripts.run(trigger, payload, dry=False)
-            else:
-                await self._kernel.waker.wake(payload, trigger.user)
+            await self._kernel.scripts.run(trigger, payload, dry=False)
         except Exception as err:
             log.exception("trigger %s failed to deliver", trigger.id)
             await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} failed: {err}", entity=trigger.id, **_owner(trigger))
@@ -699,8 +707,7 @@ class TriggerEngine:
         replay = self._replay(trigger) if trigger.event else []
         if trigger.event:
             report["recent_matching_events"] = [e.model_dump() for e in replay]
-        if spec.script:
-            report["script_runs"] = await self._dry_runs(trigger, replay, readings)
+        report["script_runs"] = await self._dry_runs(trigger, replay, readings)
         return report
 
     def _replay(self, trigger: Trigger) -> list[Event]:

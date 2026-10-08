@@ -15,6 +15,8 @@ Users and devices are managed from here too:
     uv run huvu device list
     uv run huvu device revoke d_1a2b3c4d5e
     uv run huvu tracker add mom              prints a QR code and link that set up OwnTracks on her phone
+    uv run huvu wipe mom                     deletes her triggers, conversations and event log (see wipe.py)
+    uv run huvu wipe --group home            the same for a group's shared devices
 
 A new user joins the default group (home) as a member, unless told
 otherwise with --group, --guest or --no-group.
@@ -77,6 +79,11 @@ def main() -> None:
     add_tracker.add_argument("user")
     add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone)")
 
+    wipe = commands.add_parser("wipe", help="delete what huvu keeps for a user or a group; the backend must be stopped")
+    whom = wipe.add_mutually_exclusive_group(required=True)
+    whom.add_argument("user", nargs="?")
+    whom.add_argument("--group")
+
     args = parser.parse_args()
     config = config_module.load()
     if args.command in (None, "serve"):
@@ -99,7 +106,7 @@ def _manage(config, args) -> None:
     config.data_dir.mkdir(parents=True, exist_ok=True)
     conn = connect(config.data_dir / "huvu.db")
     accounts = Accounts(conn, lambda: datetime.now().astimezone(), household_key=config.hermes_api_key, household_mcp_token=config.mcp_token)
-    match (args.command, args.action):
+    match (args.command, getattr(args, "action", None)):
         case ("user", "add"):
             password = os.environ.get("HUVU_PASSWORD") or _new_password()
             key = os.environ.get("HUVU_HERMES_KEY") or getpass.getpass(f"API key of Hermes profile {args.id!r} (its API_SERVER_KEY): ")
@@ -144,7 +151,26 @@ def _manage(config, args) -> None:
             accounts.revoke(args.id)
         case ("tracker", "add"):
             _add_tracker(config, accounts, args.user, args.name or f"{args.user}'s phone")
+        case ("wipe", _):
+            _wipe(config, conn, accounts, args.user, args.group)
     conn.close()
+
+
+def _wipe(config, conn, accounts: Accounts, user: str | None, group: str | None) -> None:
+    import socket
+
+    from .wipe import wipe
+
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        if probe.connect_ex((config.host if config.host not in ("0.0.0.0", "::") else "127.0.0.1", config.port)) == 0:
+            sys.exit(f"huvu: the backend is running on port {config.port}; stop it first")
+    if user is not None and accounts.user(user) is None:
+        sys.exit(f"huvu: no user {user!r}")
+    if group is not None and accounts.group(group) is None:
+        sys.exit(f"huvu: no group {group!r}")
+    counts = wipe(conn, config.data_dir / "scripts", user=user, group=group, default_group=group == accounts.default_group())
+    print(", ".join(f"{n} {table}" for table, n in counts.items()))
 
 
 def _add_tracker(config, accounts: Accounts, user: str, name: str) -> None:

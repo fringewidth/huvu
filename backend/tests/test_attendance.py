@@ -15,6 +15,7 @@ from huvu.triggers import TriggerSpec
 
 from .test_conversations import collect
 from .test_triggers import push_events
+from .fakes import WAKE
 
 
 async def recognize(kernel, family, user_phone, user="mom"):
@@ -75,7 +76,7 @@ async def test_the_session_acts_and_logs_as_the_person(kernel, family, home, her
     # Over MCP the household's profile now acts for her.
     caller = caller_from(kernel, {"_session": session}, None, "home")
     assert (caller.user, caller.group, caller.device) == ("mom", "home", family.tv.id)
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "when": [{"event": "home.doorbell"}]}), caller)
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "script": WAKE, "when": [{"event": "home.doorbell"}]}), caller)
     assert trigger.status == "active" and trigger.user == "mom"
     held = await kernel.policy.request("home", "unlock", {}, caller)
     assert kernel.policy.get(held.data["approval"]).user == "mom"

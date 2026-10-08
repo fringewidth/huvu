@@ -8,6 +8,7 @@ import pytest
 from huvu.spec import Caller
 from huvu.tools import ToolError
 from huvu.triggers import TriggerError, TriggerSpec, compare
+from .fakes import WAKE
 
 OWNER = Caller(kind="hermes", session="s1", user="me")
 HOUSEHOLD = Caller(kind="hermes", session="s-tv")
@@ -16,7 +17,7 @@ HOUSEHOLD = Caller(kind="hermes", session="s-tv")
 pytestmark = pytest.mark.usefixtures("family")
 
 PORCH = {
-    "note": "Turn on the porch light.",
+    "note": "Turn on the porch light.", "script": WAKE,
     "when": [
         {"value": "clock.time", "op": "between", "arg": ["00:00", "05:00"]},
         {"value": "home.eta_min", "op": "<=", "arg": 10},
@@ -150,7 +151,7 @@ async def test_stale_readings_count_as_false(kernel, clock, hermes):
 
 async def test_repeat_yes_rearms_when_the_condition_turns_false(kernel, hermes):
     home = kernel.registry.get("home").ctx
-    spec = {"note": "Light went off.", "when": [{"value": "home.light[light.porch]", "op": "==", "arg": "off"}], "repeat": "yes"}
+    spec = {"note": "Light went off.", "script": WAKE, "when": [{"value": "home.light[light.porch]", "op": "==", "arg": "off"}], "repeat": "yes"}
     await home.update("light", "on", params={"entity_id": "light.porch"})
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     for state in ["off", "off", "on", "off"]:
@@ -161,7 +162,7 @@ async def test_repeat_yes_rearms_when_the_condition_turns_false(kernel, hermes):
 
 async def test_event_triggers_filter_on_data(kernel, hermes):
     home = kernel.registry.get("home").ctx
-    spec = {"note": "Tell me when Hrishik comes home.", "when": [{"event": "home.unlock", "where": {"person": "Hrishik"}}], "repeat": "yes"}
+    spec = {"note": "Tell me when Hrishik comes home.", "script": WAKE, "when": [{"event": "home.unlock", "where": {"person": "Hrishik"}}], "repeat": "yes"}
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     await home.emit("unlock", "unlocked by Mom", data={"method": "face", "person": "Mom"})
     await home.emit("unlock", "unlocked by Hrishik", data={"method": "fingerprint", "person": "Hrishik"})
@@ -174,7 +175,7 @@ async def test_event_triggers_filter_on_data(kernel, hermes):
 
 async def test_once_triggers_end_and_get_a_default_expiry(kernel, hermes):
     home = kernel.registry.get("home").ctx
-    spec = {"note": "Doorbell, once.", "when": [{"event": "home.doorbell"}]}
+    spec = {"note": "Doorbell, once.", "script": WAKE, "when": [{"event": "home.doorbell"}]}
     trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     assert trigger.expires_at is not None
     await home.emit("doorbell", "ding")
@@ -185,20 +186,20 @@ async def test_once_triggers_end_and_get_a_default_expiry(kernel, hermes):
 
 
 async def test_validation_errors_name_the_fix(kernel):
-    bad_value = {"note": "x", "when": [{"value": "home.etamin", "op": "<", "arg": 5}]}
+    bad_value = {"note": "x", "script": WAKE, "when": [{"value": "home.etamin", "op": "<", "arg": 5}]}
     with pytest.raises(Exception, match="Did you mean home.eta_min"):
         await kernel.triggers.register(TriggerSpec.model_validate(bad_value), OWNER)
-    bad_arg = {"note": "x", "when": [{"value": "clock.time", "op": "between", "arg": "00:00"}]}
+    bad_arg = {"note": "x", "script": WAKE, "when": [{"value": "clock.time", "op": "between", "arg": "00:00"}]}
     with pytest.raises(TriggerError, match="between takes"):
         await kernel.triggers.register(TriggerSpec.model_validate(bad_arg), OWNER)
-    bad_field = {"note": "x", "when": [{"event": "home.unlock", "where": {"who": "Mom"}}]}
+    bad_field = {"note": "x", "script": WAKE, "when": [{"event": "home.unlock", "where": {"who": "Mom"}}]}
     with pytest.raises(TriggerError, match="no data field 'who'"):
         await kernel.triggers.register(TriggerSpec.model_validate(bad_field), OWNER)
 
 
 async def test_expired_triggers_stop(kernel, clock, hermes):
     home = kernel.registry.get("home").ctx
-    spec = {"note": "Doorbell within the hour.", "when": [{"event": "home.doorbell"}], "expires": "1h"}
+    spec = {"note": "Doorbell within the hour.", "script": WAKE, "when": [{"event": "home.doorbell"}], "expires": "1h"}
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     clock.advance(hours=2)
     await kernel.triggers.expire()
@@ -211,7 +212,7 @@ async def test_triggers_survive_a_restart(kernel, tmp_path, clock, home, hermes)
     from huvu.config import Config
     from huvu.kernel import Kernel
 
-    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+    spec = {"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": type(home)()}, clock=clock)
     await again.triggers.load()
@@ -231,7 +232,7 @@ async def test_test_reports_each_check(kernel):
 
 async def test_wakes_run_in_the_triggers_users_profile(kernel, hermes):
     home = kernel.registry.get("home").ctx
-    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+    spec = {"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     await home.emit("doorbell", "ding")
     await settle(kernel)
@@ -242,7 +243,7 @@ async def test_wakes_run_in_the_triggers_users_profile(kernel, hermes):
 
 
 async def test_triggers_are_scoped_to_their_user(kernel):
-    spec = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+    spec = {"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}
     trigger = await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     assert kernel.triggers.list(Caller(kind="hermes", user="mom")) == []
     with pytest.raises(TriggerError):
@@ -268,7 +269,7 @@ def at_the_tv(family) -> Caller:
     return Caller(kind="hermes", session="s-tv", device=family.tv.id, group="home")
 
 
-DOORBELL = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}
+DOORBELL = {"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}
 
 
 async def test_a_trigger_on_a_shared_device_asks_everyone_and_the_first_yes_owns_it(kernel, family, hermes):
@@ -343,7 +344,7 @@ async def test_readings_survive_a_restart(kernel, tmp_path, clock, hermes):
 
 async def test_a_restart_doesnt_fire_a_trigger_twice(kernel, tmp_path, clock, hermes):
     home = kernel.registry.get("home").ctx
-    spec = {"note": "Light went off.", "when": [{"value": "home.light[light.porch]", "op": "==", "arg": "off"}], "repeat": "yes"}
+    spec = {"note": "Light went off.", "script": WAKE, "when": [{"value": "home.light[light.porch]", "op": "==", "arg": "off"}], "repeat": "yes"}
     await home.update("light", "off", params={"entity_id": "light.porch"})
     await kernel.triggers.register(TriggerSpec.model_validate(spec), OWNER)
     await settle(kernel)
@@ -360,7 +361,7 @@ async def test_a_restart_doesnt_fire_a_trigger_twice(kernel, tmp_path, clock, he
 async def test_an_input_going_unknown_doesnt_rearm(kernel, clock, hermes):
     home = kernel.registry.get("home").ctx
     spec = {
-        "note": "Close by with the light off.",
+        "note": "Close by with the light off.", "script": WAKE,
         "when": [{"value": "home.eta_min", "op": "<=", "arg": 10}, {"value": "home.light[light.porch]", "op": "==", "arg": "off"}],
         "repeat": "yes",
     }
@@ -391,7 +392,7 @@ async def test_a_fire_while_the_trigger_runs_is_dropped(kernel, hermes):
 
     hermes.script = [("run.started", {"run_id": "r"}), slow, ("run.completed", {})]
     home = kernel.registry.get("home").ctx
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}), OWNER)
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}), OWNER)
     await home.emit("doorbell", "ding")
     await asyncio.sleep(0.01)
     # The first wake is still running: these are dropped.
@@ -411,7 +412,7 @@ async def test_wakes_past_ten_are_told_and_past_twenty_pause_it(kernel, family, 
     mine, mine_task = await push_events(kernel, family.me_phone.id)
     home = kernel.registry.get("home").ctx
     trigger = await kernel.triggers.register(
-        TriggerSpec.model_validate({"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}), OWNER
+        TriggerSpec.model_validate({"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}), OWNER
     )
     for _ in range(21):
         await home.emit("doorbell", "ding")
@@ -434,7 +435,7 @@ async def test_wakes_past_ten_are_told_and_past_twenty_pause_it(kernel, family, 
 
 async def test_the_model_can_pause_and_resume_its_users_triggers(kernel, family, hermes):
     home = kernel.registry.get("home").ctx
-    created = await kernel.tools.call("triggers_register", {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes"}, OWNER)
+    created = await kernel.tools.call("triggers_register", {"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}], "repeat": "yes"}, OWNER)
     paused = await kernel.tools.call("triggers_pause", {"id": created.data["id"], "reason": "too chatty"}, OWNER)
     assert paused.data["status"] == "paused" and paused.data["paused_by"] == "model"
     await home.emit("doorbell", "ding")
@@ -459,3 +460,26 @@ async def test_busy_triggers_tell_their_user_once_an_hour(kernel, family, clock)
     told = [d for n, d in mine if n == "notify" and "fired" in d["text"]]
     assert len(told) == 1 and "11 times" in told[0]["text"]
     mine_task.cancel()
+
+
+async def test_a_trigger_without_a_script_is_refused(kernel):
+    with pytest.raises(ToolError, match="script"):
+        await kernel.tools.call("triggers_register", {"note": "Doorbell.", "when": [{"event": "home.doorbell"}]}, OWNER)
+
+
+async def test_a_trigger_stored_without_a_script_still_wakes(kernel, tmp_path, clock, home, hermes):
+    import json
+
+    from huvu.config import Config
+    from huvu.kernel import Kernel
+    from huvu.triggers import LEGACY_SCRIPT
+
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({**DOORBELL, "script": WAKE}), OWNER)
+    stored = json.loads(kernel.db.execute("SELECT spec FROM triggers WHERE id = ?", (trigger.id,)).fetchone()[0])
+    stored.pop("script")
+    kernel.db.execute("UPDATE triggers SET spec = ? WHERE id = ?", (json.dumps(stored), trigger.id))
+    again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": type(home)()}, clock=clock)
+    await again.triggers.load()
+    [loaded] = again.triggers.list(Caller(kind="hermes", user="me"))
+    assert loaded.spec.script == LEGACY_SCRIPT
+    again.db.close()

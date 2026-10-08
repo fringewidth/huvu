@@ -15,6 +15,12 @@
     [policy]
     "ha.turn_on" = "silent"  # source.action = silent | notify | ask
 
+    [speech]
+    voice = "af_heart"       # a Kokoro voice; the first letter is its language
+    lang = "en-us"           # how text is read: en-us or en-gb
+    speed = 1.0
+    stt_model = "whisper-large-v3"   # on Groq, with GROQ_API_KEY
+
     [[sources]]
     name = "tuya"
     driver = "huvu_drivers.tuya:TuyaSource"
@@ -24,7 +30,8 @@ Secrets never go in the file. HERMES_API_KEY (the default Hermes profile's
 key) and HUVU_MCP_TOKEN (the token that profile sends to /mcp) come from the
 environment, or else from backend/.env (gitignored), which setup.sh writes;
 both serve the default group's shared devices. HUVU_FCM_CREDENTIALS, the
-path of a Firebase service account's JSON key, turns on native push. Users, devices and each user's
+path of a Firebase service account's JSON key, turns on native push.
+GROQ_API_KEY turns on speech to text (hearing.py). Users, devices and each user's
 profile secrets live in the database (see accounts.py), managed with
 `huvu user ...`.
 """
@@ -80,6 +87,14 @@ class Config:
     # The folder every Hermes profile reads through skills.external_dirs.
     # huvu links each skill into it at every start. None skips the links.
     hermes_skills_dir: Path | None = None
+    # huvu's voice (speech.py): a Kokoro voice, how its text is read, and
+    # how fast. A Hindi voice such as hf_alpha reads English with en-us.
+    speech_voice: str = "af_heart"
+    speech_lang: str = "en-us"
+    speech_speed: float = 1.0
+    # Speech to text on Groq (hearing.py). No key, no hearing.
+    groq_api_key: str | None = None
+    stt_model: str = "whisper-large-v3"
 
     @property
     def skills_folder(self) -> Path:
@@ -91,6 +106,7 @@ def load(path: Path | None = None) -> Config:
     raw: dict[str, Any] = tomllib.loads(path.read_text()) if path.exists() else {}
     auth = raw.get("auth", {})
     hermes = raw.get("hermes", {})
+    speech = raw.get("speech", {})
     base = path.parent if path.exists() else Path.cwd()
     fcm = secret("HUVU_FCM_CREDENTIALS")
     config = Config(
@@ -108,6 +124,11 @@ def load(path: Path | None = None) -> Config:
         policy=dict(raw.get("policy", {})),
         skills_dir=(base / raw["skills_dir"]).resolve() if raw.get("skills_dir") else None,
         hermes_skills_dir=(base / raw["hermes_skills_dir"]).resolve() if raw.get("hermes_skills_dir") else REPO / "hermes-skills",
+        speech_voice=speech.get("voice", "af_heart"),
+        speech_lang=speech.get("lang", "en-us"),
+        speech_speed=float(speech.get("speed", 1.0)),
+        groq_api_key=secret("GROQ_API_KEY"),
+        stt_model=speech.get("stt_model", "whisper-large-v3"),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
     if config.auth_mode not in ("on", "off"):

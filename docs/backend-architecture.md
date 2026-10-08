@@ -256,7 +256,7 @@ The absolute time stays next to the age, because a tool result stays in the cont
 
 ## Triggers
 
-A trigger is a condition over source data that wakes Hermes when it comes true. Hermes registers triggers through MCP. The backend evaluates them. Triggers are huvu's only scheduler, decided on 2026-10-07: Hermes's cron toolset is off in every profile (`setup.sh`). A Hermes cron job made from the API server has nowhere to deliver its output, costs a model turn on every run, and never shows in the app. The clock is a source like any other, so "every day at 8" is a trigger on `clock.time` with `repeat: daily`, "weekdays" adds `clock.weekday` with `in`, and a one-off reminder pairs `clock.date` with `clock.time`. A script does what needs no thought, such as a reminder through `huvu_notify`, with no model call; a trigger without a script wakes the model.
+A trigger is a condition over source data and a script that runs when it comes true. Hermes registers triggers through MCP. The backend evaluates them. Triggers are huvu's only scheduler, decided on 2026-10-07: Hermes's cron toolset is off in every profile (`setup.sh`). A Hermes cron job made from the API server has nowhere to deliver its output, costs a model turn on every run, and never shows in the app. The clock is a source like any other, so "every day at 8" is a trigger on `clock.time` with `repeat: daily`, "weekdays" adds `clock.weekday` with `in`, and a one-off reminder pairs `clock.date` with `clock.time`. Every trigger has a script (decided 2026-10-08). The script does what needs no thought, such as a reminder through `huvu_notify`, with no model call, and starts a model instance with `ctx.wake(...)` on the fires that need one. So the choice between acting and waking is made in the script, and the model makes it while writing it, with no prompt to teach it. Triggers stored before then load with a one-line waking script.
 
 ```json
 {
@@ -314,7 +314,7 @@ A trigger with nobody to ask (one registered from a group profile's wake, which 
 
 ### Scripts
 
-A trigger can carry a script: a Python function the model writes, run when `when` matches. It can call the tools the trigger declared, and it ends by acting, waking the model, or doing nothing. The engine keeps watching, edges, rearm and expiry, so scripts don't rewrite them. The script lives in a file and runs in its own process (`script_host.py`), which talks to the core over its stdin and stdout, one JSON line per message. It can call only the tools named in the trigger's `grants`, through the same tool box Hermes uses, and actions still go through the policy. It has 30 s. It is not sandboxed: the agent already has a terminal, and it's there to help.
+Every trigger carries a script: a Python function the model writes, run when `when` matches. It can call the tools the trigger declared, and it ends by acting, waking the model, or doing nothing. The engine keeps watching, edges, rearm and expiry, so scripts don't rewrite them. The script lives in a file and runs in its own process (`script_host.py`), which talks to the core over its stdin and stdout, one JSON line per message. It can call only the tools named in the trigger's `grants`, through the same tool box Hermes uses, and actions still go through the policy. It has 30 s. It is not sandboxed: the agent already has a terminal, and it's there to help.
 
 `triggers_test` checks a trigger without registering it: each check's current reading and result, the last few events an event check would have matched, and a dry run of the script against them. Reads (`state_get`, `data_sql`) run for real, actions are recorded without running, and the model gets back what the script would have done. The dream then reviews real runs from `trigger.run` and `trigger.error` events.
 
@@ -435,6 +435,9 @@ backend/
     hermes.py         the Hermes API client
     conversations.py  frontend turns on Hermes sessions, and the relay
     wake.py           trigger wakes
+    speech.py         huvu's voice: Kokoro, a turn's answer spoken a sentence at a time
+    hearing.py        speech to text through Groq's Whisper
+    wipe.py           what `huvu wipe` deletes for a user or a group
     sessions.py       what the kernel knows about Hermes sessions
     push.py           the push channel
     native_push.py    FCM tokens and the sender, for phones whose app is closed

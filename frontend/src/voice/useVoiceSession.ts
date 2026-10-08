@@ -71,7 +71,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   // huvu's voice before there is anything to say.
   function warm(): void {
     resumeAudio();
-    void warmSpeaker().catch((err) => console.error("voice: clip failed to load", err));
+    void warmSpeaker().catch((err) => console.error("voice: audio failed to start", err));
   }
 
   // Drops the reply in flight: huvu is asked to stop and its voice goes
@@ -132,11 +132,12 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     if (awaiting.current !== "running") return;
     // A feed opened or a notice sent meanwhile sits on top, and is no
     // answer.
-    if (turns.findLast(asked)?.answer) {
+    const turn = turns.findLast(asked);
+    if (turn?.answer) {
       awaiting.current = "none";
       setPhase("speaking");
       const id = ++utterance.current;
-      speak()
+      speak(turn.id)
         .catch((err) => console.error("voice: playback failed", err))
         .finally(() => onSpoke(id));
       return;

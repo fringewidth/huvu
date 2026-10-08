@@ -1,7 +1,12 @@
-// Speech to text for voice mode. Uses the browser's Web Speech API where
-// it exists (desktop Chrome). The Android WebView and Fire TV have no
-// such API, so they get a mock that "hears" one of a few fixed phrases,
-// until a real STT service sits behind the gateway.
+import { call, getJson } from "../net/http";
+import { acquireMic, type Mic } from "./mic";
+
+// Speech to text for voice mode. When the backend can hear (Groq's
+// Whisper behind POST /api/transcribe, see GET /api/speech), the ask is
+// recorded here and sent there once it ends. Otherwise it falls back to
+// the browser's Web Speech API where it exists (desktop Chrome), and to a
+// mock that "hears" one of a few fixed phrases where it doesn't (the
+// Android WebView).
 export interface ListenOptions {
   // true: keep listening until stop() (push-to-talk). false: the
   // utterance ends by itself on a pause (hands-free).
@@ -36,7 +41,179 @@ type RecognitionCtor = new () => RecognitionLike;
 export function createTranscriber(): Transcriber {
   const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
   const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-  return Ctor ? webSpeechTranscriber(Ctor) : mockTranscriber();
+  const fallback = Ctor ? webSpeechTranscriber(Ctor) : mockTranscriber();
+  // On the web, the browser listens alongside the recording: its words
+  // show while you speak, and stand in if Groq can't hear the clip.
+  const backend = backendTranscriber(Ctor ? webSpeechTranscriber(Ctor) : null);
+  // Which one the latest start picked, once the backend has said. Until
+  // then a stop waits for it.
+  let active: Transcriber | null = null;
+  let latest = 0;
+  let stopEarly = false;
+  return {
+    start(opts) {
+      const n = ++latest;
+      active?.abort();
+      active = null;
+      stopEarly = false;
+      void canHear().then((hears) => {
+        if (n !== latest) return;
+        active = hears ? backend : fallback;
+        active.start(opts);
+        if (stopEarly) active.stop();
+      });
+    },
+    stop() {
+      if (active) active.stop();
+      else stopEarly = true;
+    },
+    abort() {
+      latest++;
+      active?.abort();
+      active = null;
+    },
+  };
+}
+
+// Whether the backend can hear, asked once. A failed ask is asked again
+// next time.
+let hearing: Promise<boolean> | null = null;
+function canHear(): Promise<boolean> {
+  hearing ??= getJson<{ listen: boolean }>("/api/speech")
+    .then((s) => s.listen)
+    .catch(() => {
+      hearing = null;
+      return false;
+    });
+  return hearing;
+}
+
+// Mic loudness that counts as speech, and how long a pause after speech
+// ends a hands-free ask.
+const SPEECH_RMS = 0.03;
+const PAUSE_MS = 700;
+// A hands-free listen that hears nothing gives up after this long.
+const NOTHING_MS = 6000;
+
+function recordingType(): string {
+  for (const type of ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"]) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "";
+}
+
+// Records an ask from the shared mic, ends it on a pause (hands-free) or
+// on stop() (push-to-talk), and sends it to the backend, where Whisper
+// takes the whole clip. With a `shadow` (the browser's own recognition),
+// its words show while you speak and its text is used when the backend
+// can't hear the clip (Groq's rate limit, a network error). The phone has
+// no shadow, so there a failed clip is lost and the ask ends empty.
+function backendTranscriber(shadow: Transcriber | null): Transcriber {
+  interface Session {
+    dropped: boolean;
+    stopped: boolean;
+    heard: boolean;
+    recorder: MediaRecorder | null;
+    raf: number;
+    shadowHeard?: Promise<string>;
+  }
+  let session: Session | null = null;
+
+  function start({ hold, onText, onEnd }: ListenOptions): void {
+    abort();
+    const own: Session = { dropped: false, stopped: false, heard: false, recorder: null, raf: 0 };
+    session = own;
+    // What the browser heard, once it has stopped. It ends only when told,
+    // since the recording decides when the ask is over.
+    let shadowText: (text: string) => void = () => {};
+    own.shadowHeard = new Promise((resolve) => (shadowText = resolve));
+    shadow?.start({ hold: true, onText: (text) => own.dropped || onText(text), onEnd: shadowText });
+    if (!shadow) shadowText("");
+    acquireMic()
+      .then((mic) => record(own, mic, hold, onText, onEnd))
+      .catch((err) => {
+        console.error("transcriber: no mic", err);
+        if (!own.dropped) onEnd("");
+      });
+  }
+
+  function record(own: Session, mic: Mic, hold: boolean, onText: (text: string) => void, onEnd: (text: string) => void): void {
+    if (own.dropped) return mic.release();
+    const type = recordingType();
+    const recorder = new MediaRecorder(mic.stream, type ? { mimeType: type } : undefined);
+    const chunks: Blob[] = [];
+    own.recorder = recorder;
+    recorder.ondataavailable = (e) => {
+      if (e.data.size) chunks.push(e.data);
+    };
+    recorder.onstop = () => {
+      cancelAnimationFrame(own.raf);
+      mic.release();
+      if (own.dropped) return;
+      if (session === own) session = null;
+      // Nothing above the noise: Whisper would make up words for silence.
+      if (!own.heard) {
+        shadow?.abort();
+        return onEnd("");
+      }
+      shadow?.stop();
+      const clip = new Blob(chunks, { type: recorder.mimeType });
+      void send(clip).then(async (heard) => {
+        if (own.dropped) return;
+        const text = heard ?? (await own.shadowHeard) ?? "";
+        if (own.dropped) return;
+        // Shown first, so the ask can fly up from where its words were.
+        onText(text);
+        requestAnimationFrame(() => requestAnimationFrame(() => own.dropped || onEnd(text)));
+      });
+    };
+    recorder.start(250);
+    if (own.stopped) return recorder.stop();
+
+    const began = performance.now();
+    let quietSince = 0;
+    const watch = () => {
+      if (recorder.state !== "recording") return;
+      const now = performance.now();
+      if (mic.rms() > SPEECH_RMS) {
+        own.heard = true;
+        quietSince = 0;
+      } else if (own.heard && !hold) {
+        quietSince ||= now;
+        if (now - quietSince > PAUSE_MS) return recorder.stop();
+      }
+      if (!own.heard && !hold && now - began > NOTHING_MS) return recorder.stop();
+      own.raf = requestAnimationFrame(watch);
+    };
+    watch();
+  }
+
+  // Whisper's text, or null when the backend couldn't hear the clip.
+  async function send(clip: Blob): Promise<string | null> {
+    try {
+      const res = await call("/api/transcribe", { method: "POST", body: clip, headers: { "Content-Type": clip.type || "audio/webm" } });
+      return ((await res.json()) as { text: string }).text.trim();
+    } catch (err) {
+      console.warn("transcriber: the backend couldn't hear it", err);
+      return null;
+    }
+  }
+
+  function stop(): void {
+    if (!session) return;
+    session.stopped = true;
+    if (session.recorder?.state === "recording") session.recorder.stop();
+  }
+
+  function abort(): void {
+    if (!session) return;
+    session.dropped = true;
+    shadow?.abort();
+    if (session.recorder?.state === "recording") session.recorder.stop();
+    session = null;
+  }
+
+  return { start, stop, abort };
 }
 
 function webSpeechTranscriber(Ctor: RecognitionCtor): Transcriber {

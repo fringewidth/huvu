@@ -131,3 +131,7 @@ class FakeHermes:
 
     async def close(self) -> None:
         pass
+
+
+# The script for a test trigger that only wakes the model.
+WAKE = 'def run(ctx):\n    ctx.wake("It fired.")\n'
