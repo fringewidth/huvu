@@ -105,3 +105,21 @@ async def test_a_rate_limit_moves_to_the_other_model_then_says_so(kernel):
     with pytest.raises(HearingError) as err:
         await kernel.hearing.transcribe(b"clip", "audio/webm")
     assert err.value.limited
+
+
+async def test_a_sentence_edge_fails_on_is_said_by_kokoro(kernel, monkeypatch):
+    from huvu.speech import Voice
+
+    async def edge_down(self, text: str) -> bytes:
+        raise OSError("no network")
+
+    async def kokoro(self, text: str) -> bytes:
+        return b"k"
+
+    monkeypatch.setattr(Voice, "_edge", edge_down)
+    monkeypatch.setattr(Voice, "_kokoro", kokoro)
+    monkeypatch.setattr(Voice, "_kokoro_installed", lambda self: True)
+    assert await kernel.voice.pcm("Hi.") == b"k"
+    monkeypatch.setattr(Voice, "_kokoro_installed", lambda self: False)
+    with pytest.raises(OSError):
+        await kernel.voice.pcm("Hi.")

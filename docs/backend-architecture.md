@@ -443,7 +443,7 @@ backend/
     conversations.py  frontend turns on Hermes sessions, and the relay
     wake.py           trigger wakes
     dream.py          each person's nightly dream: its trigger and its prompt
-    speech.py         huvu's voice: Kokoro, a turn's answer spoken a sentence at a time
+    speech.py         huvu's voice: Edge (or Kokoro), a turn's answer spoken a sentence at a time
     hearing.py        speech to text through Groq's Whisper
     wipe.py           what `huvu wipe` deletes for a user or a group
     sessions.py       what the kernel knows about Hermes sessions
