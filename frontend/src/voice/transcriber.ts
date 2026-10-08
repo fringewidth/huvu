@@ -6,12 +6,14 @@ import { acquireMic, type Mic } from "./mic";
 // recorded here and sent there once it ends. Otherwise it falls back to
 // the browser's Web Speech API where it exists (desktop Chrome), and to a
 // mock that "hears" one of a few fixed phrases where it doesn't (the
-// Android WebView).
+// Android WebView). No words show while you speak: only the final text,
+// once the ask is over.
 export interface ListenOptions {
   // true: keep listening until stop() (push-to-talk). false: the
   // utterance ends by itself on a pause (hands-free).
   hold: boolean;
-  onText: (text: string) => void;
+  // Fires once, when speech first starts.
+  onSpeech: () => void;
   // Fires once per utterance with what was heard, possibly empty.
   onEnd: (text: string) => void;
 }
@@ -32,6 +34,7 @@ interface RecognitionLike {
   stop(): void;
   abort(): void;
   onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onspeechstart: (() => void) | null;
   onend: (() => void) | null;
   onerror: (() => void) | null;
 }
@@ -42,8 +45,8 @@ export function createTranscriber(): Transcriber {
   const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
   const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
   const fallback = Ctor ? webSpeechTranscriber(Ctor) : mockTranscriber();
-  // On the web, the browser listens alongside the recording: its words
-  // show while you speak, and stand in if Groq can't hear the clip.
+  // On the web, the browser listens alongside the recording, and its
+  // words stand in if Groq can't hear the clip.
   const backend = backendTranscriber(Ctor ? webSpeechTranscriber(Ctor) : null);
   // Which one the latest start picked, once the backend has said. Until
   // then a stop waits for it.
@@ -105,8 +108,9 @@ function recordingType(): string {
 // Records an ask from the shared mic, ends it on a pause (hands-free) or
 // on stop() (push-to-talk), and sends it to the backend, where Whisper
 // takes the whole clip. With a `shadow` (the browser's own recognition),
-// its words show while you speak and its text is used when the backend
-// can't hear the clip (Groq's rate limit, a network error). The phone has
+// its text is used when the backend can't hear the clip (Groq's rate
+// limit, a network error). Its words never show while you speak: Chrome
+// often gets them wrong, and Whisper's fix of them distracted. The phone has
 // no shadow, so there a failed clip is lost and the ask ends empty.
 function backendTranscriber(shadow: Transcriber | null): Transcriber {
   interface Session {
@@ -119,7 +123,7 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
   }
   let session: Session | null = null;
 
-  function start({ hold, onText, onEnd }: ListenOptions): void {
+  function start({ hold, onSpeech, onEnd }: ListenOptions): void {
     abort();
     const own: Session = { dropped: false, stopped: false, heard: false, recorder: null, raf: 0 };
     session = own;
@@ -127,17 +131,17 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
     // since the recording decides when the ask is over.
     let shadowText: (text: string) => void = () => {};
     own.shadowHeard = new Promise((resolve) => (shadowText = resolve));
-    shadow?.start({ hold: true, onText: (text) => own.dropped || onText(text), onEnd: shadowText });
+    shadow?.start({ hold: true, onSpeech: () => {}, onEnd: shadowText });
     if (!shadow) shadowText("");
     acquireMic()
-      .then((mic) => record(own, mic, hold, onText, onEnd))
+      .then((mic) => record(own, mic, hold, onSpeech, onEnd))
       .catch((err) => {
         console.error("transcriber: no mic", err);
         if (!own.dropped) onEnd("");
       });
   }
 
-  function record(own: Session, mic: Mic, hold: boolean, onText: (text: string) => void, onEnd: (text: string) => void): void {
+  function record(own: Session, mic: Mic, hold: boolean, onSpeech: () => void, onEnd: (text: string) => void): void {
     if (own.dropped) return mic.release();
     const type = recordingType();
     const recorder = new MediaRecorder(mic.stream, type ? { mimeType: type } : undefined);
@@ -161,10 +165,7 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
       void send(clip).then(async (heard) => {
         if (own.dropped) return;
         const text = heard ?? (await own.shadowHeard) ?? "";
-        if (own.dropped) return;
-        // Shown first, so the ask can fly up from where its words were.
-        onText(text);
-        requestAnimationFrame(() => requestAnimationFrame(() => own.dropped || onEnd(text)));
+        if (!own.dropped) onEnd(text);
       });
     };
     recorder.start(250);
@@ -176,6 +177,7 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
       if (recorder.state !== "recording") return;
       const now = performance.now();
       if (mic.rms() > SPEECH_RMS) {
+        if (!own.heard) onSpeech();
         own.heard = true;
         quietSince = 0;
       } else if (own.heard && !hold) {
@@ -219,17 +221,17 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
 function webSpeechTranscriber(Ctor: RecognitionCtor): Transcriber {
   let session: { rec: RecognitionLike; dropped: boolean } | null = null;
 
-  function start({ hold, onText, onEnd }: ListenOptions): void {
+  function start({ hold, onSpeech, onEnd }: ListenOptions): void {
     abort();
     const rec = new Ctor();
     rec.continuous = hold;
-    rec.interimResults = true;
+    rec.interimResults = false;
     rec.lang = navigator.language || "en-IN";
     const own = { rec, dropped: false };
     let text = "";
+    rec.onspeechstart = () => own.dropped || onSpeech();
     rec.onresult = (e) => {
       text = Array.from(e.results, (r) => r[0].transcript).join("").trim();
-      onText(text);
     };
     // Every error is followed by onend, so errors need no handling of
     // their own: an utterance that failed simply ends with what it had.
@@ -277,13 +279,13 @@ function mockTranscriber(): Transcriber {
     onEnd(words.join(" "));
   }
 
-  function start({ hold, onText, onEnd }: ListenOptions): void {
+  function start({ hold, onSpeech, onEnd }: ListenOptions): void {
     abort();
     const words = MOCK_PHRASES[Math.floor(Math.random() * MOCK_PHRASES.length)].split(" ");
     let ticks = 0;
     const timer = window.setInterval(() => {
       ticks++;
-      if (ticks <= words.length) onText(words.slice(0, ticks).join(" "));
+      if (ticks === 1) onSpeech();
       if (!hold && ticks >= words.length + MOCK_PAUSE_TICKS) finish();
     }, MOCK_WORD_MS);
     session = { timer, words, onEnd };

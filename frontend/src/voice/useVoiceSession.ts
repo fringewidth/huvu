@@ -22,6 +22,8 @@ const NOISE_FLOOR = 0.12;
 export function useVoiceSession(onUtterance: (text: string) => void) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
+  // Whether the current listen has heard speech start.
+  const [heard, setHeard] = useState(false);
   const [transcriber] = useState(createTranscriber);
   const level = useMotionValue(0);
   const handsFree = useRef(false);
@@ -32,26 +34,38 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   const awaiting = useRef<"none" | "sent" | "running">("none");
   // Only the latest reply's end moves the session on.
   const utterance = useRef(0);
+  // Counts listens, so a heard ask still on its way to the screen is
+  // dropped once a new listen starts or voice ends.
+  const listens = useRef(0);
   const utter = useRef(onUtterance);
   useLayoutEffect(() => {
     utter.current = onUtterance;
   });
 
   function listen(hold: boolean): void {
+    const n = ++listens.current;
     setTranscript("");
+    setHeard(false);
     setPhase("listening");
     transcriber.start({
       hold,
-      onText: setTranscript,
+      onSpeech: () => n === listens.current && setHeard(true),
       onEnd: (text) => {
+        setHeard(false);
         if (text) {
-          silentRounds.current = 0;
-          awaiting.current = "sent";
-          setPhase("thinking");
-          // Runs before the transcript clears, so the caller can still
-          // measure it on screen and fly it up into the YOU cue.
-          utter.current(text);
-          setTranscript("");
+          // Shown first, so the caller can measure it on screen and fly it
+          // up into the YOU cue.
+          setTranscript(text);
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              if (n !== listens.current) return;
+              silentRounds.current = 0;
+              awaiting.current = "sent";
+              setPhase("thinking");
+              utter.current(text);
+              setTranscript("");
+            }),
+          );
           return;
         }
         setTranscript("");
@@ -103,6 +117,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
 
   // A push-to-talk tap too short to mean anything: drop what was heard.
   function dropHold(): void {
+    listens.current++;
     transcriber.abort();
     setTranscript("");
     setPhase("idle");
@@ -115,6 +130,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   function exit(): void {
     handsFree.current = false;
     awaiting.current = "none";
+    listens.current++;
     transcriber.abort();
     setTranscript("");
     setPhase("idle");
@@ -192,5 +208,5 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     [transcriber],
   );
 
-  return { phase, transcript, level, begin, hold, dropHold, release, exit };
+  return { phase, transcript, heard, level, begin, hold, dropHold, release, exit };
 }

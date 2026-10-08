@@ -23,6 +23,11 @@ def test_numbers_and_markdown_read_naturally():
     assert sentences("All set! \U0001F33C\u2600\ufe0f Talk soon.", 0, final=True)[0] == ["All set!", "Talk soon."]
 
 
+def test_huvu_is_said_the_way_it_sounds():
+    assert sentences("I'm huvu. Huvu's garden grows.", 0, final=True)[0] == ["I'm hoo voo.", "hoo voo's garden grows."]
+    assert sentences("Ask huvuish things.", 0, final=True)[0] == ["Ask huvuish things."]
+
+
 def test_a_long_run_on_is_cut_at_a_comma():
     text = "word, " * 60
     ready, rest = sentences(text, 0, final=False)
@@ -66,13 +71,15 @@ async def test_an_ask_goes_to_groq_with_the_familys_names(kernel):
 
     kernel.hearing._key = "gsk_test"
     kernel.hearing._http = httpx.AsyncClient(transport=httpx.MockTransport(groq))
-    text = await kernel.hearing.transcribe(b"\x1aE\xdf\xa3 clip", "audio/webm;codecs=opus")
+    text = await kernel.hearing.transcribe(b"\x1aE\xdf\xa3 clip", "audio/webm;codecs=opus", "mom")
     assert text == "Remind Hrishik at nine."
     assert seen["auth"] == "Bearer gsk_test"
     body = seen["body"]
     assert b'filename="ask.webm"' in body and b"whisper-large-v3" in body and b"\r\n\r\nen\r\n" in body
-    # The family's names steer the spelling.
-    assert b"huvu, " in body and b"Mom" in body
+    # The speaker's and the family's names steer the spelling.
+    assert b"Hey huvu, it's Mom." in body and b"Me" in body
+    # Nobody known at the device: the family alone.
+    assert kernel.hearing.prompt(None).startswith("Hey huvu. The family: ")
 
 
 async def test_no_key_means_no_hearing(kernel):

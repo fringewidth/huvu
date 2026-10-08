@@ -216,9 +216,13 @@ DREAM_SCRIPT = """def run(ctx):
 """
 
 
-def whisper_prompt(names: list[str]) -> str:
-    """Names Whisper should expect: huvu's and the family's."""
-    return "huvu, " + ", ".join(dict.fromkeys(n for n in names if n)) + "."
+def whisper_prompt(speaker: str | None, names: list[str]) -> str:
+    """Names Whisper should expect: huvu's, the speaker's and the family's.
+    Whisper reads the prompt as the text spoken just before the clip, so a
+    sentence that uses the names steers it better than a bare list."""
+    family = ", ".join(dict.fromkeys(n for n in names if n))
+    opening = f"Hey huvu, it's {speaker}." if speaker else "Hey huvu."
+    return f"{opening} The family: {family}. huvu, what's on today?"
 
 
 # Columns every history table has, with their SQLite types, described for

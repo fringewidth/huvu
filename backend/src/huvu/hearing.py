@@ -3,7 +3,8 @@
 The app records an ask and sends the clip here (`POST /api/transcribe`);
 it goes to Groq's OpenAI-compatible transcription endpoint and comes back
 as text. Whisper is told the language is English and is given a prompt
-with the family's names and huvu's, so they come out spelled right.
+with huvu's name, the speaker's and the family's, so they come out
+spelled right.
 
 GROQ_API_KEY comes from the environment or backend/.env. Without it there
 is no hearing, and the app falls back to the browser's own recognition.
@@ -51,12 +52,14 @@ class Hearing:
     def available(self) -> bool:
         return bool(self._key)
 
-    def prompt(self) -> str:
-        """Names Whisper should expect: huvu's and the family's."""
+    def prompt(self, speaker: str | None) -> str:
+        """Names Whisper should expect: huvu's, the speaker's (a user id)
+        and the family's."""
         users = self._kernel.accounts.users()
-        return whisper_prompt([u.name for u in users] + [u.id for u in users])
+        named = next((u.name for u in users if u.id == speaker), None)
+        return whisper_prompt(named, [u.name for u in users] + [u.id for u in users])
 
-    async def transcribe(self, audio: bytes, content_type: str) -> str:
+    async def transcribe(self, audio: bytes, content_type: str, speaker: str | None = None) -> str:
         if not self._key:
             raise HearingError("no GROQ_API_KEY")
         if not audio:
@@ -71,7 +74,7 @@ class Hearing:
                 GROQ_URL,
                 headers={"Authorization": f"Bearer {self._key}"},
                 files={"file": (name, audio, kind or "application/octet-stream")},
-                data={"model": model, "language": "en", "prompt": self.prompt(), "response_format": "json", "temperature": "0"},
+                data={"model": model, "language": "en", "prompt": self.prompt(speaker), "response_format": "json", "temperature": "0"},
             )
             if res.status_code == 429:
                 continue

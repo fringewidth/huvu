@@ -62,6 +62,10 @@ def sentences(text: str, start: int, final: bool) -> tuple[list[str], int]:
 # Emoji, their joiners and variation selectors: the voice would read their
 # names, or stumble.
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]")
+# huvu's name spelled the way Edge says it right. Edge misreads it as
+# written.
+_NAME = re.compile(r"\bhuvu\b", re.IGNORECASE)
+SAID_NAME = "hoo voo"
 
 
 def speakable(text: str) -> str:
@@ -71,6 +75,7 @@ def speakable(text: str) -> str:
     text = re.sub(r"^\s*(?:[-*•]|\d+\.)\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"[*_`#>]+", "", text)
     text = _EMOJI.sub("", text)
+    text = _NAME.sub(SAID_NAME, text)
     return " ".join(text.split())
 
 

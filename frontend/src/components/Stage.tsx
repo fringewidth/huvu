@@ -130,7 +130,7 @@ export function Stage() {
   };
 
   const voice = useVoiceSession((text) => submit(text, transcriptRef.current ? snapshot(transcriptRef.current) : undefined));
-  if (docked && voice.transcript) setDocked(false);
+  if (docked && (voice.heard || voice.transcript)) setDocked(false);
   const dock = () => {
     if (mode === "voice" && view.kind === "stage") setDocked(true);
   };

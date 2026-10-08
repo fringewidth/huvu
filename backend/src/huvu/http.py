@@ -276,11 +276,13 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.post("/api/transcribe")
     async def transcribe(request: Request, me: Device = device) -> dict[str, str]:
-        """One recorded ask, as the request body, to text."""
+        """One recorded ask, as the request body, to text. The person at the
+        device is named to Whisper, so their name comes out spelled right."""
         if not kernel.hearing.available():
             raise HTTPException(503, "huvu can't hear: GROQ_API_KEY isn't set")
+        speaker = me.user or kernel.attendance.holder(me.id)
         try:
-            text = await kernel.hearing.transcribe(await request.body(), request.headers.get("content-type", ""))
+            text = await kernel.hearing.transcribe(await request.body(), request.headers.get("content-type", ""), speaker)
         except HearingError as err:
             raise HTTPException(429 if err.limited else 502, str(err)) from err
         return {"text": text}
