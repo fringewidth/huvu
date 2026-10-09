@@ -83,10 +83,12 @@ Asks fail for about 65 seconds after a start, until the backend and then
 Hermes are up. Docker can't reach Windows's credential store over SSH, so
 a build that names a base image the laptop doesn't have fails with "A
 specified logon session does not exist": `docker pull` it first (the
-`FROM` lines in the `Dockerfile`). The prune removes only untagged images
-no container uses; immich's untagged ones are in use. A rebuild on the
-same Hermes leaves nothing behind; one that moves the pin leaves the old
-image, about 3 GB.
+`FROM` lines in the `Dockerfile`). The prune removes untagged images no
+container uses. Hermes's pinned image is pulled by digest, so it has no
+tag of its own and a prune would take it: keep it tagged
+(`docker tag nousresearch/hermes-agent@sha256:<the pin> nousresearch/hermes-agent:huvu-pin`,
+again whenever the pin moves). A rebuild on the same Hermes leaves
+nothing behind; one that moves the pin leaves the old image, about 3 GB.
 
 Is it up:
 
