@@ -48,6 +48,7 @@ class FakeHA:
         self.token = token
         self.admin = True
         self.areas = {"bedroom": "Bedroom", "living_room": "Living room", "hall": "Hall"}
+        self.area_labels: dict[str, list[str]] = {}
         self.states: dict[str, dict[str, Any]] = {}
         self.entries: dict[str, dict[str, Any]] = {}
         self.exposed: set[str] = set()
@@ -134,7 +135,7 @@ class FakeHA:
         return {"id": self.OWN_USER, "name": "huvu", "is_owner": False, "is_admin": self.admin}
 
     def _config__area_registry__list(self, message: dict[str, Any]) -> list[dict[str, Any]]:
-        return [{"area_id": k, "name": v, "aliases": [], "floor_id": None} for k, v in self.areas.items()]
+        return [{"area_id": k, "name": v, "aliases": [], "floor_id": None, "labels": self.area_labels.get(k, [])} for k, v in self.areas.items()]
 
     def _config__device_registry__list(self, message: dict[str, Any]) -> list[dict[str, Any]]:
         return []
@@ -156,15 +157,25 @@ class FakeHA:
 
     def _call_service(self, message: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(message)
-        assert message["domain"] == "script"
-        object_id = message["service"]
         context = {"id": _ctx(), "parent_id": None, "user_id": self.OWN_USER}
+        run = self._run_script if message["domain"] == "script" else self._run_device_service
+        return run(message, context)
+
+    def _run_script(self, message: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        object_id = message["service"]
         self.set(f"script.{object_id}", "on", context=context, last_triggered=self.clock.now.isoformat())
         for entity_id, state, attributes in self.effects.get(object_id, []):
             self.set(entity_id, state, context=context, **attributes)
         self.set(f"script.{object_id}", "off", context=context)
         return {"context": context, "response": self.responses.get(object_id)}
 
+    def _run_device_service(self, message: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        """turn_on and turn_off move the state, with the call's data as
+        attributes; any other service leaves the state as it is."""
+        entity_id = message["target"]["entity_id"]
+        state = {"turn_on": "on", "turn_off": "off"}.get(message["service"], self.states[entity_id]["state"])
+        self.set(entity_id, state, context=context, **(message.get("service_data") or {}))
+        return {"context": context, "response": None}
 
 def _ctx() -> str:
     return secrets.token_hex(13)

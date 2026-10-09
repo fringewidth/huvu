@@ -1,11 +1,10 @@
 """Home Assistant scripts as huvu actions.
 
-The household builds its own abstraction inside HA: every way huvu may
-change the house is an HA script, with a description, fields and an area,
-exposed to Assist. Each exposed script becomes one action of this source,
-named after the script's object id (`script.bedroom_ac_set` becomes
-`ha_bedroom_ac_set`). huvu adds no action of its own, so the policy and the
-history only ever see actions someone wrote in HA.
+The household writes its routines in HA as scripts, each with a
+description, fields and an area, exposed to Assist. Each exposed script
+becomes one action of this source, named after the script's object id
+(`script.bedroom_ac_set` becomes `ha_bedroom_ac_set`). Single devices are
+worked directly (entities.py).
 
 What the script says in HA becomes what the model sees:
 
@@ -106,11 +105,16 @@ def usable(script: Script) -> bool:
     return not any(p.startswith("left out") for p in problems_of(script))
 
 
+def strictest(labels: list[str]) -> tuple[Autonomy, bool] | None:
+    """The level of the strictest huvu label among these, or None."""
+    order = ["huvu_human", "huvu_ask", "huvu_notify", "huvu_silent"]
+    found = next((label for label in order if label in labels), None)
+    return LEVELS[found] if found else None
+
+
 def level(script: Script) -> tuple[Autonomy, bool]:
     """The strictest huvu label wins; none means ask."""
-    order = ["huvu_human", "huvu_ask", "huvu_notify", "huvu_silent"]
-    found = next((label for label in order if label in script.labels), None)
-    return LEVELS[found] if found else (DEFAULT_LEVEL, False)
+    return strictest(script.labels) or (DEFAULT_LEVEL, False)
 
 
 def action(script: Script) -> ActionSpec:

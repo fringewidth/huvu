@@ -9,16 +9,17 @@ every exposed script. It keeps:
    tables answer from it (`ha_entities`), so nothing is written per state
    change but the history row. HA sends every state again on reconnect,
    so the mirror needs no persistence.
-2. **The exposed scripts, as actions** (scripts.py). They are cached in
-   the source's folder, so the actions exist before HA connects. When the
-   scripts change in HA (a registry event, or the 5-minute refresh), the
-   driver calls `ctx.respec()`.
+2. **The actions**: every exposed script (scripts.py), and every exposed
+   entity huvu can work directly, such as a light or a button
+   (entities.py). They are cached in the source's folder, so the actions
+   exist before HA connects. When they change in HA (a registry event, or
+   the 5-minute refresh), the driver calls `ctx.respec()`.
 3. **History for the dream**, as rows in its tables (TABLES): every change
    of an exposed entity with who caused it (history.py), every script run,
    and numeric sensors as 5-minute buckets.
 
-What HA exposes to Assist is what huvu sees. Nothing else can be read,
-searched or worked.
+What HA exposes to Assist is what huvu sees and works. Nothing else can be
+read, searched or worked.
 
 Options (huvu.toml):
 
@@ -47,11 +48,14 @@ from huvu.source import Source, SourceError
 from huvu.spec import Caller, ColumnSpec, Result, SourceSpec, TableSpec
 
 from .client import Connect, HAClient, HAError, connect_websocket
+from . import entities
+from .entities import Control
 from .history import Actor, Attribution, SensorBuckets
 from .scripts import Script, action, from_config, problems_of, usable
 
 TOKEN_ENV = "HA_TOKEN"
 CACHE = "scripts.json"
+CONTROL_CACHE = "entities.json"
 # How often the registries, the exposure list and the scripts are read
 # again, for changes HA sends no event for (a script edited in place).
 REFRESH_EVERY = 300.0
@@ -146,6 +150,7 @@ TABLES = [
                 ("area", "text"),
                 ("device", "text"),
                 ("aliases", "json"),
+                ("action", "text"),
                 ("state", "text"),
                 ("number", "real"),
                 ("attributes", "json"),
@@ -205,10 +210,12 @@ class HomeAssistant(Source):
         self._aliases: dict[str, list[str]] = {}
         # Object id -> script. None until the cache or HA has been read.
         self._scripts: dict[str, Script] | None = None
+        # Action name -> entity huvu works directly. None likewise.
+        self._controls: dict[str, Control] | None = None
         self._problems: list[str] = []
         self._logged: set[str] = set()
-        # Script entity -> (huvu user, args) of each call huvu has waiting
-        # in HA, oldest first.
+        # Script or entity -> (huvu user, args) of each call huvu has
+        # waiting in HA, oldest first.
         self._inflight: dict[str, list[tuple[str | None, dict[str, Any]]]] = {}
         self._attribution = Attribution(None, self._users)
         self._buckets = SensorBuckets()
@@ -222,9 +229,13 @@ class HomeAssistant(Source):
             name=name,
             description=TEXT["ha.description"],
             guide=HA_GUIDE.format(name=name),
-            actions=[action(s) for s in self._known_scripts().values() if usable(s)],
+            actions=self._actions(),
             tables=TABLES,
         )
+
+    def _actions(self) -> list:
+        scripts = [action(s) for s in self._known_scripts().values() if usable(s)]
+        return scripts + [entities.action(c) for c in self._known_controls().values()]
 
     def _known_scripts(self) -> dict[str, Script]:
         if self._scripts is None:
@@ -233,8 +244,15 @@ class HomeAssistant(Source):
             self._scripts = {s["object_id"]: Script(**s) for s in cached}
         return self._scripts
 
+    def _known_controls(self) -> dict[str, Control]:
+        if self._controls is None:
+            cache = self.ctx.data_dir / CONTROL_CACHE
+            cached = json.loads(cache.read_text()) if cache.exists() else []
+            self._controls = {c.action_name: c for c in (Control(**raw) for raw in cached)}
+        return self._controls
+
     def _spec_key(self) -> str:
-        return json.dumps([action(s).model_dump(mode="json") for s in self._known_scripts().values() if usable(s)], sort_keys=True)
+        return json.dumps([a.model_dump(mode="json") for a in self._actions()], sort_keys=True)
 
     # The connection
 
@@ -282,7 +300,9 @@ class HomeAssistant(Source):
         if not me.get("is_admin"):
             raise SourceError("huvu's Home Assistant user must be an administrator, to read the registries and the exposure list")
         self._attribution.own_user = me["id"]
-        areas = {a["area_id"]: a["name"] for a in await client.call("config/area_registry/list")}
+        area_list = await client.call("config/area_registry/list")
+        areas = {a["area_id"]: a["name"] for a in area_list}
+        area_labels = {a["name"]: list(a.get("labels") or []) for a in area_list}
         devices = {d["id"]: d for d in await client.call("config/device_registry/list")}
         entries = {e["entity_id"]: e for e in await client.call("config/entity_registry/list")}
         states = {s["entity_id"]: s for s in await client.call("get_states")}
@@ -320,8 +340,25 @@ class HomeAssistant(Source):
             script = from_config(entity_id, _name(states[entity_id]), config, labels, self._area.get(entity_id), exposed)
             scripts[script.object_id] = script
             problems.extend(problems_of(script))
+        controls: dict[str, Control] = {}
+        for entity_id in sorted(e for e in exposed if entities.controllable(e)):
+            area = self._area.get(entity_id)
+            control = entities.from_state(
+                entity_id,
+                states[entity_id],
+                labels=list((entries.get(entity_id) or {}).get("labels") or []),
+                area=area,
+                area_labels=area_labels.get(area or "", []),
+                device=self._device.get(entity_id),
+                aliases=self._aliases.get(entity_id) or [],
+            )
+            problems.extend(entities.problems_of(control))
+            if control.action_name in scripts:
+                problems.append(f"left out {entity_id}: its action name {control.action_name} is a script's; rename one of them")
+            elif entities.usable(control):
+                controls[control.action_name] = control
         self._set_problems(problems)
-        await self._set_scripts(scripts)
+        await self._set_actions(scripts, controls)
 
     async def _exposure(self, client: HAClient, known: set[str]) -> set[str]:
         listed = (await client.call("homeassistant/expose_entity/list")).get("exposed_entities") or {}
@@ -339,10 +376,12 @@ class HomeAssistant(Source):
                 aliases[entity_id] = names
         return aliases
 
-    async def _set_scripts(self, scripts: dict[str, Script]) -> None:
+    async def _set_actions(self, scripts: dict[str, Script], controls: dict[str, Control]) -> None:
         before = self._spec_key()
         self._scripts = scripts
+        self._controls = controls
         (self.ctx.data_dir / CACHE).write_text(json.dumps([s.as_dict() for s in scripts.values()], indent=1))
+        (self.ctx.data_dir / CONTROL_CACHE).write_text(json.dumps([c.as_dict() for c in controls.values()], indent=1))
         if self._spec_key() != before:
             await self.ctx.respec()
         self._publish_scripts()
@@ -438,7 +477,7 @@ class HomeAssistant(Source):
         chosen = _tracked(domain, new)
         if not state_moved and chosen == _tracked(domain, old):
             return
-        actor = self._attribution.actor(context, huvu_user=self._only_inflight_user())
+        actor = self._attribution.actor(context, huvu_user=self._inflight_user(entity_id))
         attributes = new.get("attributes") or {}
         device_class = attributes.get("device_class")
         row = {
@@ -457,12 +496,15 @@ class HomeAssistant(Source):
         }
         await self.ctx.record("changes", row, at=at, user=actor.user)
 
-    def _only_inflight_user(self) -> str | None:
-        """The huvu user of the one call huvu has waiting in HA, if there
-        is exactly one. A change in huvu's own context that no script run
-        claimed is most likely that call's."""
+    def _inflight_user(self, entity_id: str) -> str | None:
+        """The huvu user of the call huvu has waiting in HA that a change of
+        this entity in huvu's own context most likely belongs to: the oldest
+        call on the entity itself, else the one call in flight, if there is
+        exactly one (a script working the entity)."""
+        own = self._inflight.get(entity_id) or []
         calls = [user for pending in self._inflight.values() for user, _ in pending]
-        return calls[0] if len(calls) == 1 else None
+        only = calls[0] if len(calls) == 1 else None
+        return own[0][0] if own else only
 
     async def _write_buckets(self, rows: list[tuple[str, datetime, dict[str, Any]]]) -> None:
         for entity_id, start, values in rows:
@@ -494,12 +536,17 @@ class HomeAssistant(Source):
             "area": self._area.get(entity_id),
             "device": self._device.get(entity_id),
             "aliases": self._aliases.get(entity_id) or None,
+            "action": self._action_of(entity_id),
             "state": state["state"],
             "number": _number(state["state"]),
             "attributes": {k: v for k, v in attributes.items() if k not in NOISE} or None,
             "assumed": bool(attributes.get("assumed_state")),
             "last_changed": state.get("last_changed"),
         }
+
+    def _action_of(self, entity_id: str) -> str | None:
+        control = self._known_controls().get(entity_id.replace(".", "_", 1))
+        return f"{self.ctx.name}_{control.action_name}" if control is not None and control.entity_id == entity_id else None
 
     def _publish_scripts(self) -> None:
         self.ctx.replace(
@@ -524,8 +571,13 @@ class HomeAssistant(Source):
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         script = self._known_scripts().get(name)
-        if script is None or not usable(script):
-            raise SourceError(f"{self.ctx.name} has no script {name!r}")
+        control = self._known_controls().get(name)
+        if (script is None or not usable(script)) and control is None:
+            raise SourceError(f"{self.ctx.name} has no action {name!r}")
+        work = self._run_script(script, args, caller) if script is not None and usable(script) else self._work(control, args, caller)
+        return await work
+
+    async def _run_script(self, script: Script, args: dict[str, Any], caller: Caller) -> Result:
         client = self._require()
         pending = self._inflight.setdefault(script.entity_id, [])
         call = (caller.user, dict(args))
@@ -549,6 +601,33 @@ class HomeAssistant(Source):
             if result.get("response"):
                 data["response"] = result["response"]
         return Result(data=data, labels=["house"])
+
+    async def _work(self, control: Control, args: dict[str, Any], caller: Caller) -> Result:
+        """Works one exposed entity directly: one or more service calls on
+        it alone, each attributed to huvu and the caller."""
+        try:
+            calls = entities.service_calls(control, args)
+        except ValueError as err:
+            raise SourceError(f"{self.ctx.name}_{control.action_name}: {err}") from err
+        client = self._require()
+        pending = self._inflight.setdefault(control.entity_id, [])
+        call = (caller.user, dict(args))
+        pending.append(call)
+        sent: list[str] = []
+        try:
+            for domain, service, data in calls:
+                result = await client.call("call_service", domain=domain, service=service, service_data=data, target={"entity_id": control.entity_id}, timeout=ACT_TIMEOUT)
+                context_id = ((result or {}).get("context") or {}).get("id")
+                self._attribution.remember(context_id, Actor("huvu", caller.user, self._attribution.own_user))
+                sent.append(f"{domain}.{service}")
+        except HAError as err:
+            raise SourceError(f"Home Assistant refused {calls[len(sent)][0]}.{calls[len(sent)][1]} on {control.entity_id}: {err}") from err
+        except TimeoutError as err:
+            raise SourceError(f"Home Assistant didn't answer {control.entity_id} after {ACT_TIMEOUT:.0f} s") from err
+        finally:
+            if call in pending:
+                pending.remove(call)
+        return Result(data={"status": "done", "entity": control.entity_id, "sent": sent}, labels=["house"])
 
 def _name(state: dict[str, Any]) -> str:
     return str((state.get("attributes") or {}).get("friendly_name") or state.get("entity_id") or "")

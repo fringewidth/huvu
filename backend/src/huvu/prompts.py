@@ -329,13 +329,13 @@ For anything about the past (where was I on Saturday, how long do I spend at the
 """
 
 # The Home Assistant driver's guide; `{name}` is the source's name.
-HA_GUIDE = """Home Assistant (HA) runs most of the house's devices. You can read every entity the household exposed to huvu, and you change the house only through the household's scripts: they are the actions below, and there is no other way to work a device. If a script is missing or wrong, tell the person; the household fixes it in HA.
+HA_GUIDE = """Home Assistant (HA) runs most of the house's devices. You can read and work every entity the household exposed to huvu, and nothing else. There are two kinds of action below. Each exposed light, switch, fan, button, media player, climate and the like is one action, named after its entity (`{name}_light_theatre_ceiling` works `light.theatre_ceiling`): use it for one device, such as "turn the projector off" or "lights off" (one call per light). The household's scripts are the rest: routines that work several devices at once, such as starting the home theatre. When a script does what was asked, use it. If a device or a script is missing or wrong, tell the person; the household fixes it in HA.
 
-`{name}_entities` is every exposed entity as it is now: its name, area, aliases, state, the state as a number (for sensors and comparisons), and the rest of its attributes (brightness, target temperature, fan mode). Find a thing with LIKE on its name, area and aliases. `{name}_scripts` is every script with its area, its fields and the entities it works (`targets`), so you find how to work a device where you find the device. `{name}_setup` says whether huvu is connected to HA and what is wrong with the setup; read it when a script is missing or a query fails.
+`{name}_entities` is every exposed entity as it is now: its name, area, aliases, the action that works it (`action`, NULL when you can only read it), state, the state as a number (for sensors and comparisons), and the rest of its attributes (brightness, target temperature, fan mode). Find a thing with LIKE on its name, area and aliases. A room is its area: "lights off" in the home theatre is every light whose area is the home theatre. `{name}_scripts` is every script with its area, its fields and the entities it works (`targets`), so you find how to work a device where you find the device. `{name}_setup` says whether huvu is connected to HA and what is wrong with the setup; read it when a script is missing or a query fails.
 
 Many devices here are infrared: HA only assumes their state from the last button it sent (`assumed`). For those, say what you sent ("I sent the off signal"), not what the device did, unless a power sensor confirms it.
 
-A script may wait for a person's approval; its label in HA decides, and the result says so. A script that returns data gives it back as `response`.
+An action may wait for a person's approval; its label in HA decides, and the result says so. A script that returns data gives it back as `response`.
 
 Every change of an exposed entity and every script run is in the history tables below, with who caused it (`actor`): huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button). `user_id` is the huvu user when known. Numeric sensors are in 5-minute buckets. Use these for any question about the past, such as when a light was last on, and to learn what each person prefers. They start when huvu first connected to HA.
 
@@ -358,16 +358,54 @@ TEXT: dict[str, str] = {
     'chat.table.turns.column.turn_id': 'The turn',
     'chat.table.turns.column.usage': "The model's token counts for the turn, cache reads included",
     'chat.table.turns.column.you': 'What huvu answered',
+    'ha.arg.brightness_pct': 'Brightness, 1 to 100 percent. Only with on.',
     'ha.arg.color_rgb': '[red, green, blue], each 0 to 255.',
+    'ha.arg.cover_command': 'Open, close, or stop it where it is.',
+    'ha.arg.fan_mode': "The fan's mode.",
+    'ha.arg.hvac_mode': 'The mode, such as off, cool or heat.',
+    'ha.arg.lock_command': 'Lock or unlock it.',
+    'ha.arg.media_command': 'What to do with the player.',
+    'ha.arg.on': 'true turns it on, false turns it off.',
+    'ha.arg.option': 'The option to pick.',
+    'ha.arg.percentage': 'Speed, 0 to 100 percent. Only with on.',
+    'ha.arg.position': 'Position, 0 (closed) to 100 (open).',
+    'ha.arg.preset_mode': 'The preset to use. Only with on.',
+    'ha.arg.rgb_color': '[red, green, blue], each 0 to 255. Only with on.',
+    'ha.arg.temperature': 'The target temperature, in the unit the entity shows.',
+    'ha.arg.vacuum_command': 'Start cleaning, pause, stop, go back to the dock, or beep so someone can find it.',
+    'ha.arg.value': 'The value to set.',
+    'ha.arg.volume': 'Volume, 0 to 100 percent.',
     'ha.arg.color_temp.kelvin': 'In kelvin.',
     'ha.arg.color_temp.mireds': 'In mireds.',
+    'ha.arg.color_temp_kelvin': 'Color temperature in kelvin: low is warm, high is cool. Only with on.',
     'ha.arg.date': 'A date, YYYY-MM-DD.',
     'ha.arg.time': 'A time of day, HH:MM:SS.',
     'ha.column.actor': "Who caused it: huvu, ha_user (someone in the HA app), automation, or device (a switch, the device's own button, a remote seen through a power plug)",
     'ha.column.area': "The area's name in Home Assistant",
     'ha.column.context_id': "HA's context id; rows of one script run share it",
     'ha.column.ha_user': 'The Home Assistant user id behind it, if any',
-    'ha.description': "Home Assistant: the devices and sensors it exposes to huvu, and the household's scripts, which are the only way to work them.",
+    'ha.description': "Home Assistant: the devices and sensors it exposes to huvu, each device you can work as an action of its own, and the household's scripts for routines.",
+    'ha.entity.alarm_control_panel': 'Arms or disarms the alarm.',
+    'ha.entity.aliases': 'Also called: {aliases}.',
+    'ha.entity.area': 'Area: {area}.',
+    'ha.entity.assumed': 'HA only assumes its state (infrared): say what you sent, not what the device did.',
+    'ha.entity.button': 'Presses the button once, as on a remote.',
+    'ha.entity.climate': 'Sets its mode, target temperature or fan; give only what should change.',
+    'ha.entity.cover': 'Opens, closes or stops it, or sets its position.',
+    'ha.entity.device': 'Device: {device}.',
+    'ha.entity.fan': 'Turns the fan on or off, and sets its speed or preset.',
+    'ha.entity.input_boolean': 'Turns it on or off.',
+    'ha.entity.input_button': 'Presses the button once.',
+    'ha.entity.input_number': 'Sets its value.',
+    'ha.entity.input_select': 'Picks one of its options.',
+    'ha.entity.light': 'Turns the light on or off, and sets its brightness and color.',
+    'ha.entity.lock': 'Locks or unlocks it.',
+    'ha.entity.media_player': 'Works the player: power, play, pause, skip, volume and mute.',
+    'ha.entity.number': 'Sets its value.',
+    'ha.entity.scene': 'Turns the scene on.',
+    'ha.entity.select': 'Picks one of its options.',
+    'ha.entity.switch': 'Turns it on or off.',
+    'ha.entity.vacuum': 'Starts, pauses or stops the vacuum, sends it to its dock, or makes it beep.',
     'ha.table.changes': 'Every state change of an exposed entity, except numeric sensors (see sensor_5min), and every change of an attribute a person chooses (brightness, target temperature, fan mode). user_id is the huvu user who caused it, when known.',
     'ha.table.changes.column.assumed': 'HA only assumes this state (an infrared device without a sensor)',
     'ha.table.changes.column.attributes': 'The chosen attributes after the change, such as {"temperature": 24, "fan_mode": "low"}',
@@ -378,6 +416,7 @@ TEXT: dict[str, str] = {
     'ha.table.changes.column.name': 'Its friendly name',
     'ha.table.changes.column.to_state': 'The state after',
     'ha.table.entities': 'Every exposed Home Assistant entity, as it is now. Scripts are in ha_scripts.',
+    'ha.table.entities.column.action': 'The action that works it, such as ha_light_hall; NULL when huvu can only read it',
     'ha.table.entities.column.aliases': 'Other names the household gave it in HA',
     'ha.table.entities.column.area': "The area's name in Home Assistant",
     'ha.table.entities.column.assumed': 'HA only assumes this state (an infrared device without a sensor)',

@@ -94,7 +94,8 @@ async def house(tmp_path, clock, hermes, ha, monkeypatch):
 async def test_scripts_become_actions(house, tmp_path):
     kernel = house.kernel
     actions = {a.name: a for a in kernel.registry.spec("ha").actions}
-    assert set(actions) == {"bedroom_ac_set", "gate_open", "tv_netflix"}
+    # The exposed AC and hall light are actions of their own (see below).
+    assert set(actions) == {"bedroom_ac_set", "gate_open", "tv_netflix", "climate_bedroom_ac", "light_hall"}
     assert (actions["bedroom_ac_set"].autonomy, actions["bedroom_ac_set"].requires_human) == ("silent", False)
     assert actions["gate_open"].requires_human
     # No huvu label (a typo doesn't count): it asks.
@@ -113,7 +114,7 @@ async def test_scripts_become_actions(house, tmp_path):
     assert "- `ha_bedroom_ac_set(mode: off|cool|dry, temperature?: number)`: Sets the bedroom AC. Area: Bedroom." in skill
     assert "### `ha_changes`" in skill and "### `ha_sensor_5min`" in skill and "### `ha_entities`" in skill
     [respec] = kernel.data.rows("huvu", "events", "type = 'source.respec'", ())
-    assert respec["summary"] == "ha changed what it offers: added ha_bedroom_ac_set, ha_gate_open, ha_tv_netflix"
+    assert respec["summary"] == "ha changed what it offers: added ha_bedroom_ac_set, ha_climate_bedroom_ac, ha_gate_open, ha_light_hall, ha_tv_netflix"
 
 
 async def rows(kernel, sql: str) -> list[list]:
@@ -217,6 +218,101 @@ async def test_a_script_run_from_the_app_is_a_row(house, ha, clock):
     assert await rows(kernel, "SELECT script, actor, user_id, fields FROM ha_script_runs") == [["tv_netflix", "ha_user", "mom", None]]
 
 
+async def test_an_exposed_light_is_an_action_of_its_own(house):
+    actions = {a.name: a for a in house.kernel.registry.spec("ha").actions}
+    light = actions["light_hall"]
+    assert (light.autonomy, light.requires_human) == ("silent", False)
+    assert light.description == "Hall light (light.hall). Turns the light on or off, and sets its brightness and color. Area: Hall. Also called: corridor light."
+    # No color modes known: on and brightness only.
+    assert light.input_schema["required"] == ["on"]
+    assert set(light.input_schema["properties"]) == {"on", "brightness_pct"}
+    ac = actions["climate_bedroom_ac"]
+    assert ac.autonomy == "notify"
+    assert ac.description.endswith("HA only assumes its state (infrared): say what you sent, not what the device did.")
+    assert await rows(house.kernel, "SELECT entity_id, action FROM ha_entities WHERE domain IN ('light', 'sensor') ORDER BY entity_id") == [
+        ["light.hall", "ha_light_hall"],
+        ["sensor.bedroom_temperature", None],
+    ]
+
+
+async def test_working_an_entity_calls_its_service_and_records_who(house, ha):
+    kernel = house.kernel
+    done = await kernel.tools.call("act", {"name": "ha_light_hall", "args": {"on": True, "brightness_pct": 40}}, MOM)
+    assert done.data == {"status": "done", "entity": "light.hall", "sent": ["light.turn_on"]}
+    [call] = ha.calls
+    assert (call["domain"], call["service"], call["target"], call["service_data"]) == ("light", "turn_on", {"entity_id": "light.hall"}, {"brightness_pct": 40})
+    assert await rows(kernel, "SELECT entity_id, to_state, actor, user_id, ha_user FROM ha_changes") == [["light.hall", "on", "huvu", "mom", FakeHA.OWN_USER]]
+    await house.source.act("light_hall", {"on": False}, MOM)
+    assert ha.calls[-1]["service"] == "turn_off"
+    # The mode goes with the temperature, in one call.
+    await house.source.act("climate_bedroom_ac", {"hvac_mode": "cool", "temperature": 24}, MOM)
+    assert (ha.calls[-1]["service"], ha.calls[-1]["service_data"]) == ("set_temperature", {"temperature": 24, "hvac_mode": "cool"})
+
+
+async def test_wrong_arguments_say_what_is_wrong(house, ha):
+    with pytest.raises(SourceError, match="needs on"):
+        await house.source.act("light_hall", {"brightness_pct": 40}, MOM)
+    with pytest.raises(SourceError, match="brightness_pct must be from 1 to 100"):
+        await house.source.act("light_hall", {"on": True, "brightness_pct": 400}, MOM)
+    with pytest.raises(SourceError, match="takes no color"):
+        await house.source.act("light_hall", {"on": True, "color": "red"}, MOM)
+    with pytest.raises(SourceError, match="give at least one of"):
+        await house.source.act("climate_bedroom_ac", {}, MOM)
+    with pytest.raises(SourceError, match="has no action"):
+        await house.source.act("light_attic", {"on": True}, MOM)
+    assert ha.calls == []
+
+
+async def test_labels_set_an_entitys_autonomy_and_locks_always_ask(house, ha):
+    kernel = house.kernel
+    ha.entity("light.bedroom", "off", area="bedroom", friendly_name="Bedroom light")
+    ha.entity("light.reading", "off", area="bedroom", labels=["huvu_silent"], friendly_name="Reading light")
+    ha.entity("lock.front_door", "locked", area="hall", labels=["huvu_silent"], friendly_name="Front door")
+    ha.entity("cover.garage", "closed", area="hall", device_class="garage", friendly_name="Garage")
+    ha.area_labels["bedroom"] = ["huvu_ask"]
+    ha.fire("entity_registry_updated", {"action": "create", "entity_id": "light.bedroom"})
+    await until(lambda: "ha_lock_front_door" in kernel.tools.names())
+    actions = {a.name: a for a in kernel.registry.spec("ha").actions}
+    # The area asks, unless the entity's own label says otherwise.
+    assert actions["light_bedroom"].autonomy == "ask"
+    assert actions["light_reading"].autonomy == "silent"
+    # A lock and a garage door always need a tap, whatever their labels say.
+    assert (actions["lock_front_door"].autonomy, actions["lock_front_door"].requires_human) == ("ask", True)
+    assert actions["cover_garage"].requires_human
+
+
+async def test_an_entity_named_like_a_script_is_left_out(house, ha):
+    kernel = house.kernel
+    ha.script("light_porch", alias="Porch light", description="Turns the porch light on for 5 minutes.")
+    ha.entity("light.porch", "off", area="hall", friendly_name="Porch light")
+    ha.fire("entity_registry_updated", {"action": "create", "entity_id": "light.porch"})
+    await until(lambda: "ha_light_porch" in kernel.tools.names())
+    [[problems]] = (await kernel.data.sql("SELECT problems FROM ha_setup", EVERYONE)).rows
+    assert "left out light.porch: its action name light_porch is a script's; rename one of them" in json.loads(problems)
+    assert kernel.registry.spec("ha").actions[[a.name for a in kernel.registry.spec("ha").actions].index("light_porch")].description.startswith("Turns the porch light on")
+
+
+def test_each_domain_becomes_its_service_calls():
+    from huvu_drivers.ha import entities
+
+    def calls(entity_id: str, args: dict, **attributes) -> list:
+        control = entities.from_state(entity_id, {"attributes": attributes}, labels=[], area=None, area_labels=[], device=None, aliases=[])
+        return entities.service_calls(control, args)
+
+    assert calls("media_player.amp", {"command": "mute", "volume": 30}) == [
+        ("media_player", "volume_mute", {"is_volume_muted": True}),
+        ("media_player", "volume_set", {"volume_level": 0.3}),
+    ]
+    assert calls("button.projector_power", {}) == [("button", "press", {})]
+    assert calls("scene.movie", {}) == [("scene", "turn_on", {})]
+    assert calls("fan.theatre", {"on": True, "percentage": 50}) == [("fan", "turn_on", {"percentage": 50})]
+    assert calls("vacuum.robot", {"command": "return_to_base"}) == [("vacuum", "return_to_base", {})]
+    assert calls("select.input", {"option": "hdmi"}, options=["hdmi", "vga"]) == [("select", "select_option", {"option": "hdmi"})]
+    assert calls("cover.blinds", {"position": 40}) == [("cover", "set_cover_position", {"position": 40})]
+    with pytest.raises(ValueError, match="option must be one of hdmi, vga"):
+        calls("select.input", {"option": "dvd"}, options=["hdmi", "vga"])
+
+
 def test_sensor_buckets_are_time_weighted():
     buckets = SensorBuckets()
     start = datetime(2026, 10, 6, 10, 1).astimezone()
@@ -265,7 +361,7 @@ async def test_the_actions_exist_before_ha_connects(house, tmp_path, hermes, clo
     later = HomeAssistant({}, connect=ha.connect)
     kernel = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"ha": later}, clock=clock)
     try:
-        assert {a.name for a in kernel.registry.spec("ha").actions} == {"bedroom_ac_set", "gate_open", "tv_netflix"}
+        assert {a.name for a in kernel.registry.spec("ha").actions} == {"bedroom_ac_set", "gate_open", "tv_netflix", "climate_bedroom_ac", "light_hall"}
         with pytest.raises(DataError, match="ha_entities: ha hasn't handed this table over yet"):
             await kernel.data.sql("SELECT * FROM ha_entities", EVERYONE)
         with pytest.raises(SourceError, match="not connected"):
