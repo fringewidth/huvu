@@ -98,6 +98,15 @@ function canHear(): Promise<boolean> {
 // ends a hands-free ask.
 const SPEECH_RMS = 0.03;
 const PAUSE_MS = 3000;
+// Hands-free, the clip goes to be transcribed once the speaker has been
+// quiet this long, not when the pause ends the ask. A phone's round trip
+// through the tunnel and Groq is 1 to 2.5s, so the text is usually back
+// before PAUSE_MS is up and shows the moment the mic stops. Speech after
+// it was sent makes that transcript stale, and the clip is sent again.
+const EARLY_MS = 600;
+// Opus at this rate is plenty for Whisper to hear speech, and keeps an ask
+// to about 20 KB: one round trip through the tunnel to upload, not three.
+const BITRATE = 24_000;
 // A hands-free listen that hears nothing gives up after this long.
 const NOTHING_MS = 6000;
 
@@ -147,7 +156,10 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
   function record(own: Session, mic: Mic, hold: boolean, onSpeech: () => void, onEnd: (text: string) => void): void {
     if (own.dropped) return mic.release();
     const type = recordingType();
-    const recorder = new MediaRecorder(mic.stream, type ? { mimeType: type } : undefined);
+    const recorder = new MediaRecorder(mic.stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: BITRATE });
+    // The transcript sent during the pause, while nothing has been said
+    // since.
+    let early: Promise<string | null> | null = null;
     const chunks: Blob[] = [];
     own.recorder = recorder;
     recorder.ondataavailable = (e) => {
@@ -165,7 +177,8 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
       }
       shadow?.stop();
       const clip = new Blob(chunks, { type: recorder.mimeType });
-      void send(clip).then(async (heard) => {
+      const heardAll = early ? early.then((heard) => heard ?? send(clip)) : send(clip);
+      void heardAll.then(async (heard) => {
         if (own.dropped) return;
         const text = heard ?? (await own.shadowHeard) ?? "";
         if (!own.dropped) onEnd(text);
@@ -183,8 +196,12 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
         if (!own.heard) onSpeech();
         own.heard = true;
         quietSince = 0;
+        early = null;
       } else if (own.heard && !hold) {
         quietSince ||= now;
+        // The recorder hands over a chunk every 250ms, so the clip so far
+        // holds all the speech and a little of the quiet after it.
+        if (!early && now - quietSince > EARLY_MS) early = send(new Blob(chunks, { type: recorder.mimeType }));
         if (now - quietSince > PAUSE_MS) return recorder.stop();
       }
       if (!own.heard && !hold && now - began > NOTHING_MS) return recorder.stop();
