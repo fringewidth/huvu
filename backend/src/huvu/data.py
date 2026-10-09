@@ -13,13 +13,22 @@ Everything huvu knows is a table. A source declares its tables in its spec
    is. `id` numbers rows in the order they were recorded, across every
    table, so a trigger can tell which rows it has seen, even one a phone
    sent late with an old time.
-2. Live tables hold what is true now. Nothing is stored: each read asks
-   the source (`Source.live`), which answers from what it already holds.
-   They are SQLite virtual tables, through APSW, since Python's sqlite3
-   can't define them.
+2. Live tables hold what is true now. The source hands the kernel its
+   rows (`ctx.replace`, `ctx.put`, `ctx.drop`), and the kernel checks
+   them against the spec and keeps them in memory, never on disk. A query
+   reads them as SQLite virtual tables, through APSW, since Python's
+   sqlite3 can't define them.
 
-Every recorded row tells the trigger engine which source wrote it, so the
-triggers that read that source run at once (see triggers.py).
+A source is driver code, so nothing here trusts it to do more than hand
+over data. A query never calls into a source: the kernel publishes each
+live table as an immutable snapshot, swapped in whole on every change, so
+a query's worker thread reads it without locks and a source can't make it
+read half a change. A source reads its own history back only through a
+read-only connection that sees nothing but its own tables.
+
+Every change, a recorded row or a live table's, tells the trigger engine
+which table changed, so the triggers that read that table run at once
+(see triggers.py). Nothing else can change a table, so nothing is missed.
 
 Every connection is APSW's, here as everywhere in the backend (see db.py).
 
@@ -63,7 +72,7 @@ SQL_TIMEOUT = 10.0
 
 _SQL_TYPES = {"text": "TEXT", "integer": "INTEGER", "real": "REAL", "boolean": "INTEGER", "json": "TEXT"}
 
-# The time, in local time from the kernel's clock, for queries that ask
+# The time, in the house's timezone from the kernel's clock, for queries that ask
 # what time it is now. SQLite's own time functions read the wall clock in
 # UTC, unless told 'localtime'.
 NOW_FUNCTIONS = ("now_ts", "now_date", "now_minute", "now_weekday")
@@ -93,8 +102,25 @@ class DataError(ValueError):
 
 
 class LiveError(Exception):
-    """A source that couldn't answer for one of its live tables, such as
-    Home Assistant while it is disconnected."""
+    """A live table its source said it can't vouch for right now, such as
+    Home Assistant's entities while it is disconnected."""
+
+
+class _Live:
+    """The kernel's copy of one live table. `rows` is changed on the event
+    loop only; `published` is what queries read, an immutable pair of the
+    reason the table is unavailable (or None) and its rows, replaced whole
+    on every change."""
+
+    def __init__(self, unavailable: str) -> None:
+        self.rows: dict[tuple[Any, ...], dict[str, Any]] = {}
+        # Until its source hands it over, a table is unavailable, not empty:
+        # an empty location_people would say nobody is anywhere.
+        self.unavailable: str | None = unavailable
+        self.published: tuple[str | None, tuple[dict[str, Any], ...]] = (unavailable, ())
+
+    def publish(self) -> None:
+        self.published = (self.unavailable, tuple(self.rows.values()))
 
 
 @dataclass
@@ -113,10 +139,9 @@ class Compiled:
     """What a query reads, found without running it."""
 
     columns: list[str]
-    # The sources whose tables it reads.
-    sources: set[str] = field(default_factory=set)
-    # Whether it reads a live table, or the time.
-    live: bool = False
+    # The tables it reads, by the names SQL reads them as.
+    tables: set[str] = field(default_factory=set)
+    # Whether it reads the time.
     clock: bool = False
     labels: list[Label] = field(default_factory=list)
 
@@ -128,10 +153,16 @@ class DataStore:
         self._conn = open_db(self.path)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._last_id: int | None = None
-        # Told the source of every recorded row: the trigger engine.
+        # Every live table, by the name SQL reads it as.
+        self._live: dict[str, _Live] = {}
+        # Each source's read-only connection to its own history.
+        self._own: dict[str, apsw.Connection] = {}
+        # Told the table of every change: the trigger engine.
         self.on_record: Callable[[str], None] | None = None
 
     def close(self) -> None:
+        for conn in self._own.values():
+            conn.close()
         self._conn.close()
 
     # History
@@ -141,8 +172,14 @@ class DataStore:
         version of the driver declares. Columns are never dropped or
         retyped, so old rows stay readable."""
         for table in spec.tables:
-            if not table.live:
+            if table.live:
+                self._live.setdefault(f"{spec.name}_{table.name}", _Live(f"{spec.name} hasn't handed this table over yet"))
+            else:
                 self._ensure(f"{spec.name}_{table.name}", table)
+        # A respec may change which tables a source reads.
+        own = self._own.pop(spec.name, None)
+        if own is not None:
+            own.close()
 
     def _ensure(self, name: str, table: TableSpec) -> None:
         existing = {row[1] for row in self._conn.execute(f'PRAGMA table_info("{name}")')}
@@ -177,7 +214,7 @@ class DataStore:
         unknown = [k for k in row if spec.column(k) is None]
         if unknown:
             raise SourceError(f"{source}_{table} has no columns {', '.join(unknown)}")
-        local = at.astimezone()
+        local = at.astimezone(self._kernel.tz)
         row_id = self._next_id()
         values: dict[str, Any] = {
             "id": row_id,
@@ -195,7 +232,7 @@ class DataStore:
         marks = ", ".join("?" * len(values))
         self._conn.execute(f'INSERT INTO "{source}_{table}" ({names}) VALUES ({marks})', list(values.values()))
         if self.on_record is not None:
-            self.on_record(source)
+            self.on_record(f"{source}_{table}")
         return row_id
 
     def last_id(self) -> int:
@@ -209,11 +246,47 @@ class DataStore:
         self._last_id = self.last_id() + 1
         return self._last_id
 
+    def own_rows(self, source: str, table: str, where: str, args: Sequence[Any], *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
+        """A source's own history rows, everyone's, for a source that works
+        from its own past, such as the location source's latest fix.
+        `where` and `order` come from the driver, so they run on a
+        read-only connection that can read nothing but that source's own
+        history tables, one statement at a time. JSON columns come back as
+        text."""
+        self._history(source, table)
+        tail = " LIMIT ?" if limit is not None else ""
+        sql = f'SELECT * FROM "{source}_{table}" WHERE {where} ORDER BY {order}{tail}'
+        conn = self._own_connection(source)
+        try:
+            _info(conn, sql)
+            cursor = conn.execute(sql, [*args, *([limit] if limit is not None else [])])
+            return [dict(zip(row.keys(), row, strict=True)) for row in cursor]
+        except (apsw.Error, DataError) as err:
+            raise SourceError(f"{source} read its own history wrongly: {err}") from err
+
+    def _own_connection(self, source: str) -> apsw.Connection:
+        conn = self._own.get(source)
+        if conn is None:
+            spec = self._kernel.registry.spec(source)
+            mine = {f"{source}_{t.name}" for t in spec.tables if not t.live}
+            conn = open_db(self.path, readonly=True)
+            conn.execute("PRAGMA query_only = ON")
+
+            def authorize(action: int, arg1: str | None, arg2: str | None, db: str | None, view: str | None) -> int:
+                if action == apsw.SQLITE_READ:
+                    allowed = arg1 in mine or db is None
+                else:
+                    allowed = action in (apsw.SQLITE_SELECT, apsw.SQLITE_FUNCTION)
+                return apsw.SQLITE_OK if allowed else apsw.SQLITE_DENY
+
+            conn.authorizer = authorize
+            self._own[source] = conn
+        return conn
+
     def rows(self, source: str, table: str, where: str, args: Sequence[Any], *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
-        """A source's own rows, for a source that works from its own past,
-        such as the location source's latest fix. `where` and `order` are
-        SQL the driver writes, never text from a model or a device; values
-        go in `args`. JSON columns come back as text."""
+        """History rows, for the kernel's own code and tests. `where` and
+        `order` are SQL the kernel writes; a source reads through
+        `own_rows`. JSON columns come back as text."""
         self._history(source, table)
         tail = " LIMIT ?" if limit is not None else ""
         cursor = self._conn.execute(
@@ -251,6 +324,78 @@ class DataStore:
         rows = list(self._conn.execute(sql, args))
         return rows[0][0] if rows else None
 
+    # Live tables
+
+    def replace(self, source: str, table: str, rows: Sequence[dict[str, Any]]) -> None:
+        """All of a live table's rows, in place of what it had. It is
+        available again, if it wasn't."""
+        spec = self._live_spec(source, table)
+        clean = [self._clean(source, spec, row) for row in rows]
+        keyed: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for n, row in enumerate(clean):
+            key = tuple(row[k] for k in spec.key) if spec.key else (n,)
+            if key in keyed:
+                raise SourceError(f"{source}_{table}: two rows have the key {dict(zip(spec.key, key, strict=True))}")
+            keyed[key] = row
+        state = self._live[f"{source}_{table}"]
+        state.rows = keyed
+        state.unavailable = None
+        self._changed(state, f"{source}_{table}")
+
+    def put(self, source: str, table: str, row: dict[str, Any]) -> None:
+        """One row of a live table, added or in place of the row with its
+        key."""
+        spec = self._live_spec(source, table, keyed=True)
+        clean = self._clean(source, spec, row)
+        state = self._live[f"{source}_{table}"]
+        state.rows[tuple(clean[k] for k in spec.key)] = clean
+        self._changed(state, f"{source}_{table}")
+
+    def drop(self, source: str, table: str, key: dict[str, Any]) -> None:
+        """Takes the row with this key out of a live table, if it is there."""
+        spec = self._live_spec(source, table, keyed=True)
+        if set(key) != set(spec.key):
+            raise SourceError(f"{source}_{table} rows are told apart by {', '.join(spec.key)}")
+        state = self._live[f"{source}_{table}"]
+        if state.rows.pop(tuple(key[k] for k in spec.key), None) is not None:
+            self._changed(state, f"{source}_{table}")
+
+    def unavailable(self, source: str, table: str, reason: str) -> None:
+        """The source can't vouch for a live table right now: until it hands
+        over rows again, a query that reads the table fails with `reason`,
+        so a trigger never acts on rows gone stale."""
+        self._live_spec(source, table)
+        state = self._live[f"{source}_{table}"]
+        state.unavailable = reason
+        state.publish()
+
+    def _changed(self, state: _Live, name: str) -> None:
+        state.publish()
+        if self.on_record is not None:
+            self.on_record(name)
+
+    def _live_spec(self, source: str, table: str, *, keyed: bool = False) -> TableSpec:
+        spec = self._kernel.registry.spec(source).table(table)
+        if spec is None or not spec.live:
+            raise SourceError(f"{source} wrote to {table!r}, which its spec doesn't declare as a live table")
+        if keyed and not spec.key:
+            raise SourceError(f"{source}_{table} has no key, so its rows change only all at once, with replace")
+        return spec
+
+    @staticmethod
+    def _clean(source: str, spec: TableSpec, row: dict[str, Any]) -> dict[str, Any]:
+        """A row as the kernel keeps it: every column, in its stored type."""
+        unknown = [k for k in row if spec.column(k) is None and k not in LIVE_COLUMNS]
+        if unknown:
+            raise SourceError(f"{source}_{spec.name} has no columns {', '.join(unknown)}")
+        clean = {c.name: _stored(c.type, row.get(c.name)) for c in spec.columns}
+        for column in LIVE_COLUMNS:
+            value = row.get(column)
+            if value is not None and not isinstance(value, str):
+                raise SourceError(f"{source}_{spec.name}: {column} is a username or group id, not {value!r}")
+            clean[column] = value
+        return clean
+
     def _history(self, source: str, table: str) -> None:
         spec = self._kernel.registry.spec(source).table(table)
         if spec is None or spec.live:
@@ -266,9 +411,8 @@ class DataStore:
         return await asyncio.to_thread(self._sql, query, viewer, limit, after)
 
     async def compile(self, query: str, viewer: Viewer) -> Compiled:
-        """What a query reads, without running it: its columns, the sources
-        whose tables it reads, and whether it reads a live table or the
-        time. Fails the way running it would on a bad name or a second
+        """What a query reads, without running it: its columns, the tables
+        it reads, and whether it reads the time. Fails the way running it would on a bad name or a second
         statement."""
         return await asyncio.to_thread(self._compile, query, viewer)
 
@@ -303,11 +447,9 @@ class DataStore:
             conn.close()
         tables, functions = _touched(info)
         known = self._tables()
-        read = [known[t] for t in tables if t in known]
         return Compiled(
             columns=[d[0] for d in info.description or ()],
-            sources={source for source, _ in read},
-            live=any(table.live for _, table in read),
+            tables={t for t in tables if t in known},
             clock=bool(functions & CLOCK_FUNCTIONS),
             labels=self._labels(tables),
         )
@@ -325,16 +467,16 @@ class DataStore:
         stored = [r[0] for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
         for name in stored:
             conn.execute(f'CREATE TEMP VIEW "{name}" AS SELECT * FROM main."{name}" WHERE {where}')
-        for name, (source, table) in self._tables().items():
+        for name, (_, table) in self._tables().items():
             if table.live:
-                self._mount(conn, name, source, table)
+                self._mount(conn, name, table)
                 conn.execute(f'CREATE TEMP VIEW "{name}" AS SELECT * FROM main."{name}" WHERE {where}')
         now = self._kernel.now
         functions: dict[str, Callable[[], Any]] = {
             "now_ts": lambda: now().timestamp(),
-            "now_date": lambda: now().astimezone().date().isoformat(),
-            "now_minute": lambda: _minute(now()),
-            "now_weekday": lambda: now().astimezone().isoweekday(),
+            "now_date": lambda: now().date().isoformat(),
+            "now_minute": lambda: now().hour * 60 + now().minute,
+            "now_weekday": lambda: now().isoweekday(),
         }
         for name, fn in functions.items():
             conn.create_scalar_function(name, fn, 0)
@@ -342,22 +484,20 @@ class DataStore:
         conn.authorizer = _authorize
         return conn
 
-    def _mount(self, conn: apsw.Connection, name: str, source_name: str, table: TableSpec) -> None:
-        """Registers one live table on a connection, answered by its
-        source each time a query reads it."""
+    def _mount(self, conn: apsw.Connection, name: str, table: TableSpec) -> None:
+        """Registers one live table on a connection, answered from the
+        kernel's snapshot of it. It runs on the query's thread, and reads
+        one reference: the snapshot is never changed, only replaced."""
         columns = (*(c.name for c in table.columns), *LIVE_COLUMNS)
-        kinds = {c.name: c.type for c in table.columns}
-        source = self._kernel.registry.get(source_name)
+        state = self._live.get(name) or _Live("its source hasn't handed it over yet")
 
         def rows():
-            try:
-                live = source.live(table.name)
-            except Exception as err:
+            unavailable, snapshot = state.published
+            if unavailable is not None:
                 # Raised through SQLite as it is; the query turns it into a
                 # DataError that names the table.
-                raise LiveError(f"{name}: {err}") from err
-            for row in live:
-                yield {c: _stored(kinds.get(c, "text"), row.get(c)) for c in columns}
+                raise LiveError(f"{name}: {unavailable}")
+            yield from snapshot
 
         rows.columns = columns
         rows.column_access = apsw.ext.VTColumnAccess.By_Name
@@ -403,11 +543,6 @@ def _message(err: apsw.Error) -> str:
 def _bare(query: str) -> str:
     """A query with no trailing semicolon, to wrap in another."""
     return query.strip().rstrip(";").strip()
-
-
-def _minute(at: datetime) -> int:
-    local = at.astimezone()
-    return local.hour * 60 + local.minute
 
 
 def _stored(kind: str, value: Any) -> Any:

@@ -44,7 +44,7 @@ async def test_live_tables_answer_with_what_is_true_now(kernel, home):
     query = "SELECT entity_id, state FROM home_lights WHERE entity_id = 'light.porch'"
     first = await kernel.tools.call("data_sql", {"sql": query}, OWNER)
     assert first.data["rows"] == [["light.porch", "off"]]
-    home.lights["light.porch"]["state"] = "on"
+    home.set_light("light.porch", "on")
     again = await kernel.tools.call("data_sql", {"sql": query}, OWNER)
     assert again.data["rows"] == [["light.porch", "on"]]
 
@@ -62,7 +62,7 @@ async def test_live_and_history_join_and_the_time_is_local(kernel, home, clock):
 
 
 async def test_a_source_that_cant_answer_fails_the_query_by_name(kernel, home, family):
-    home.down = True
+    home.go_down()
     from huvu.tools import ToolError
 
     with pytest.raises(ToolError, match="home_lights: the house is offline"):
@@ -101,3 +101,32 @@ def test_the_backend_never_imports_sqlite3():
     root = pathlib.Path(__file__).parents[1] / "src"
     found = [str(p.relative_to(root)) for p in root.rglob("*.py") if re.search(r"^\s*(import|from)\s+sqlite3\b", p.read_text(), re.M)]
     assert found == []
+
+
+async def test_local_time_is_the_houses_not_the_servers(tmp_path, hermes, home, monkeypatch):
+    from datetime import UTC
+
+    from huvu.config import Config, load
+    from huvu.kernel import Kernel
+    from huvu.scope import EVERYONE
+
+    from .fakes import FakeClock
+
+    # The server's clock reads 02:30 UTC; in New York that's 22:30 the day before.
+    clock = FakeClock(datetime(2026, 10, 4, 2, 30, tzinfo=UTC))
+    kernel = Kernel(Config(data_dir=tmp_path, timezone="America/New_York"), hermes=hermes, sources={"home": home}, clock=clock)
+    try:
+        await home.press()
+        answer = await kernel.data.sql("SELECT local_date, local_minute, weekday, now_date(), now_minute() FROM home_doorbell", EVERYONE)
+        assert answer.rows == [["2026-10-03", 22 * 60 + 30, 6, "2026-10-03", 22 * 60 + 30]]
+        assert kernel.now().utcoffset() == timedelta(hours=-4)
+    finally:
+        kernel.data.close()
+        kernel.db.close()
+    # HUVU_TIMEZONE, which setup.sh writes, wins over the file, and a wrong name fails at once.
+    (tmp_path / "huvu.toml").write_text('timezone = "Europe/Berlin"\n')
+    monkeypatch.setenv("HUVU_TIMEZONE", "Asia/Tokyo")
+    assert load(tmp_path / "huvu.toml").timezone == "Asia/Tokyo"
+    monkeypatch.setenv("HUVU_TIMEZONE", "Mars/Olympus")
+    with pytest.raises(ValueError, match="IANA"):
+        load(tmp_path / "huvu.toml")

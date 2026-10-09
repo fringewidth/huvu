@@ -48,7 +48,7 @@ import math
 import secrets
 import statistics
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import apsw
@@ -223,6 +223,7 @@ TABLES = [
             )
         ],
         live=True,
+        key=["user_id"],
     ),
     TableSpec(
         name="waypoints",
@@ -246,17 +247,14 @@ class LocationSource(Source):
     def __init__(self, options: dict[str, Any] | None = None) -> None:
         super().__init__(options)
         self._conn: apsw.Connection | None = None
-        # Each person's row of location_people, kept up to date on the event
-        # loop, so a query's worker thread only copies it.
-        self._people: dict[str, dict[str, Any]] = {}
 
     async def run(self) -> None:
-        """Fills in where everyone is, from before the last restart."""
+        """Hands the kernel the waypoints, and where everyone is, from
+        before the last restart."""
+        self._publish_waypoints()
         latest = self.ctx.rows("fixes", "id IN (SELECT max(id) FROM location_fixes GROUP BY user_id)", ())
         users = {r["user_id"] for r in latest} | {r["user_id"] for r in self.db.execute("SELECT DISTINCT user_id FROM presence").fetchall()}
-        for user in users:
-            if user is not None:
-                await self._publish(user)
+        self.ctx.replace("people", [self._person(user) for user in sorted(u for u in users if u is not None)])
 
     def describe(self) -> SourceSpec:
         return SourceSpec(
@@ -449,7 +447,7 @@ class LocationSource(Source):
         )
         crossing: dict[str, Any] = {"delay_min": max(0, int((self.ctx.now() - at).total_seconds() // 60))}
         if row is not None and row["inside"] and not entering:
-            crossing["stayed_min"] = int((at - datetime.fromtimestamp(row["ts"]).astimezone()).total_seconds() // 60)
+            crossing["stayed_min"] = int((at - datetime.fromtimestamp(row["ts"], UTC)).total_seconds() // 60)
         return crossing
 
     def _sync(self, user: str, device: str) -> list[dict[str, Any]]:
@@ -475,19 +473,14 @@ class LocationSource(Source):
 
     # Live tables
 
-    def live(self, table: str) -> list[dict[str, Any]]:
-        if table == "people":
-            return [dict(row) for row in list(self._people.values())]
-        conn = open_db(self.ctx.data_dir / "location.db", readonly=True)
-        try:
-            rows = conn.execute("SELECT * FROM waypoints WHERE removed_at IS NULL ORDER BY radius_m, name").fetchall()
-        finally:
-            conn.close()
-        return [_waypoint(r).row() for r in rows]
-
     async def _publish(self, user: str) -> None:
-        """Brings the person's row of location_people up to date."""
-        self._people[user] = self._person(user)
+        """Hands the kernel the person's row of location_people."""
+        self.ctx.put("people", self._person(user))
+
+    def _publish_waypoints(self) -> None:
+        """Hands the kernel every waypoint, for location_waypoints."""
+        rows = self.db.execute("SELECT * FROM waypoints WHERE removed_at IS NULL ORDER BY radius_m, name").fetchall()
+        self.ctx.replace("waypoints", [_waypoint(r).row() for r in rows])
 
     def _person(self, user: str) -> dict[str, Any]:
         visible = self._visible(user)
@@ -559,6 +552,7 @@ class LocationSource(Source):
             "INSERT INTO waypoints (id, name, lat, lon, radius_m, user_id, group_id, tst, origin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (waypoint.id, name, lat, lon, radius, waypoint.user, group, waypoint.tst, waypoint.origin, self.ctx.now().isoformat()),
         )
+        self._publish_waypoints()
         return Result(data={**waypoint.public(), "centre_from": about, "reaches_phones": "with each phone's next post"})
 
     def _centre(self, args: dict[str, Any], user: str | None) -> tuple[float, float, dict[str, Any]]:
@@ -621,6 +615,7 @@ class LocationSource(Source):
         # Whoever was inside it is somewhere else now.
         for user in inside:
             await self._publish(user)
+        self._publish_waypoints()
         return Result(data={"removed": waypoint.name})
 
     async def _share(self, args: dict[str, Any], caller: Caller) -> Result:
@@ -629,6 +624,7 @@ class LocationSource(Source):
             raise SourceError(f"only the person who named {waypoint.name} can share it")
         group = self._share_group(caller.user, args.get("group")) if args["share"] else None
         self.db.execute("UPDATE waypoints SET group_id = ? WHERE id = ?", (group, waypoint.id))
+        self._publish_waypoints()
         return Result(data={"name": waypoint.name, "shared_with": group})
 
 
@@ -677,8 +673,9 @@ def _clean_name(raw: str) -> str:
 
 
 def _when(tst: Any) -> datetime:
-    """An OwnTracks timestamp (seconds since the epoch) as local time."""
-    return datetime.fromtimestamp(float(tst)).astimezone()
+    """An OwnTracks timestamp (seconds since the epoch), as an aware time;
+    the kernel turns it into the house's time."""
+    return datetime.fromtimestamp(float(tst), UTC)
 
 
 def _local(text: str, now: datetime) -> datetime:

@@ -32,6 +32,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import uvicorn
 
@@ -121,7 +122,8 @@ def _serve(config) -> None:
 def _manage(config, args) -> None:
     config.data_dir.mkdir(parents=True, exist_ok=True)
     conn = connect(config.data_dir / "huvu.db")
-    accounts = Accounts(conn, lambda: datetime.now().astimezone(), household_key=config.hermes_api_key, household_mcp_token=config.mcp_token)
+    tz = ZoneInfo(config.timezone)
+    accounts = Accounts(conn, lambda: datetime.now(tz), household_key=config.hermes_api_key, household_mcp_token=config.mcp_token)
     match (args.command, getattr(args, "action", None)):
         case ("user", "add"):
             password = os.environ.get("HUVU_PASSWORD") or _new_password()

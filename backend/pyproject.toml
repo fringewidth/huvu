@@ -14,6 +14,7 @@ dependencies = [
     "websockets>=17.1",
     "edge-tts>=7.2.8",
     "apsw>=3.53.4.0",
+    "tzdata>=2026.5",
 ]
 
 [project.scripts]

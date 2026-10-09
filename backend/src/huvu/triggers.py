@@ -21,13 +21,11 @@ row is lost, since rows go by id.
 
 When a trigger's query runs:
 
-1. When a source records a row, the triggers that read any of that
-   source's tables run at once (`nudge`). This is what makes "light on
-   when I walk in" immediate.
+1. When a table it reads changes: a row recorded, or a live table's rows
+   handed over (`nudge`). Every change to a table goes through the kernel
+   (data.py), so the kernel nudges itself and none is missed. This is what
+   makes "light on when I walk in" immediate.
 2. Every minute, the triggers that read the time (data.CLOCK_FUNCTIONS).
-3. Every POLL seconds, the triggers that read a live table. Nothing
-   announces every change to what is true now, and a nudge can be lost to
-   a power cut or a dropped connection, so this is the safety net.
 
 What a query reads is found when it is compiled, from SQLite's authorizer,
 without running it (data.py).
@@ -91,8 +89,8 @@ LIVE = ("active", "unconfirmed", "awaiting", "paused")
 # Who paused a trigger. One a limit paused resumes only by its user.
 PausedBy = Literal["model", "user", "limit"]
 
-# How often the triggers that read a live table run, in seconds.
-POLL = 5.0
+# How often the clock is checked for a new minute, in seconds.
+TICK = 5.0
 # A trigger that fires once and names no expiry gets this one, so a
 # condition that never comes true doesn't stay forever.
 DEFAULT_EXPIRY = timedelta(days=7)
@@ -242,6 +240,7 @@ class TriggerEngine:
                 except TriggerError as err:
                     # A source was removed or renamed since. The dream sees this.
                     await self._kernel.kernel_event("trigger.error", f"trigger {trigger.id} no longer compiles: {err}", entity=trigger.id, **_owner(trigger))
+        self._kernel.huvu.publish_triggers()
 
     async def stop(self) -> None:
         if self._poller:
@@ -250,10 +249,9 @@ class TriggerEngine:
             task.cancel()
         await asyncio.gather(*self._tasks, *([self._poller] if self._poller else []), return_exceptions=True)
 
-    def snapshot(self) -> list[Trigger]:
-        """Every live trigger, for the `huvu_triggers` live table. Safe from
-        a query's worker thread."""
-        return [t for t in list(self._triggers.values()) if t.status in LIVE]
+    def alive(self) -> list[Trigger]:
+        """Every live trigger, for the `huvu_triggers` live table."""
+        return [t for t in self._triggers.values() if t.status in LIVE]
 
     # Registering
 
@@ -283,7 +281,7 @@ class TriggerEngine:
             raise TriggerError("sql must be a query that returns rows, such as SELECT ...")
         if spec.fire == "rows" and "id" not in compiled.columns:
             raise TriggerError("fire rows tells rows apart by `id`, so the query must return the `id` of a history table's row")
-        if not (compiled.sources or compiled.clock):
+        if not (compiled.tables or compiled.clock):
             raise TriggerError("sql reads nothing that changes: no table and not the time, so it would never fire")
         return compiled
 
@@ -316,6 +314,7 @@ class TriggerEngine:
             (trigger.id, dumps(spec.model_dump()), trigger.status, 1, iso(now), caller.session, trigger.user, trigger.group, trigger.device, trigger.after),
         )
         self._triggers[trigger.id] = trigger
+        self._kernel.huvu.publish_triggers()
         await self._kernel.kernel_event(
             "trigger.registered",
             f"trigger {trigger.id} registered ({trigger.user or 'waiting for its person'}): {spec.note}",
@@ -349,7 +348,7 @@ class TriggerEngine:
         )
         payload = self._payload(trigger, answer.columns, answer.rows[:DRY_ROWS], answer.labels)
         return {
-            "reads": sorted(compiled.sources),
+            "reads": sorted(compiled.tables),
             "runs": _when_it_runs(compiled),
             "columns": answer.columns,
             "rows_now": len(answer.rows),
@@ -369,6 +368,7 @@ class TriggerEngine:
             return
         trigger.status = "awaiting"
         self._db.execute("UPDATE triggers SET status = 'awaiting' WHERE id = ?", (trigger.id,))
+        self._kernel.huvu.publish_triggers()
         asker = Caller(kind=caller.kind, session=caller.session, trigger=caller.trigger, user=trigger.user, device=caller.device, group=caller.group)
         reason = f"{trigger.spec.note} (wakes the {self._kernel.config.model('advanced')} model)"
         await self._kernel.policy.request("huvu", "activate_trigger", {"trigger": trigger.id}, asker, reason)
@@ -400,6 +400,7 @@ class TriggerEngine:
             trigger.user = user
             trigger.status = "active"
             self._db.execute("UPDATE triggers SET status = 'active', user_id = ? WHERE id = ?", (user, trigger.id))
+            self._kernel.huvu.publish_triggers()
             await self._kernel.kernel_event("trigger.confirmed", f"trigger {trigger.id} is {user}'s: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
             try:
                 await self._go_live(trigger, Caller(kind="kernel", user=user, device=device))
@@ -504,6 +505,10 @@ class TriggerEngine:
         await self._kernel.kernel_event(f"trigger.{status}", summary, entity=trigger.id, **_owner(trigger))
 
     def _save(self, trigger: Trigger) -> None:
+        self._write(trigger)
+        self._kernel.huvu.publish_triggers()
+
+    def _write(self, trigger: Trigger) -> None:
         self._db.execute(
             "UPDATE triggers SET status = ?, armed = ?, last_fired_at = ?, fire_count = ?, paused_by = ?, resumed_at = ?, after_id = ? WHERE id = ?",
             (
@@ -525,19 +530,17 @@ class TriggerEngine:
 
     # Running
 
-    def nudge(self, source: str) -> None:
-        """A source recorded a row: the triggers that read it look now.
-        Several rows in the same moment cause one look."""
+    def nudge(self, table: str) -> None:
+        """A table changed (`<source>_<table>`): the triggers that read it
+        look now. Several changes in the same moment cause one look."""
         for trigger in list(self._triggers.values()):
-            if trigger.status == "active" and trigger.compiled and source in trigger.compiled.sources:
+            if trigger.status == "active" and trigger.compiled and table in trigger.compiled.tables:
                 self._queue(trigger)
 
-    async def poll(self, *, minute: bool) -> None:
-        """Looks at the triggers that read a live table, and with `minute`,
-        those that read the time."""
+    async def tick(self) -> None:
+        """A new minute: looks at the triggers that read the time."""
         for trigger in list(self._triggers.values()):
-            compiled = trigger.compiled
-            if trigger.status == "active" and compiled and (compiled.live or (minute and compiled.clock)):
+            if trigger.status == "active" and trigger.compiled and trigger.compiled.clock:
                 await self._look(trigger)
 
     async def settle(self) -> None:
@@ -548,13 +551,14 @@ class TriggerEngine:
 
     async def _poll_forever(self) -> None:
         while True:
-            await asyncio.sleep(POLL)
+            await asyncio.sleep(TICK)
             now = self._kernel.now()
             minute = (now.date().isoformat(), now.hour * 60 + now.minute)
-            try:
-                await self.poll(minute=minute != self._minute)
-            except Exception:
-                log.exception("trigger poll failed")
+            if minute != self._minute:
+                try:
+                    await self.tick()
+                except Exception:
+                    log.exception("trigger tick failed")
             self._minute = minute
 
     def _queue(self, trigger: Trigger) -> None:
@@ -700,12 +704,10 @@ class TriggerEngine:
 def _when_it_runs(compiled: Compiled) -> list[str]:
     """When a trigger with this query is looked at, in words."""
     when = []
-    if compiled.sources:
-        when.append(f"at once when {', '.join(sorted(compiled.sources))} records a row")
+    if compiled.tables:
+        when.append(f"at once when {', '.join(sorted(compiled.tables))} changes")
     if compiled.clock:
         when.append("every minute")
-    if compiled.live:
-        when.append(f"every {POLL:.0f} s, since it reads a live table")
     return when
 
 

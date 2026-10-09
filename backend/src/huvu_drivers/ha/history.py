@@ -95,7 +95,8 @@ BUCKET = timedelta(minutes=5)
 
 
 def bucket_start(at: datetime) -> datetime:
-    at = at.astimezone()
+    """The start of the 5-minute bucket an aware time falls in. The same
+    instant in any zone whose offset is whole 5 minutes."""
     return at.replace(minute=at.minute - at.minute % 5, second=0, microsecond=0)
 
 

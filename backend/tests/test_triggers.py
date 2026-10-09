@@ -40,30 +40,29 @@ def wakes(hermes) -> list[str]:
 
 
 async def test_an_edge_fires_when_the_answer_turns_up_and_rearms_when_it_goes(kernel, clock, home, hermes):
-    home.status["eta_min"] = 9
+    home.set_status(eta_min=9)
     trigger = await kernel.triggers.register(spec(**PORCH), OWNER)
     await settle(kernel)
     # 23:50: outside the window, so nothing yet.
     assert wakes(hermes) == []
 
     clock.advance(minutes=10)
-    await kernel.triggers.poll(minute=True)
+    await kernel.triggers.tick()
     await settle(kernel)
     assert len(wakes(hermes)) == 1
     assert "Turn on the porch light." in wakes(hermes)[0] and '"eta_min": 9' in wakes(hermes)[0]
 
     # Still true: no second fire.
     clock.advance(minutes=1)
-    home.status["eta_min"] = 2
-    await kernel.triggers.poll(minute=True)
+    home.set_status(eta_min=2)
+    await kernel.triggers.tick()
     await settle(kernel)
     assert len(wakes(hermes)) == 1 and trigger.fire_count == 1
 
-    # The light goes on, then off again: it fires again.
-    home.lights["light.porch"]["state"] = "on"
-    await kernel.triggers.poll(minute=False)
-    home.lights["light.porch"]["state"] = "off"
-    await kernel.triggers.poll(minute=False)
+    # The light goes on, then off again: it fires again, with no tick.
+    home.set_light("light.porch", "on")
+    await settle(kernel)
+    home.set_light("light.porch", "off")
     await settle(kernel)
     assert len(wakes(hermes)) == 2
 
@@ -85,7 +84,7 @@ async def test_a_daily_reminder_is_an_edge_on_the_minute(kernel, clock, hermes):
     assert kernel.notifications("me") == []
 
     clock.advance(minutes=8 * 60 + 10)
-    await kernel.triggers.poll(minute=True)
+    await kernel.triggers.tick()
     await settle(kernel)
     assert [n["text"] for n in kernel.notifications("me")] == ["Water the plants."]
     # The script did it all: the model was never woken.
@@ -93,13 +92,13 @@ async def test_a_daily_reminder_is_an_edge_on_the_minute(kernel, clock, hermes):
 
     # Later that morning, nothing more, and it rearms.
     clock.advance(minutes=1)
-    await kernel.triggers.poll(minute=True)
+    await kernel.triggers.tick()
     await settle(kernel)
     assert len(kernel.notifications("me")) == 1
 
     # The next morning at 8, again.
     clock.advance(days=1, minutes=-1)
-    await kernel.triggers.poll(minute=True)
+    await kernel.triggers.tick()
     await settle(kernel)
     assert len(kernel.notifications("me")) == 2
 
@@ -135,14 +134,55 @@ async def test_rows_filter_in_sql_and_carry_their_labels(kernel, home, hermes):
     assert "outside the family" in wakes(hermes)[-1]
 
 
-async def test_a_nudge_reaches_only_the_triggers_that_read_that_source(kernel, home, hermes):
+async def test_a_change_reaches_only_the_triggers_that_read_that_table(kernel, home, hermes, monkeypatch):
     clock_only = await kernel.triggers.register(spec(note="Midnight.", script=WAKE, sql="SELECT 1 WHERE now_minute() = 0", fire="edge", once=False), OWNER)
     bell = await kernel.triggers.register(spec(**DOORBELL), OWNER)
-    assert bell.compiled.sources == {"home"} and not bell.compiled.live
-    assert clock_only.compiled.sources == set() and clock_only.compiled.clock
+    porch = await kernel.triggers.register(spec(note="Porch on.", script=WAKE, sql="SELECT 1 FROM home_lights WHERE entity_id = 'light.porch' AND state = 'on'", fire="edge", once=False), OWNER)
+    assert bell.compiled.tables == {"home_doorbell"} and porch.compiled.tables == {"home_lights"}
+    assert clock_only.compiled.tables == set() and clock_only.compiled.clock
+    looked: list[str] = []
+    look = kernel.triggers._look
+
+    async def counted(trigger):
+        looked.append(trigger.id)
+        await look(trigger)
+
+    monkeypatch.setattr(kernel.triggers, "_look", counted)
+    # A doorbell row runs the doorbell trigger and no other.
     await home.press()
     await settle(kernel)
-    assert bell.fire_count == 1 and clock_only.fire_count == 0
+    assert looked == [bell.id] and bell.fire_count == 1
+    # The light changing runs the porch trigger and no other.
+    home.set_light("light.porch", "on")
+    await settle(kernel)
+    assert looked == [bell.id, porch.id] and porch.fire_count == 1 and clock_only.fire_count == 0
+
+
+async def test_a_source_hands_over_only_what_its_spec_says(kernel, home):
+    from huvu.source import SourceError
+
+    with pytest.raises(SourceError, match="live table"):
+        home.ctx.put("doorbell", {"note": "x"})
+    with pytest.raises(SourceError, match="no key"):
+        home.ctx.put("status", {"battery": 5})
+    with pytest.raises(SourceError, match="no columns colour"):
+        home.ctx.put("lights", {"entity_id": "light.porch", "colour": "red"})
+    with pytest.raises(SourceError, match="two rows"):
+        home.ctx.replace("lights", [{"entity_id": "light.a"}, {"entity_id": "light.a"}])
+    with pytest.raises(SourceError, match="username"):
+        home.ctx.put("lights", {"entity_id": "light.porch", "user_id": 7})
+
+
+async def test_a_source_reads_only_its_own_history(kernel, home):
+    from huvu.source import SourceError
+
+    await home.press("mine")
+    assert [r["note"] for r in home.ctx.rows("doorbell", "1 = 1")] == ["mine"]
+    with pytest.raises(SourceError):
+        home.ctx.rows("doorbell", "id IN (SELECT id FROM huvu_events)")
+    with pytest.raises(SourceError):
+        home.ctx.rows("doorbell", "1 = 1; DELETE FROM home_doorbell")
+    assert kernel.data.count("home", "doorbell", "1 = 1", ()) == 1
 
 
 async def test_once_triggers_end_and_get_a_default_expiry(kernel, home, hermes):
@@ -183,13 +223,13 @@ async def test_expired_triggers_stop(kernel, clock, home, hermes):
 
 
 async def test_a_dry_run_shows_the_answer_and_what_the_script_would_do(kernel, home, hermes):
-    home.status["eta_min"] = 25
+    home.set_status(eta_min=25)
     await home.press("a courier")
     report = (await kernel.tools.call("triggers_register", {**DOORBELL, "dry_run": True}, OWNER)).data
-    assert report["reads"] == ["home"] and report["rows_now"] == 1 and report["would_fire_now"]
+    assert report["reads"] == ["home_doorbell"] and report["rows_now"] == 1 and report["would_fire_now"]
     assert report["first_rows"][0]["note"] == "a courier"
     assert report["script"]["dry_run"] and report["script"]["wakes"] == [{"text": "It fired.", "data": None}]
-    assert "at once when home records a row" in report["runs"]
+    assert "at once when home_doorbell changes" in report["runs"]
     # Nothing was registered and nothing woke.
     assert kernel.triggers.list(OWNER) == [] and wakes(hermes) == []
 
@@ -319,8 +359,9 @@ async def test_a_restart_fires_neither_twice_nor_for_old_rows(kernel, tmp_path, 
     await settle(kernel)
     assert len(wakes(hermes)) == 2
     again = restarted(kernel, tmp_path, clock, hermes)
+    await again.registry.get("home").run()
     await again.triggers.load()
-    await again.triggers.poll(minute=True)
+    await again.triggers.tick()
     await settle(again)
     # The light is still off and the press was seen: nothing new.
     assert len(wakes(hermes)) == 2
@@ -332,19 +373,20 @@ async def test_a_restart_fires_neither_twice_nor_for_old_rows(kernel, tmp_path, 
     again.db.close()
 
 
-async def test_a_failing_query_changes_nothing_and_is_logged_once(kernel, home, hermes):
+async def test_a_table_its_source_cant_vouch_for_changes_nothing(kernel, home, hermes):
     trigger = await kernel.triggers.register(spec(**{**PORCH, "sql": "SELECT 1 FROM home_lights WHERE state = 'off'"}), OWNER)
     await settle(kernel)
     assert trigger.fire_count == 1 and not trigger.armed
-    home.down = True
+    home.go_down()
+    with pytest.raises(Exception, match="home_lights: the house is offline"):
+        await kernel.data.sql("SELECT * FROM home_lights", kernel.accounts.scope("me", None))
+    # Looked at while down: the query fails, it is logged once, and it doesn't rearm.
     for _ in range(3):
-        await kernel.triggers.poll(minute=False)
-    errors = kernel.events_since("trigger.error", kernel.now().replace(year=2000))
-    assert errors == 1 and not trigger.armed
-    home.down = False
-    await kernel.triggers.poll(minute=False)
+        await kernel.triggers._look(trigger)
+    assert kernel.events_since("trigger.error", kernel.now().replace(year=2000)) == 1 and not trigger.armed
+    # The house hands its lights over again, still off: no second fire.
+    await home.run()
     await settle(kernel)
-    # Back, and still true: it didn't rearm while the house was away.
     assert trigger.fire_count == 1
 
 

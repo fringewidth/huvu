@@ -5,7 +5,21 @@
 #   ./setup.sh                                  Hermes's default profile, for shared devices
 #   ./setup.sh <username> <password> [name]     a user and their profile (an existing
 #                                               user's password is left as it is)
+#   --timezone <IANA name>                      the house's timezone, with either form, such
+#                                               as Europe/Berlin. Without it, the one set
+#                                               before is kept, or Asia/Kolkata.
 set -euo pipefail
+
+timezone=""
+args=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --timezone) [ $# -ge 2 ] || { echo "--timezone needs a name, such as Asia/Kolkata" >&2; exit 1; }; timezone=$2; shift 2 ;;
+    --timezone=*) timezone=${1#*=}; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
 
 root=$(cd "$(dirname "$0")" && pwd)
 hermes_home=${HERMES_HOME:-$HOME/.hermes}
@@ -18,6 +32,21 @@ huvu() {
   else (cd "$root/backend" && uv run --quiet huvu "$@"); fi
 }
 random() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
+
+# A setting kept in backend/.env, replaced when given.
+setting() {
+  touch "$env_file"
+  grep -v "^$1=" "$env_file" > "$env_file.new" || true
+  echo "$1=$2" >> "$env_file.new"
+  mv "$env_file.new" "$env_file"
+}
+
+# The house's timezone, for huvu (HUVU_TIMEZONE) and every Hermes profile.
+# Never the server's own: in the container that is UTC, and a reminder for
+# 9 would come at 14:30 in India.
+timezone=${timezone:-$(grep -s "^HUVU_TIMEZONE=" "$env_file" | cut -d= -f2- || true)}
+timezone=${timezone:-Asia/Kolkata}
+setting HUVU_TIMEZONE "$timezone"
 
 # A secret kept in backend/.env, made the first time.
 secret() {
@@ -52,6 +81,8 @@ configure() {
   # Run again after editing the repo's SOUL.md.
   cp "$root/SOUL.md" "$home/SOUL.md"
   hermes $p config set API_SERVER_ENABLED true >/dev/null
+  # Hermes tells the model the time too, in this zone or else the server's.
+  hermes $p config set timezone "$timezone" >/dev/null
   hermes $p config set HUVU_URL "$huvu_url" >/dev/null
   hermes $p config set mcp_servers.huvu.url "$huvu_url/mcp" >/dev/null
   hermes $p config set mcp_servers.huvu.headers.Authorization 'Bearer ${HUVU_MCP_TOKEN}' >/dev/null
@@ -107,11 +138,11 @@ if [ $# -eq 0 ]; then
   configure "" "$hermes_home"
   hermes config set API_SERVER_KEY "$key" >/dev/null
   hermes config set HUVU_MCP_TOKEN "$token" >/dev/null
-  echo "Hermes's default profile is set up for huvu's shared devices. Restart Hermes: hermes gateway restart"
+  echo "Hermes's default profile is set up for huvu's shared devices, in $timezone. Restart Hermes (hermes gateway restart) and huvu."
   exit 0
 fi
 
-[ $# -ge 2 ] || { sed -n 2,8p "$0" >&2; exit 1; }
+[ $# -ge 2 ] || { sed -n 2,11p "$0" >&2; exit 1; }
 user=$1
 password=$2
 name=${3:-$1}

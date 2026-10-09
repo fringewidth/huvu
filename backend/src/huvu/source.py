@@ -1,14 +1,20 @@
 """The source contract: what a driver implements, and what the kernel gives it.
 
-A source owns its own working storage and processing. The kernel never
-tells it where to keep things, except its history: what happened goes
-through `ctx.record` into the kernel's history tables. What is true now it
-answers itself, each time a query reads one of its live tables (`live`).
-The model reads both with data_sql (data.py), and so do triggers.
+A source owns its own working storage and processing. Everything it knows
+it hands to the kernel through its context: what happened as history rows
+(`ctx.record`), what is true now as the rows of its live tables
+(`ctx.replace`, `ctx.put`, `ctx.drop`). The model reads both with data_sql
+(data.py), and so do triggers.
+
+A driver is code the kernel doesn't trust to do more than that. The kernel
+never calls into a source to answer a query, checks every row against the
+spec, owns the copies a query reads, and tells the triggers about every
+change itself, so a driver can't forget to, or get threading wrong. The
+kernel calls a source only for what is the source's own: `run`, `act`,
+`fetch`, `feeds` and `ingest`.
 
 Every method has a default, so a driver implements only what it has. A
-source with no long-lived connection leaves `run` alone. A source with no
-live tables leaves `live` alone.
+source with no long-lived connection leaves `run` alone.
 """
 
 from __future__ import annotations
@@ -58,15 +64,6 @@ class Source:
         """The long-lived part: a Pulsar consumer, a websocket, a polling
         loop. It reports through `self.ctx`. If it raises, the kernel logs a
         `source_error` row and starts it again after a backoff."""
-
-    def live(self, table: str) -> list[dict[str, Any]]:
-        """The rows of one of the source's live tables, now, as dicts by
-        column name, with `user_id` and `group_id` for a row that is one
-        person's or one group's. It runs on a query's worker thread, so it
-        answers from what the source already holds, without awaiting and
-        without touching what the event loop may be changing: copy a dict
-        before walking it."""
-        return []
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         """Runs an action. The kernel calls this only after the action
@@ -136,19 +133,36 @@ class SourceContext:
         read this source run at once. See data.py."""
         return self._kernel.data.record(self.name, table, row, at=at or self._kernel.now(), user=user, group=group)
 
-    def nudge(self) -> None:
-        """Says something the source's live tables show may have changed,
-        with no row to record, such as a sensor reading that only goes
-        into a 5-minute bucket. The triggers that read the source run at
-        once. Only a matter of speed: the 5-second poll catches the change
-        anyway, so a nudge that is missed costs at most that."""
-        self._kernel.triggers.nudge(self.name)
+    def replace(self, table: str, rows: list[dict[str, Any]]) -> None:
+        """All of a live table's rows, in place of what it had, such as every
+        entity once Home Assistant connects. Each row is a dict by column,
+        with `user_id` and `group_id` for a row that is one person's or one
+        group's. The kernel checks every row against the spec, keeps them,
+        and runs the triggers that read the table."""
+        self._kernel.data.replace(self.name, table, rows)
+
+    def put(self, table: str, row: dict[str, Any]) -> None:
+        """One row of a live table, added or in place of the row with the
+        same key (the table's `key` in the spec)."""
+        self._kernel.data.put(self.name, table, row)
+
+    def drop(self, table: str, key: dict[str, Any]) -> None:
+        """Takes the row with this key out of a live table."""
+        self._kernel.data.drop(self.name, table, key)
+
+    def unavailable(self, table: str, reason: str) -> None:
+        """Says the source can't vouch for a live table right now, such as
+        while its connection is down. Until the next `replace`, a query
+        that reads it fails with `reason`, so no trigger acts on stale
+        rows."""
+        self._kernel.data.unavailable(self.name, table, reason)
 
     def rows(self, table: str, where: str, args: Sequence[Any] = (), *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
         """Reads the source's own history rows back, every person's, for a
-        source that works from its past. `where` and `order` are SQL the
-        driver writes; values go in `args`."""
-        return self._kernel.data.rows(self.name, table, where, args, order=order, limit=limit)
+        source that works from its past. `where` and `order` are SQL, run
+        on a read-only connection that sees only this source's own history
+        tables; values go in `args`."""
+        return self._kernel.data.own_rows(self.name, table, where, args, order=order, limit=limit)
 
     async def respec(self) -> None:
         """Tells the kernel the source's spec changed, such as when the

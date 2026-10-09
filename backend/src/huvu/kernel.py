@@ -15,6 +15,7 @@ import secrets
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from . import skills
 from .accounts import Accounts
@@ -68,6 +69,9 @@ class Kernel:
         embedding the kernel."""
         self.config = config
         self._clock = clock
+        # The house's timezone: every local time huvu computes is in it,
+        # never the server's (UTC in the container).
+        self.tz = ZoneInfo(config.timezone)
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = connect(config.data_dir / "huvu.db")
         self.accounts = Accounts(self.db, self.now, household_key=config.hermes_api_key, household_mcp_token=config.mcp_token)
@@ -101,9 +105,10 @@ class Kernel:
             self.data.ensure(spec)
         self.tools.build()
         self.data.on_record = self.triggers.nudge
+        self.huvu.publish()
 
     def now(self) -> datetime:
-        return self._clock() if self._clock else datetime.now().astimezone()
+        return self._clock().astimezone(self.tz) if self._clock else datetime.now(self.tz)
 
     async def start(self) -> None:
         # Turns that were running when the kernel last stopped never ended.

@@ -154,6 +154,7 @@ TABLES = [
             )
         ],
         live=True,
+        key=["entity_id"],
     ),
     TableSpec(
         name="scripts",
@@ -171,6 +172,7 @@ TABLES = [
             )
         ],
         live=True,
+        key=["action"],
     ),
     TableSpec(
         name="setup",
@@ -237,6 +239,11 @@ class HomeAssistant(Source):
     # The connection
 
     async def run(self) -> None:
+        # The scripts are known from the cache before HA answers; the
+        # entities aren't, until it does.
+        self._publish_scripts()
+        self._publish_setup()
+        self.ctx.unavailable("entities", "Home Assistant isn't connected yet; ha_setup says why")
         token = secret(self._token_env)
         if not token:
             raise SourceError(f"{self._token_env} is not set: make a long-lived access token for huvu's own HA user and put it there")
@@ -251,6 +258,8 @@ class HomeAssistant(Source):
                     await client.subscribe(event_type, self._on_registry_changed)
                 await self._load(fresh=True)
                 self._connected = True
+                self._publish_entities()
+                self._publish_setup()
                 self.ctx.log.info("connected to Home Assistant %s: %d exposed entities, %d scripts", client.version, len(self._exposed), len(self._known_scripts()))
                 tasks.create_task(self._refresher(), name="ha:refresh")
                 tasks.create_task(self._flusher(), name="ha:flush")
@@ -260,6 +269,8 @@ class HomeAssistant(Source):
         finally:
             self._connected = False
             self._client = None
+            self.ctx.unavailable("entities", "Home Assistant is not connected right now; ha_setup says why")
+            self._publish_setup()
             await client.close()
 
     async def _load(self, *, fresh: bool) -> None:
@@ -334,6 +345,7 @@ class HomeAssistant(Source):
         (self.ctx.data_dir / CACHE).write_text(json.dumps([s.as_dict() for s in scripts.values()], indent=1))
         if self._spec_key() != before:
             await self.ctx.respec()
+        self._publish_scripts()
 
     def _set_problems(self, problems: list[str]) -> None:
         self._problems = problems
@@ -341,6 +353,7 @@ class HomeAssistant(Source):
             if problem not in self._logged:
                 self.ctx.log.warning("Home Assistant setup: %s", problem)
                 self._logged.add(problem)
+        self._publish_setup()
 
     async def _refresher(self) -> None:
         while True:
@@ -351,6 +364,8 @@ class HomeAssistant(Source):
             await asyncio.sleep(REFRESH_DEBOUNCE)
             self._refresh.clear()
             await self._load(fresh=False)
+            # Exposure, areas and aliases may have changed.
+            self._publish_entities()
 
     async def _flusher(self) -> None:
         while True:
@@ -379,14 +394,16 @@ class HomeAssistant(Source):
         if script is not None and _ran(old, new):
             await self._script_ran(script, context, at)
         if entity_id in self._exposed:
+            # ha_entities first, so a trigger that joins it with the row
+            # below sees the new state.
             if new is None:
                 self._states.pop(entity_id, None)
+                self.ctx.drop("entities", {"entity_id": entity_id})
             else:
                 self._states[entity_id] = new
+                if self._connected and not entity_id.startswith("script."):
+                    self.ctx.put("entities", self._entity_row(entity_id, new))
                 await self._changed(entity_id, old, new, context, at)
-            # ha_entities changed even when no row was recorded (a sensor
-            # reading goes only into its bucket).
-            self.ctx.nudge()
 
     async def _script_ran(self, script: Script, context: dict[str, Any], at: datetime) -> None:
         pending = self._inflight.get(script.entity_id) or []
@@ -459,56 +476,51 @@ class HomeAssistant(Source):
 
     # The contract
 
-    def live(self, table: str) -> list[dict[str, Any]]:
-        readers = {"entities": self._entity_rows, "scripts": self._script_rows, "setup": self._setup_rows}
-        return readers[table]()
+    # The live tables, handed to the kernel whenever they change
 
-    def _entity_rows(self) -> list[dict[str, Any]]:
-        if not self._connected:
-            raise SourceError("Home Assistant is not connected right now; ha_setup says why")
-        states = dict(self._states)
-        rows = []
-        for entity_id in sorted(states):
-            state = states[entity_id]
-            domain = entity_id.partition(".")[0]
-            if domain == "script":
-                continue
-            attributes = state.get("attributes") or {}
-            rows.append(
+    def _publish_entities(self) -> None:
+        self.ctx.replace(
+            "entities",
+            [self._entity_row(e, state) for e, state in sorted(self._states.items()) if not e.startswith("script.")],
+        )
+
+    def _entity_row(self, entity_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        attributes = state.get("attributes") or {}
+        return {
+            "entity_id": entity_id,
+            "name": _name(state),
+            "domain": entity_id.partition(".")[0],
+            "device_class": attributes.get("device_class"),
+            "area": self._area.get(entity_id),
+            "device": self._device.get(entity_id),
+            "aliases": self._aliases.get(entity_id) or None,
+            "state": state["state"],
+            "number": _number(state["state"]),
+            "attributes": {k: v for k, v in attributes.items() if k not in NOISE} or None,
+            "assumed": bool(attributes.get("assumed_state")),
+            "last_changed": state.get("last_changed"),
+        }
+
+    def _publish_scripts(self) -> None:
+        self.ctx.replace(
+            "scripts",
+            [
                 {
-                    "entity_id": entity_id,
-                    "name": _name(state),
-                    "domain": domain,
-                    "device_class": attributes.get("device_class"),
-                    "area": self._area.get(entity_id),
-                    "device": self._device.get(entity_id),
-                    "aliases": self._aliases.get(entity_id) or None,
-                    "state": state["state"],
-                    "number": _number(state["state"]),
-                    "attributes": {k: v for k, v in attributes.items() if k not in NOISE} or None,
-                    "assumed": bool(attributes.get("assumed_state")),
-                    "last_changed": state.get("last_changed"),
+                    "action": f"{self.ctx.name}_{script.object_id}",
+                    "name": script.name,
+                    "description": script.description,
+                    "area": script.area,
+                    "fields": script.fields or None,
+                    "targets": script.targets or None,
+                    "usable": usable(script),
                 }
-            )
-        return rows
+                for script in self._known_scripts().values()
+            ],
+        )
 
-    def _script_rows(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "action": f"{self.ctx.name}_{script.object_id}",
-                "name": script.name,
-                "description": script.description,
-                "area": script.area,
-                "fields": script.fields or None,
-                "targets": script.targets or None,
-                "usable": usable(script),
-            }
-            for script in list(self._known_scripts().values())
-        ]
-
-    def _setup_rows(self) -> list[dict[str, Any]]:
+    def _publish_setup(self) -> None:
         client = self._client
-        return [{"connected": self._connected, "ha_version": client.version if client else None, "problems": list(self._problems)}]
+        self.ctx.replace("setup", [{"connected": self._connected, "ha_version": client.version if client else None, "problems": list(self._problems)}])
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         script = self._known_scripts().get(name)
@@ -552,7 +564,9 @@ def _number(raw: Any) -> float | None:
 
 def _time(raw: Any) -> datetime | None:
     try:
-        at = datetime.fromisoformat(str(raw)).astimezone() if raw else None
+        # HA's times carry their offset; the kernel turns them into the
+        # house's time.
+        at = datetime.fromisoformat(str(raw)) if raw else None
     except ValueError:
         at = None
     return at

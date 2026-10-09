@@ -203,7 +203,7 @@ async def test_a_sensor_reading_runs_a_trigger_at_once(house, ha, hermes):
     sql = "SELECT number FROM ha_entities WHERE entity_id = 'sensor.bedroom_temperature' AND number > 30"
     script = 'def run(ctx):\n    ctx.wake("Hot: " + str(ctx.rows[0]["number"]))\n'
     await kernel.tools.call("triggers_register", {"note": "Too hot.", "sql": sql, "fire": "edge", "once": False, "script": script}, MOM)
-    # No poll runs here: only the nudge can bring it.
+    # Nothing runs the trigger but the reading itself.
     ha.set("sensor.bedroom_temperature", "31.5")
     await until(lambda: any(s.startswith("wake-") for s, _ in hermes.messages), timeout=10)
     assert "Hot: 31.5" in [m for s, m in hermes.messages if s.startswith("wake-")][0]
@@ -266,9 +266,8 @@ async def test_the_actions_exist_before_ha_connects(house, tmp_path, hermes, clo
     kernel = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"ha": later}, clock=clock)
     try:
         assert {a.name for a in kernel.registry.spec("ha").actions} == {"bedroom_ac_set", "gate_open", "tv_netflix"}
-        with pytest.raises(DataError, match="ha_entities: Home Assistant is not connected"):
+        with pytest.raises(DataError, match="ha_entities: ha hasn't handed this table over yet"):
             await kernel.data.sql("SELECT * FROM ha_entities", EVERYONE)
-        assert (await kernel.data.sql("SELECT connected FROM ha_setup", EVERYONE)).rows == [[0]]
         with pytest.raises(SourceError, match="not connected"):
             await later.act("bedroom_ac_set", {"mode": "cool"}, MOM)
     finally:

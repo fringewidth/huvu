@@ -1,6 +1,7 @@
 """Configuration: one TOML file, with secrets from the environment.
 
     data_dir = "data"
+    timezone = "Asia/Kolkata"  # the house's: every "local" time, reminders, the dream
     public_url = "http://localhost:3001"
     port = 3001
     cors_origins = ["*"]
@@ -44,7 +45,9 @@ key) and HUVU_MCP_TOKEN (the token that profile sends to /mcp) come from the
 environment, or else from backend/.env (gitignored), which setup.sh writes;
 both serve the default group's shared devices. HUVU_FCM_CREDENTIALS, the
 path of a Firebase service account's JSON key, turns on native push.
-GROQ_API_KEY turns on speech to text (hearing.py). Users, devices and each user's
+GROQ_API_KEY turns on speech to text (hearing.py). HUVU_TIMEZONE, which
+setup.sh writes, overrides `timezone`: an IANA name, Asia/Kolkata unless
+told otherwise. Never the server's own zone, which is UTC in the container. Users, devices and each user's
 profile secrets live in the database (see accounts.py), managed with
 `huvu user ...`.
 """
@@ -53,6 +56,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -95,9 +99,14 @@ class SourceConfig:
     options: dict[str, Any] = field(default_factory=dict)
 
 
+DEFAULT_TIMEZONE = "Asia/Kolkata"
+
+
 @dataclass
 class Config:
     data_dir: Path = Path("data")
+    # The house's timezone, an IANA name.
+    timezone: str = DEFAULT_TIMEZONE
     public_url: str = "http://localhost:3001"
     host: str = "0.0.0.0"
     port: int = 3001
@@ -157,8 +166,14 @@ def load(path: Path | None = None) -> Config:
     fcm = secret("HUVU_FCM_CREDENTIALS")
     # HUVU_WEB_DIR wins, so the image names where it put the build.
     web = os.environ.get("HUVU_WEB_DIR") or raw.get("web_dir")
+    timezone = secret("HUVU_TIMEZONE") or raw.get("timezone") or DEFAULT_TIMEZONE
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as err:
+        raise ValueError(f"timezone {timezone!r} isn't an IANA timezone, such as Asia/Kolkata") from err
     config = Config(
         data_dir=(base / raw.get("data_dir", "data")).resolve(),
+        timezone=timezone,
         # HUVU_PUBLIC_URL wins, so the container's address lives in its
         # compose file, next to the tunnel that makes it.
         public_url=(os.environ.get("HUVU_PUBLIC_URL") or raw.get("public_url", "http://localhost:3001")).rstrip("/"),

@@ -36,6 +36,8 @@ pytestmark = pytest.mark.usefixtures("family")
 async def kernel(tmp_path, clock, home, hermes):
     location = LocationSource({"home": HOME, "near_home_km": 3})
     k = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": home, "location": location}, clock=clock)
+    await home.run()
+    await location.run()
     await k.triggers.load()
     yield k
     await k.triggers.stop()
@@ -145,8 +147,10 @@ async def test_where_everyone_is_survives_a_restart(kernel, location, clock, tmp
     await location.ingest(crossing(clock, "enter"), MY_TRACKER)
     again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"location": LocationSource({"home": HOME})}, clock=clock)
     try:
+        from huvu.scope import EVERYONE
+
         await again.registry.get("location").run()
-        assert again.registry.get("location").live("people")[0]["place"] == "home"
+        assert (await again.data.sql("SELECT place FROM location_people", EVERYONE)).rows == [["home"]]
     finally:
         again.data.close()
         again.db.close()

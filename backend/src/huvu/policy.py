@@ -213,6 +213,7 @@ class Policy:
         )
         if not inserted:
             return None
+        self._kernel.huvu.publish_approvals()
         await self._kernel.kernel_event(
             "approval.created",
             f"waiting for {approval.user or f'the members of {approval.group}'} on {source}.{action}" + (f": {reason}" if reason else ""),
@@ -280,6 +281,7 @@ class Policy:
             "UPDATE approvals SET status = ?, pending_key = NULL, resolved_at = ?, result = ? WHERE id = ?",
             (status, iso(now), dumps(approval.result), approval.id),
         )
+        self._kernel.huvu.publish_approvals()
         await self._kernel.kernel_event(
             "approval.resolved",
             f"{approval.source}.{approval.action}: {status}" + (f" by {by.user or by.id}" if by else ""),

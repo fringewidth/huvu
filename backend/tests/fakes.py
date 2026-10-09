@@ -26,9 +26,9 @@ class FakeClock:
 
 
 class HomeSource(Source):
-    """Lights and a status board as live tables, from dicts a test changes
-    by hand; doorbell presses and unlocks as history, recorded with
-    `press` and `unlock`."""
+    """Lights and a status board as live tables, handed to the kernel at
+    `run` and by `set_light`, `set_status` and `go_down`; doorbell presses
+    and unlocks as history, recorded with `press` and `unlock`."""
 
     def __init__(self) -> None:
         super().__init__({})
@@ -39,7 +39,6 @@ class HomeSource(Source):
             "light.light_3": {"name": "Light 3", "state": "off"},
         }
         self.status: dict[str, Any] = {"eta_min": None, "battery": 80}
-        self.down = False
 
     def describe(self) -> SourceSpec:
         return SourceSpec(
@@ -67,6 +66,7 @@ class HomeSource(Source):
                         ColumnSpec(name="state", type="text", description="on or off"),
                     ],
                     live=True,
+                    key=["entity_id"],
                 ),
                 TableSpec(
                     name="status",
@@ -82,12 +82,20 @@ class HomeSource(Source):
             ],
         )
 
-    def live(self, table: str) -> list[dict[str, Any]]:
-        if self.down:
-            raise SourceError("the house is offline")
-        if table == "lights":
-            return [{"entity_id": e, **light} for e, light in dict(self.lights).items()]
-        return [dict(self.status)]
+    async def run(self) -> None:
+        self.ctx.replace("lights", [{"entity_id": e, **light} for e, light in self.lights.items()])
+        self.ctx.replace("status", [self.status])
+
+    def set_light(self, entity_id: str, state: str) -> None:
+        self.lights[entity_id]["state"] = state
+        self.ctx.put("lights", {"entity_id": entity_id, **self.lights[entity_id]})
+
+    def set_status(self, **values: Any) -> None:
+        self.status.update(values)
+        self.ctx.replace("status", [self.status])
+
+    def go_down(self) -> None:
+        self.ctx.unavailable("lights", "the house is offline")
 
     async def press(self, note: str = "a note held up to the camera") -> int:
         return await self.ctx.record("doorbell", {"snapshot": "home:snap/1", "note": note})

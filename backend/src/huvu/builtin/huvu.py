@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from ..db import Row, dumps, loads, open_db
+from ..db import dumps, loads
 from ..prompts import TEXT
 from ..source import Source, SourceError
 from ..spec import ActionSpec, Caller, ColumnSpec, Result, SourceSpec, TableSpec
@@ -171,54 +171,47 @@ class HuvuSource(Source):
     def _aliases(self) -> dict[str, str]:
         return self._get("aliases") or {}
 
-    # Live tables. Each read opens its own connection to huvu.db, since it
-    # runs on a query's worker thread.
+    # Live tables, handed to the kernel whenever they change
 
-    def live(self, table: str) -> list[dict[str, Any]]:
-        readers = {
-            "mode": self._mode_rows,
-            "aliases": self._alias_rows,
-            "approvals": self._approval_rows,
-            "triggers": self._trigger_rows,
-        }
-        return readers[table]()
+    def publish(self) -> None:
+        """Every live table, at start."""
+        self.publish_mode()
+        self.publish_aliases()
+        self.publish_approvals()
+        self.publish_triggers()
 
-    def _read(self, sql: str, args: tuple[Any, ...] = ()) -> list[Row]:
-        conn = open_db(self._kernel.config.data_dir / "huvu.db", readonly=True)
-        try:
-            return conn.execute(sql, args).fetchall()
-        finally:
-            conn.close()
+    def publish_mode(self) -> None:
+        self.ctx.replace("mode", [{"mode": self.mode()}])
 
-    def _kv(self, key: str) -> Any:
-        rows = self._read("SELECT value FROM kv WHERE namespace = ? AND key = ?", (NAMESPACE, key))
-        return loads(rows[0]["value"]) if rows else None
+    def publish_aliases(self) -> None:
+        self.ctx.replace("aliases", [{"alias": alias, "target": target} for alias, target in sorted(self._aliases().items())])
 
-    def _mode_rows(self) -> list[dict[str, Any]]:
-        return [{"mode": self._kv("mode") or "normal"}]
+    def publish_approvals(self) -> None:
+        """Called by the policy whenever an approval opens or closes."""
+        self.ctx.replace(
+            "approvals",
+            [
+                {
+                    "approval_id": a.id,
+                    "action": f"{a.source}_{a.action}",
+                    "args": a.args,
+                    "reason": a.reason,
+                    "created_at": a.created_at.isoformat(),
+                    "deadline": a.deadline.isoformat(),
+                    "user_id": a.user,
+                    "group_id": None if a.user else a.group,
+                }
+                for a in self._kernel.policy.pending()
+            ],
+        )
 
-    def _alias_rows(self) -> list[dict[str, Any]]:
-        return [{"alias": alias, "target": target} for alias, target in sorted((self._kv("aliases") or {}).items())]
-
-    def _approval_rows(self) -> list[dict[str, Any]]:
-        rows = self._read("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at")
-        return [
-            {
-                "approval_id": r["id"],
-                "action": f"{r['source']}_{r['action']}",
-                "args": loads(r["args"]),
-                "reason": r["reason"],
-                "created_at": r["created_at"],
-                "deadline": r["deadline"],
-                "user_id": r["user_id"],
-                "group_id": None if r["user_id"] else r["group_id"],
-            }
-            for r in rows
-        ]
+    def publish_triggers(self) -> None:
+        """Called by the trigger engine whenever a trigger changes."""
+        self.ctx.replace("triggers", self._trigger_rows())
 
     def _trigger_rows(self) -> list[dict[str, Any]]:
         rows = []
-        for t in self._kernel.triggers.snapshot():
+        for t in self._kernel.triggers.alive():
             rows.append(
                 {
                     "trigger_id": t.id,
@@ -268,6 +261,7 @@ class HuvuSource(Source):
         if mode not in MODES:
             raise SourceError(f"mode must be one of {', '.join(MODES)}")
         self._put("mode", mode)
+        self.publish_mode()
         await self.ctx.record("modes", {"mode": mode}, user=caller.user, group=None if caller.user else caller.group)
         return Result(data={"mode": mode}, labels=["owner"])
 
@@ -278,12 +272,14 @@ class HuvuSource(Source):
         aliases = self._aliases()
         aliases[alias] = target
         self._put("aliases", aliases)
+        self.publish_aliases()
         return Result(data={"alias": alias, "target": target}, labels=["owner"])
 
     async def _remove_alias(self, args: dict[str, Any], caller: Caller) -> Result:
         aliases = self._aliases()
         removed = aliases.pop(args["alias"].lower().strip(), None)
         self._put("aliases", aliases)
+        self.publish_aliases()
         return Result(data={"removed": removed is not None}, labels=["owner"])
 
     async def _notify(self, args: dict[str, Any], caller: Caller) -> Result:

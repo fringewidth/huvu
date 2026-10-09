@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .prompts import LIVE_COLUMNS, STANDARD_COLUMNS
 
@@ -136,15 +136,17 @@ class TableSpec(Strict):
     content (images, audio) stays in the source; a row holds the facts
     about it and a ref.
 
-    A live table (`live`) holds what is true now. Nothing is stored: each
-    read asks the source (`Source.live`), which answers from what it
-    already holds. Its rows have `user_id` and `group_id`, so the same
-    rule decides who sees which row."""
+    A live table (`live`) holds what is true now. The source hands the
+    kernel its rows (`ctx.replace`, `ctx.put`, `ctx.drop`), and the kernel
+    keeps them in memory, nothing on disk. Its rows have `user_id` and
+    `group_id`, so the same rule decides who sees which row. `key` names the
+    columns that tell one row from another, for `put` and `drop`."""
 
     name: str
     description: str
     columns: list[ColumnSpec]
     live: bool = False
+    key: list[str] = Field(default_factory=list)
     # What the rows are, for the labels of a query that reads them.
     labels: list[Label] = Field(default_factory=lambda: ["house"])
     # Each entry is the columns of one index, such as ["entity_id", "ts"].
@@ -158,6 +160,16 @@ class TableSpec(Strict):
         if not MEMBER_RE.match(v):
             raise ValueError(f"table name {v!r} must match {MEMBER_RE.pattern}")
         return v
+
+    @model_validator(mode="after")
+    def _key_columns(self) -> TableSpec:
+        names = {c.name for c in self.columns} | set(LIVE_COLUMNS)
+        unknown = [k for k in self.key if k not in names]
+        if unknown:
+            raise ValueError(f"table {self.name!r}: key on unknown columns {', '.join(unknown)}")
+        if self.key and not self.live:
+            raise ValueError(f"table {self.name!r}: only a live table has a key; a history row is told apart by its id")
+        return self
 
     def column(self, name: str) -> ColumnSpec | None:
         return next((c for c in self.columns if c.name == name), None)
