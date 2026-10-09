@@ -76,7 +76,7 @@ deploy key, `C:\Users\Hrishik\.ssh\huvu_deploy`):
 ssh laptop "cd /d D:\huvu && git pull --ff-only origin main"
 ssh laptop "cd /d D:\huvu && docker compose build"
 ssh laptop "cd /d D:\huvu && docker compose up -d"
-ssh laptop "docker image prune -f"       # the last build's image, about 3 GB
+ssh laptop "docker image prune -f"       # anything a build left untagged
 ```
 
 Asks fail for about 65 seconds after a start, until the backend and then
@@ -84,7 +84,9 @@ Hermes are up. Docker can't reach Windows's credential store over SSH, so
 a build that names a base image the laptop doesn't have fails with "A
 specified logon session does not exist": `docker pull` it first (the
 `FROM` lines in the `Dockerfile`). The prune removes only untagged images
-no container uses; immich's untagged ones are in use.
+no container uses; immich's untagged ones are in use. A rebuild on the
+same Hermes leaves nothing behind; one that moves the pin leaves the old
+image, about 3 GB.
 
 Is it up:
 
