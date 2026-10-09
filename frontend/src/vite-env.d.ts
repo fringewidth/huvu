@@ -2,8 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_TARGET: "web" | "phone" | "firetv";
-  // The backend's URL. Defaults to http://localhost:3001; a phone reaches
-  // that over USB with `adb reverse tcp:3001 tcp:3001`.
+  // The backend's URL under Vite's dev server only, http://localhost:3001
+  // by default. Builds always use https://huvu.hrishik.me (net/http.ts).
   readonly VITE_BACKEND_URL?: string;
 }
 

@@ -4,6 +4,7 @@
     public_url = "http://localhost:3001"
     port = 3001
     cors_origins = ["*"]
+    web_dir = "../frontend/dist"   # the web client's build, served at /
 
     [auth]
     mode = "on"              # or "off", for development on localhost
@@ -101,6 +102,9 @@ class Config:
     host: str = "0.0.0.0"
     port: int = 3001
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
+    # The web client's build (frontend/dist), served at /. None serves no
+    # client, as in development, where Vite serves it.
+    web_dir: Path | None = None
     auth_mode: Literal["on", "off"] = "on"
     # With auth off, the user behind every request. None makes them the
     # household's.
@@ -151,6 +155,8 @@ def load(path: Path | None = None) -> Config:
     dream = raw.get("dream", {})
     base = path.parent if path.exists() else Path.cwd()
     fcm = secret("HUVU_FCM_CREDENTIALS")
+    # HUVU_WEB_DIR wins, so the image names where it put the build.
+    web = os.environ.get("HUVU_WEB_DIR") or raw.get("web_dir")
     config = Config(
         data_dir=(base / raw.get("data_dir", "data")).resolve(),
         # HUVU_PUBLIC_URL wins, so the container's address lives in its
@@ -159,6 +165,7 @@ def load(path: Path | None = None) -> Config:
         host=raw.get("host", "0.0.0.0"),
         port=int(raw.get("port", 3001)),
         cors_origins=list(raw.get("cors_origins", ["*"])),
+        web_dir=(base / web).resolve() if web else None,
         auth_mode=auth.get("mode", "on"),
         dev_user=auth.get("dev_user"),
         mcp_token=secret("HUVU_MCP_TOKEN"),

@@ -18,7 +18,9 @@ cd backend && uv run huvu
 cd frontend && npm run dev:web
 ```
 
-Then open http://localhost:5173.
+Then open http://localhost:5173. The dev server talks to the backend on
+http://localhost:3001 (or `VITE_BACKEND_URL`); every build talks to
+https://huvu.hrishik.me.
 
 Speech, once per backend machine:
 
@@ -34,25 +36,23 @@ Android, on a phone plugged in over USB with USB debugging on:
 cd frontend && npm run build:phone && npx cap sync android
 cd android && JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
 ~/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
-~/Library/Android/sdk/platform-tools/adb reverse tcp:3001 tcp:3001
 ```
 
-For the real thing, build against the host:
-`VITE_BACKEND_URL=https://huvu.hrishik.me npm run build:phone`.
+The build talks to https://huvu.hrishik.me.
 
-The host (Windows, Docker Desktop): huvu and Hermes in one container, on
-http://localhost:27613, published at https://huvu.hrishik.me by the
-cloudflared already running there.
+The host (Windows laptop, `ssh laptop`, the repo at `D:\huvu`, Docker
+Desktop): huvu and Hermes in one container, on http://localhost:27613,
+published at https://huvu.hrishik.me by the cloudflared already running
+there. That address serves the web client and the backend both.
 
 The tunnel, once: in the Cloudflare dashboard (Zero Trust, Networks,
-Tunnels), on the existing tunnel, add a public hostname `huvu.hrishik.me`
-with service `http://localhost:27613`. (A tunnel run from a local
-config.yml instead gets an ingress rule with the same two values.)
+Tunnels), on the existing tunnel (immich's), add a public hostname
+`huvu.hrishik.me` with service `http://host.docker.internal:27613`. That
+cloudflared runs in a container, where localhost is the container itself.
 
 Next to `compose.yaml`, a `.env`:
 
 ```sh
-HUVU_PUBLIC_URL=https://huvu.hrishik.me
 GROQ_API_KEY=gsk_...
 ```
 

@@ -21,6 +21,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Type the right password and tap "come in". You should see the greeting, for example "Ready?".
 1. Close the app fully and open it again. You should not have to log in again.
 1. Do the same on the laptop. The laptop should get its own place in the device list (see "The menu").
+1. Turn off the phone's Wi-Fi and open https://huvu.hrishik.me in its browser. You should see the same login screen, with a padlock in the address bar. Log in and ask something. huvu should answer.
 1. Open the menu, tap log out, and open the app again. You should see the login screen.
 
 ## Talking to huvu in writing

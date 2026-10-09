@@ -243,3 +243,16 @@ def test_only_a_phone_registers_a_push_token(server):
     assert httpx.post(f"{server.base}/api/push/token", json=body, headers=server.login("phone")).json() == {"ok": True}
     [row] = server.kernel.db.execute("SELECT token, platform FROM push_tokens").fetchall()
     assert tuple(row) == ("fcm-1", "android")
+
+
+def test_the_web_client_is_served_beside_the_api(tmp_path):
+    from fastapi.testclient import TestClient
+
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<title>huvu</title>")
+    config = Config(data_dir=tmp_path / "data", public_url="http://test", web_dir=web)
+    client = TestClient(create_app(config, Kernel(config, hermes=FakeHermes())))
+    assert client.get("/").text == "<title>huvu</title>"
+    assert client.get("/health").json()["ok"] is True
+    assert client.get("/api/me").status_code == 401

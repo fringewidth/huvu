@@ -1,11 +1,14 @@
-# The image takes the backend, the Hermes plugin, the soul and setup.sh.
-# Everything else, and anything local or secret, stays out.
+# The image takes the backend, the Hermes plugin, the soul, setup.sh, and
+# the frontend's sources to build the web client from. Everything else, and
+# anything local or secret, stays out.
 **/.git
 **/node_modules
 **/__pycache__
 **/*.pyc
 .claude/
-frontend/
+frontend/dist/
+frontend/android/
+frontend/.env*
 docs/
 hermes-skills/
 backend/.venv/

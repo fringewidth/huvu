@@ -17,6 +17,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.routing import Route
 
@@ -437,6 +438,13 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         values = [(key, r.get("value", r.get("reason")), r.get("at", "no time")) for key, r in readings.items()]
         pending = kernel.policy.pending_for(accounts.scope(user, group))
         return {"text": prompts.situation(f"{kernel.now():%a %Y-%m-%d %H:%M}", helping, shared, values, len(pending))}
+
+    # The web client, so huvu.hrishik.me is both the app and its backend.
+    # Mounted last, so every route above wins over a file of the same path.
+    if config.web_dir:
+        if not (config.web_dir / "index.html").exists():
+            raise RuntimeError(f"web_dir {config.web_dir} has no index.html; build the frontend first")
+        app.mount("/", StaticFiles(directory=config.web_dir, html=True), name="web")
 
     return app
 
