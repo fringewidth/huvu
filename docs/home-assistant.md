@@ -10,9 +10,10 @@ Know this before you design anything in HA. Every rule below follows from it.
 
 1. huvu keeps one WebSocket connection to HA, logged in with a long-lived access token of its own HA user.
 1. **huvu sees only what is exposed to Assist** (Settings, Voice assistants, Expose). It can't read, search or work anything else.
-1. **huvu changes the house only by running HA scripts.** Each exposed script becomes one huvu action: `script.bedroom_ac_set` becomes `ha_bedroom_ac_set`. huvu has no other way to work a device: no `light.turn_on`, no raw service call. If a device can't be worked through a script, huvu can't work it.
-1. The model sees, for each script: its description, its area, and its fields as arguments with types taken from their selectors. That's all it knows about what the script does. The script's description is the documentation.
-1. **A label on each script decides whether huvu may run it alone.** See [Labels](#step-6-labels).
+1. **huvu works every exposed device directly.** Each exposed light, switch, fan, button, scene, media player, climate, vacuum, number, select, cover or lock (and the `input_` helpers) is one huvu action: `light.theatre_ceiling` becomes `ha_light_theatre_ceiling`, with arguments from its attributes. So a device needs a proper entity: an infrared device gets template entities (a button per learned code, a switch for power), not just learned codes.
+1. **Scripts are routines.** Each exposed script becomes one huvu action too: `script.bedroom_ac_set` becomes `ha_bedroom_ac_set`. Write one for what works several devices at once, such as starting the home theatre, or for what needs steps in order. The model sees, for each script, its description, its area, and its fields as arguments with types taken from their selectors. The script's description is the documentation.
+1. For an entity, the model sees its name, area, device and aliases. Good names and aliases are what make "turn the projector off" work.
+1. **Labels decide whether huvu may act alone.** On a script, on an entity, or on an area for everything in it. See [Labels](#step-6-labels).
 1. The model reads every exposed entity's state and attributes from `ha_entities`, a live table, and finds entities by name, area, device and alias with SQL. Every change and script run lands in the history tables (`ha_changes`, `ha_script_runs`, `ha_sensor_5min`), and a trigger that reads one runs the moment a row lands.
 1. huvu records history for its nightly "dream", which learns what each person prefers: every change of an exposed entity with who caused it, every script run, and numeric sensors every 5 minutes. A setup that hides who did what, or that leaves devices without a state, gives the dream nothing to learn from.
 1. huvu reloads the scripts, labels, areas and the exposure list on every registry change in HA, and every 5 minutes. A script you add or edit appears in huvu within 5 minutes, with no restart.
@@ -20,7 +21,7 @@ Know this before you design anything in HA. Every rule below follows from it.
 ## Hard rules
 
 1. Never write a script that opens the front door, a gate, or a garage door, or disarms an alarm, without the `huvu_human` label.
-1. Don't expose lock, alarm or garage door entities' own services through any script without `huvu_human`. Exposing them for reading is fine.
+1. Don't work lock, alarm or garage door entities through any script without `huvu_human`. An exposed lock, alarm, or garage, gate or door cover is an action huvu can run itself, always behind a person's tap (the driver enforces it, whatever the labels say). Expose one only if the family wants that.
 1. huvu's token must belong to a separate HA user named `huvu`, never to a family member's user. huvu tells its own actions apart by that user.
 1. Every script huvu may run has a description written for a model (see [Descriptions](#descriptions)).
 1. Every script id is lower case letters, digits and underscores, starting with a letter.
@@ -313,7 +314,7 @@ Simple vacuum controls (`mop_start`, `mop_dock`) use HA's `vacuum.start` and `va
 
 Create these four labels (Settings, Areas, labels and zones, Labels), with exactly these names, so their ids are the same:
 
-| Label | huvu runs the script | Use it for |
+| Label | huvu runs the action | Use it for |
 |---|---|---|
 | `huvu_silent` | at once | lights, TV, fans, AC, media, the mop |
 | `huvu_notify` | at once, then tells the person | things someone should know about: the geyser, the water pump |
@@ -321,16 +322,18 @@ Create these four labels (Settings, Areas, labels and zones, Labels), with exact
 | `huvu_human` | only after a person's tap, whatever anyone configures | doors, gates, garage, alarms, anything about safety |
 
 1. A script without one of these labels asks first (`huvu_ask`).
-1. A script with two of them gets the strictest.
-1. A label that starts with `huvu` but isn't one of these four is a setup problem (a typo), and the script asks first.
-1. Put the label on the script (Settings, Automations and scenes, Scripts, select it, Add label). Check with `config/entity_registry/list` that the script's entity has it.
+1. An entity takes its own label, else its area's label, else its domain's default: lights, switches, fans, buttons, scenes, media players, numbers and selects run at once; climates, vacuums and covers run and tell the person; anything else asks. Put a label on the entity, or on the area, only to change that.
+1. Locks, alarms, and garage, gate and door covers always need a tap, whatever their labels say.
+1. Two of them on one thing: the strictest wins.
+1. A label that starts with `huvu` but isn't one of these four is a setup problem (a typo).
+1. Put the label on the script or entity (its settings, Add label), or on the area. Check with `config/entity_registry/list` and `config/area_registry/list` that it is there.
 
 ## Step 7: exposure
 
 Expose (Settings, Voice assistants, Expose):
 
 1. Every script huvu may run. Not the IR helper scripts.
-1. Every device and sensor huvu may read: the climate entities, power sensors and binary sensors, lights, media players, the mop, door and window sensors, locks, people.
+1. Every device and sensor huvu may read or work: the climate entities, power sensors and binary sensors, lights, media players, the mop, door and window sensors, people. An exposed device that huvu can work is an action, so expose a lock or a garage door only if huvu may work it (always behind a tap). Not the IR helper scripts, and not the raw `remote` entity: huvu works an IR device through its template entities.
 1. The sensors the dream needs for context (Step 8).
 
 Turn off "Expose new entities" for Assist, so nothing reaches huvu by accident:
@@ -393,30 +396,47 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 
 | Item | Value |
 |---|---|
-| HA version | |
-| Integrations used | |
-| huvu's HA user | |
-| Family HA users (id, person) | |
-| Does the family use Assist? | |
+| HA version | 2026.7.2, in Docker on the Windows host (container `homeassistant`), at `http://host.docker.internal:8123` for huvu and `https://ha.hrishik.me` through the tunnel |
+| Config | `configuration.yaml` loads `packages/` (one file per room or job) and trusts the Docker networks as proxies (`http:`), both added 2026-10-09 |
+| Integrations used | Broadlink (RM4 Pro "Broadlink (HT)", IR), Alexa Devices (Dad's Amazon account: Echo devices, the Fire TV, Alexa routines as buttons, `alexa_devices.send_text_command`), Xiaomi Miot (vacuum). Tuya (light switches) is planned |
+| huvu's HA user | `huvu`, id `4a96ccac5e3a4c31a7cc1a0aa7ca63b2`, administrator, local only; its long-lived token is `HA_TOKEN` in huvu's env file on the volume |
+| Family HA users (id, person) | `45c09fc9fc484f049ae31dced034cb82`, hrishik (the owner) |
+| Labels | `huvu_silent`, `huvu_notify`, `huvu_ask`, `huvu_human` |
+| Does the family use Assist? | No |
 
 ### Devices
 
 | Device | Area | How HA works it (IR, cloud, local) | Real state from | Scripts |
 |---|---|---|---|---|
-| | | | | |
+| Projector | Home Theatre | IR, 18 learned codes, one template button each (`button.projector_*`) | nothing; `sensor.home_theatre` is what the routines last did | `home_theatre_start`, `home_theatre_stop` |
+| Amplifier | Home Theatre | IR, 4 learned codes (`button.amplifier_*`) | nothing | `home_theatre_start`, `home_theatre_stop`, `home_theatre_volume` |
+| AC | Home Theatre | Alexa only, by text command through the Echo Dot "Living Room" | nothing; `sensor.home_theatre_ac` is what huvu last asked | `home_theatre_ac` |
+| Fire TV Stick (Dad's) | Home Theatre | Alexa, by text command | nothing | `home_theatre_play` |
+| Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | none |
 
 ### Scripts exposed to huvu
 
+All in `packages/home_theatre.yaml`.
+
 | Script | Label | Fields | Checked on |
 |---|---|---|---|
-| | | | |
+| `home_theatre_start` | huvu_ask | none | not yet run |
+| `home_theatre_stop` | huvu_ask | none | not yet run |
+| `home_theatre_volume` | huvu_silent | direction (up, down), steps (1 to 20) | not yet run |
+| `home_theatre_ac` | huvu_notify | power (on, off), temperature (16 to 30) | not yet run |
+| `home_theatre_play` | huvu_silent | title, app (Netflix, Prime Video, YouTube, JioHotstar) | not yet run |
 
 ### Sensors exposed for the dream
 
 | Entity | Area | What |
 |---|---|---|
-| | | |
+| `sensor.home_theatre` | Home Theatre | on while the start routine has the room running |
+| `sensor.home_theatre_ac` | Home Theatre | on or off, and the temperature, as last asked of Alexa |
 
 ### Open problems
 
-1. (none yet)
+1. The AC's name in the Alexa app is assumed to be "AC" (`ac_name` in `home_theatre_ac`).
+1. Whether the projector needs one press of power to turn off, or two, is not known; `home_theatre_stop` sends one.
+1. The Alexa routines (movie time, pause movie, movie lights out, play movie, home theatre off, daily vacuum, text) are buttons in HA but not exposed: what each does isn't written down yet.
+1. The Broadlink's Wi-Fi link is weak (70 to 90 ms pings, timeouts): HA lost it once on 2026-10-09 and came back on a reload.
+1. `configuration.yaml` has a `xiaomi_cloud_map_extractor` camera whose integration isn't installed, with a cloud password in plain text.
