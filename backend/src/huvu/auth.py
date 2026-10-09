@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import time
+from collections.abc import Callable
 from contextvars import ContextVar
 
 from fastapi import HTTPException, Request
@@ -38,6 +40,48 @@ mcp_profile: ContextVar[tuple[str | None, str | None]] = ContextVar("mcp_profile
 def bearer(request: Request) -> str:
     header = request.headers.get("authorization", "")
     return header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else request.query_params.get("token", "")
+
+
+def client_address(request: Request) -> str:
+    """Who sent the request. Behind the tunnel every request comes from
+    cloudflared, so this is Cloudflare's CF-Connecting-IP, which a client
+    can't set: Cloudflare overwrites it, and the backend's port is open on
+    the host only."""
+    direct = request.client.host if request.client else ""
+    return request.headers.get("cf-connecting-ip") or direct
+
+
+class LoginLimit:
+    """Wrong passwords per address. After FAILURES of them within WINDOW
+    seconds, the address can't log in until the oldest one leaves the
+    window, so nobody can guess a password fast. Only failures count, and a
+    login that works clears its address's."""
+
+    FAILURES = 10
+    WINDOW = 15 * 60.0
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._failed: dict[str, list[float]] = {}
+
+    def blocked(self, address: str) -> bool:
+        return len(self._recent(address)) >= self.FAILURES
+
+    def failed(self, address: str) -> None:
+        self._recent(address).append(self._clock())
+        # Addresses that stopped trying would otherwise stay for good.
+        if len(self._failed) > 10_000:
+            since = self._clock() - self.WINDOW
+            self._failed = {a: times for a, times in self._failed.items() if times and times[-1] > since}
+
+    def succeeded(self, address: str) -> None:
+        self._failed.pop(address, None)
+
+    def _recent(self, address: str) -> list[float]:
+        since = self._clock() - self.WINDOW
+        recent = [t for t in self._failed.get(address, []) if t > since]
+        self._failed[address] = recent
+        return recent
 
 
 def device_auth(config: Config, accounts: Accounts):

@@ -71,6 +71,31 @@ def test_requests_need_a_device(server):
     assert me["user"]["id"] == "me" and me["device"]["kind"] == "web"
 
 
+def test_wrong_passwords_block_their_address(server):
+    def login(password: str, address: str) -> int:
+        body = {"username": "me", "password": password, "device": {"name": "x", "kind": "web"}}
+        return httpx.post(f"{server.base}/api/login", json=body, headers={"CF-Connecting-IP": address}).status_code
+
+    assert [login("nope", "203.0.113.7") for _ in range(10)] == [401] * 10
+    assert login("correct horse", "203.0.113.7") == 429
+    assert login("correct horse", "198.51.100.2") == 200
+
+
+def test_the_login_limit_lets_an_address_in_again():
+    from huvu.auth import LoginLimit
+
+    now = [0.0]
+    limit = LoginLimit(clock=lambda: now[0])
+    for _ in range(LoginLimit.FAILURES):
+        limit.failed("a")
+    assert limit.blocked("a") and not limit.blocked("b")
+    now[0] += LoginLimit.WINDOW + 1
+    assert not limit.blocked("a")
+    limit.failed("a")
+    limit.succeeded("a")
+    assert not limit.blocked("a")
+
+
 def test_chat_streams_events(server):
     with httpx.stream("POST", f"{server.base}/api/chat", json={"ask": "hi"}, headers=server.login()) as res:
         body = "".join(res.iter_text())

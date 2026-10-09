@@ -23,7 +23,7 @@ from starlette.routing import Route
 
 from . import mcp_server, prompts
 from .accounts import AuthError, Device
-from .auth import McpAuth, bearer, device_auth, ingest_auth, mcp_caller, phone_auth
+from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
 from .hearing import HearingError
@@ -103,6 +103,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     device = Depends(device_auth(config, accounts))
     phone = Depends(phone_auth(config, accounts))
     poster = Depends(ingest_auth(config, accounts))
+    login_limit = LoginLimit()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -134,12 +135,17 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     # Devices
 
     @app.post("/api/login")
-    async def login(body: Login) -> JSONResponse:
+    async def login(body: Login, request: Request) -> JSONResponse:
         """A personal device (phone, web) logs in with its user's password."""
+        address = client_address(request)
+        if login_limit.blocked(address):
+            raise HTTPException(429, "too many wrong passwords; try again in a few minutes")
         try:
             new, token = accounts.login(body.username, body.password, body.device.name, body.device.kind)
         except AuthError as err:
+            login_limit.failed(address)
             raise HTTPException(401, str(err)) from err
+        login_limit.succeeded(address)
         return JSONResponse(api_json({"token": token, "device": new.public()}))
 
     @app.post("/api/pair")
