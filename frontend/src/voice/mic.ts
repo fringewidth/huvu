@@ -36,6 +36,14 @@ function close(): void {
     .catch(() => {});
 }
 
+// Why the mic couldn't be opened, in the words the hint under the flower
+// shows.
+export function micTrouble(err: unknown): string {
+  if (!window.isSecureContext) return "the mic needs a secure page (https)";
+  if (err instanceof DOMException && err.name === "NotAllowedError") return "allow the mic to talk to huvu";
+  return "no mic found";
+}
+
 export async function acquireMic(): Promise<Mic> {
   window.clearTimeout(closeTimer);
   closeSoon = false;

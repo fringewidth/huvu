@@ -34,6 +34,9 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   // means huvu is still working: its first sentence isn't ready, or it runs
   // its tools after saying it's on it.
   const [audible, setAudible] = useState(false);
+  // Why the last listen couldn't hear at all (no mic, or not allowed), for
+  // the hint under the flower. Cleared by the next listen.
+  const [micProblem, setMicProblem] = useState<string | null>(null);
   const handsFree = useRef(false);
   const silentRounds = useRef(0);
   // Where the sent utterance's reply stands. "sent" until its turn shows
@@ -54,10 +57,19 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     const n = ++listens.current;
     setTranscript("");
     setHeard(false);
+    setMicProblem(null);
     setPhase("listening");
     transcriber.start({
       hold,
       onSpeech: () => n === listens.current && setHeard(true),
+      // Trying again can't help, so it stops and says why.
+      onFail: (reason) => {
+        if (n !== listens.current) return;
+        setHeard(false);
+        setTranscript("");
+        setMicProblem(reason);
+        setPhase("idle");
+      },
       onEnd: (text) => {
         setHeard(false);
         if (text) {
@@ -138,6 +150,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   }
 
   function exit(): void {
+    setMicProblem(null);
     handsFree.current = false;
     awaiting.current = "none";
     listens.current++;
@@ -231,5 +244,5 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     [transcriber],
   );
 
-  return { phase, audible, transcript, heard, level, begin, hold, interrupt, dropHold, release, exit };
+  return { phase, audible, micProblem, transcript, heard, level, begin, hold, interrupt, dropHold, release, exit };
 }
