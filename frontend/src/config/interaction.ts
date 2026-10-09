@@ -54,12 +54,8 @@ interface Profile {
   // mode. A phone screen has no room for it next to the flower and the
   // transcript, and huvu says the answer anyway.
   voiceAnswerText?: boolean;
-  // Whether the garden paints behind the stage. A phone's GPU can't keep
-  // up with it: on a mid-range Android phone every tap and keystroke lagged while
-  // it painted, so phones go without (decided 2026-10-09).
-  garden: boolean;
   // Phone screens are dense enough that 1.5x looks like 2x, at almost half
-  // the pixels for the garden to wash every frame.
+  // the pixels for the garden to paint.
   maxPixelDensity: number;
 }
 
@@ -85,7 +81,6 @@ const PROFILES: Record<Target, Profile> = {
     ],
     flowerSize: 168,
     voiceAnswerText: true,
-    garden: true,
     maxPixelDensity: 2,
   },
   phone: {
@@ -108,7 +103,6 @@ const PROFILES: Record<Target, Profile> = {
     ],
     flowerSize: 168,
     voiceAnswerText: false,
-    garden: false,
     maxPixelDensity: 1.5,
   },
   // Display only. It asks nothing, so the voice and text fields are left
@@ -159,7 +153,6 @@ const PROFILES: Record<Target, Profile> = {
                 ];
       })(),
     ],
-    garden: true,
     maxPixelDensity: 2,
   },
 };
