@@ -29,6 +29,7 @@ huvu's tools are deferred, and you know them: call them with tool_call by full n
 - Their triggers: data_sql over huvu_triggers; triggers_pause {"id": "...", "reason": "..."}.
 
 How you answer:
+- To show an image, write MEDIA:<path> on its own line where it belongs in your answer. The path is an image file's absolute path on this machine, such as a screenshot your browser saved, or an https URL; quote a path with spaces. ui_show_image does the same with a caption, and takes a source's ref too.
 - When an ask needs tools, write one short line first, in your own words, saying you're on it, then call the tools. End with the outcome in a line or two, without repeating that first line.
 - Back what you say about the house or a person with what a tool returned this turn, never with memory. After an action, read the state back before you say it worked.
 - When a search comes back empty, try other words before you say a thing doesn't exist. When something fails, say so; never invent a result.
@@ -87,7 +88,7 @@ TOOLS: dict[str, str] = {
     'people_release': "Forgets who is at this shared device, such as when they say they're leaving.",
     'ui_choices': 'Shows the owner buttons under your answer. Picking one sends its text as their next message.',
     'ui_show_feed': 'Shows a live feed in your answer. `feed` is a feed id from GET /api/feeds; `caption` says what it shows right now.',
-    'ui_show_image': "Shows an image in your answer. `ref` is a ref from a source, such as an event's snapshot.",
+    'ui_show_image': "Shows an image in your answer, after what you have written so far. `src` is an image file's absolute path on this machine, an https URL, or a ref from a source, such as an event's snapshot. `caption` goes under it.",
 }
 
 # Argument descriptions the tool box adds.
@@ -473,7 +474,7 @@ TEXT: dict[str, str] = {
     'ha.table.setup.column.ha_version': "Home Assistant's version",
     'ha.table.setup.column.problems': 'What is wrong: scripts left out, missing descriptions, unknown labels',
     'huvu.action.activate_trigger': 'Turns on a trigger that wakes the advanced model, once its person says yes.',
-    'huvu.action.notify': "Sends a notification to the phones of the person you're helping, or to the members' phones when you serve a shared device. `image` is a ref from a source, such as a doorbell snapshot.",
+    'huvu.action.notify': "Sends a notification to the phones of the person you're helping, or to the members' phones when you serve a shared device. `image` is an image file's absolute path on this machine, an https URL, or a ref from a source, such as a doorbell snapshot.",
     'huvu.action.remove_alias': 'Removes an alias.',
     'huvu.action.set_alias': 'Points an alias (what the owner calls a thing) at what it is, such as an HA entity id or a waypoint name.',
     'huvu.action.set_mode': 'Sets the family mode.',
@@ -502,7 +503,7 @@ TEXT: dict[str, str] = {
     'huvu.table.modes': 'Every change of the family mode.',
     'huvu.table.modes.column.mode': 'The mode it was set to',
     'huvu.table.notifications': "Every notification huvu sent to a person, or to a group's members when user_id is NULL.",
-    'huvu.table.notifications.column.image': 'The ref of its image, if any',
+    'huvu.table.notifications.column.image': 'Its image, if any: a path, a URL or a ref',
     'huvu.table.notifications.column.text': 'What it said',
     'huvu.table.notifications.column.urgency': 'low, normal or high',
     'huvu.table.triggers': 'Every live trigger: active, paused, waiting for its person or for their yes. A trigger that ended is in huvu_events.',

@@ -10,7 +10,7 @@ import type { Feed } from "./feeds";
 // `after` is how much of the answer huvu had said when the part came, so a
 // note sits between the words around it. Parts without one go first.
 export type RichPart =
-  | { kind: "image"; src: string; after?: number }
+  | { kind: "image"; src: string; caption?: string; after?: number }
   | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown; after?: number };
 export type ToolPart = Extract<RichPart, { kind: "tool" }>;
 export type ImagePart = Extract<RichPart, { kind: "image" }>;

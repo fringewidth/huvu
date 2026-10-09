@@ -258,7 +258,15 @@ function HeroParts({ here, onChoose }: { here: RichPart[]; onChoose: (text: stri
       {images.length > 0 && (
         <div className={`grid max-w-[36rem] gap-3 ${images.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
           {images.map((img, i) => (
-            <img key={i} src={img.src} alt="" className="aspect-[4/3] w-full border border-ivory/15 object-cover" />
+            <figure key={i} className="flex min-w-0 flex-col gap-2">
+              {/* One image shows whole, since a screenshot or a chart cropped loses its point. Several are tiles. */}
+              <img
+                src={img.src}
+                alt={img.caption ?? ""}
+                className={`w-full border border-ivory/15 ${images.length === 1 ? "max-h-[60vh] object-contain" : "aspect-[4/3] object-cover"}`}
+              />
+              {img.caption && <figcaption className="font-display text-sm text-ivory/50">{img.caption}</figcaption>}
+            </figure>
           ))}
         </div>
       )}
