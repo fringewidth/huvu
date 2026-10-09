@@ -31,6 +31,10 @@ ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
     HUVU_WEB_DIR=/opt/huvu/web \
     UV_CACHE_DIR=/tmp/uv-cache
 
+# Hermes's image stopped shipping uv after 2026-10-08, so it comes from
+# Astral's own image, at the version the lock file was written with.
+COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /uvx /usr/local/bin/
+
 WORKDIR /opt/huvu
 COPY --chown=hermes:hermes backend/ backend/
 RUN cd backend && uv sync -q --frozen --no-dev && chown -R hermes:hermes .venv
