@@ -25,6 +25,13 @@ const RING = [0, 72, 144, 216, 288];
 const SWAY = { rotate: [0, -6, 6, 0], scale: [1, 0.97, 1.03, 1] };
 const STILL = { rotate: 0, scale: 1 };
 const swayFor = (seconds: number): Transition => ({ duration: seconds, repeat: Infinity, ease: "easeInOut" });
+// The listening echo: a ring that fades in as it leaves the flower and
+// out as it grows, so it starts and ends unseen and never pops in.
+const ECHO_SECONDS = 2.4;
+const ECHO: Transition = {
+  scale: { duration: ECHO_SECONDS, repeat: Infinity, ease: "easeOut" },
+  opacity: { duration: ECHO_SECONDS, repeat: Infinity, times: [0, 0.15, 1], ease: ["easeOut", "easeIn"] },
+};
 
 // How the petals move in each state. Changing state tweens from wherever
 // the petals are, so a switch never snaps.
@@ -74,8 +81,8 @@ export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label
         <m.span
           className="absolute inset-0 will-change-transform"
           initial={false}
-          animate={state === "listening" ? { scale: [1, 1.8], opacity: [0.4, 0] } : { scale: 1, opacity: 0 }}
-          transition={state === "listening" ? { duration: 2.4, repeat: Infinity, ease: "easeOut" } : { duration: 0.6 }}
+          animate={state === "listening" ? { scale: [1, 1.8], opacity: [0, 0.4, 0] } : { scale: 1, opacity: 0 }}
+          transition={state === "listening" ? ECHO : { duration: 0.6 }}
         >
           <PetalArt inner={false} />
         </m.span>
