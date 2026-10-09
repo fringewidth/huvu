@@ -406,45 +406,38 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 
 ### Devices
 
-| Device | Area | How HA works it (IR, cloud, local) | Real state from | Scripts |
+The home theatre is three units and three lights, all in `packages/home_theatre.yaml`. huvu sees only what is in "Exposed"; the order things happen in, the waits and Alexa's phrases are inside HA. The units, the AC temperature and the room carry `assumed_state` (set with `customize` in the package), since nothing reports back; their helpers start as unknown.
+
+| Device | Area | How HA works it | Exposed | Internal |
 |---|---|---|---|---|
-| Projector (Optoma HD300) | Home Theatre | IR, 18 learned codes, one template button each (`button.projector_*`) | nothing; `sensor.home_theatre` is what the routines last did, unknown until one runs | `home_theatre_start`, `home_theatre_stop` |
-| Amplifier | Home Theatre | IR, 4 learned codes (`button.amplifier_*`) | nothing | `home_theatre_start`, `home_theatre_stop`, `home_theatre_volume` |
-| AC | Home Theatre | Alexa only, by text command through the Echo Dot "Living Room" | nothing; `sensor.home_theatre_ac` is what huvu last asked, unknown until it asks | `home_theatre_ac` |
-| Fire TV Stick (Mohun's) | Home Theatre | Alexa, by text command | nothing | `home_theatre_play` |
-| Main Switchboard (Tuya 4-gang) | Home Theatre | cloud (Tuya). Gangs 1 to 3 are the strip lights, night sky and focus lights, shown as lights (`switch_as_x`): `light.home_theatre_strip_lights`, `_night_sky`, `_focus_lights`. Gang 4 is the AV mains, `switch.home_theatre_av_mains`, hidden | the switches | `home_theatre_start` |
-| AC Switch (Tuya 2-gang) | Home Theatre | cloud (Tuya). Gang 1 is the AC's mains, `switch.home_theatre_ac_mains`, hidden. Gang 2 is a dummy, hidden | the switches | `home_theatre_ac` |
-| AV power (`switch.home_theatre_av`) | Home Theatre | template switch over the AV mains. On: mains, 10 s, amplifier and projector power. Off: projector power, 5 s, projector power, amplifier power, then 90 s of cooling (`sensor.home_theatre` says cooling) before the mains. Nothing else may cut the AV mains. Both are started, not waited for, and on waits out a cool-down | the mains switch | `home_theatre_av_on`, `home_theatre_av_off` (not exposed) |
-| AC power (`switch.home_theatre_ac`) | Home Theatre | template switch over the AC mains. On: mains, 10 s, then Alexa. Off: Alexa first, 60 s for the indoor unit to finish, then mains. Nothing else may cut the AC mains | the mains switch | `home_theatre_ac` |
-| Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | none |
+| The room (`switch.home_theatre`) | Home Theatre | On: AV on, the three lights, a wait until 90 s after the AV mains came on (the Echo Dot boots), AC on at 24, amplifier volume up 40 steps. Off: the AC off through Alexa (powering the Echo and waiting a minute if the AV mains was off), AV off with its cool-down, then the lights | the switch | `script.home_theatre_on`, `script.home_theatre_off`, `input_select.home_theatre_power` |
+| AV (`switch.home_theatre_av`): the projector (Optoma HD300) and the amplifier | Home Theatre | Tuya AV mains (Main Switchboard gang 4) and the Broadlink's learned codes. On: mains, 10 s, amplifier and projector power. Off: projector power, 5 s, projector power, 2 minutes of cooling (the manual says about 60 s), amplifier power, mains. On waits out a cool-down. The AV mains also powers the Echo Dot | the switch, and one button per learned code (`button.projector_*`, 18; `button.amplifier_*`, 4) | `script.home_theatre_av_on`, `script.home_theatre_av_off`, `input_select.home_theatre_av` (cooling while the projector cools), `switch.home_theatre_av_mains` (hidden) |
+| AC (`switch.home_theatre_ac`, `number.home_theatre_ac_temperature`): a Blue Star, "AC667C" in Alexa | Home Theatre | Fixed Alexa phrases ("turn on AC667C", "set AC667C to 24 degrees", "turn off AC667C") on the Echo Dot "Living Room". The Echo needs the AV mains on for a minute: until then the call powers it and fails with when to try again. On switches the AC mains (AC Switch gang 1) first; a temperature turns the AC on first; off asks Alexa, and the mains goes a minute later unless it was turned back on | the switch and the number | `script.home_theatre_ac`, `script.home_theatre_ac_mains_off`, `input_select.home_theatre_ac_power`, `input_text.home_theatre_ac_temperature`, `switch.home_theatre_ac_mains` (hidden) |
+| Lights | Home Theatre | Tuya Main Switchboard gangs 1 to 3, shown as lights (`switch_as_x`) | `light.home_theatre_strip_lights`, `_night_sky`, `_focus_lights` | the three switches (hidden) |
+| Fire TV Stick (Mohun's) | Home Theatre | Alexa, by text command | `script.home_theatre_play` | |
+| AC Switch gang 2 | Home Theatre | a dummy | no | `switch.home_theatre_ac_board_switch_2` (hidden) |
+| Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | |
 
 ### Scripts exposed to huvu
 
-All in `packages/home_theatre.yaml`.
-
 | Script | Label | Fields | Checked on |
 |---|---|---|---|
-| `home_theatre_start` | huvu_silent | none (AV power on, then all three lights) | not yet run |
-| `home_theatre_stop` | huvu_silent | none (AV power off, the safe way; lights stay) | not yet run |
-| `home_theatre_volume` | huvu_silent | direction (up, down), steps (1 to 20) | not yet run |
-| `home_theatre_ac` | huvu_notify | power (on, off), temperature (16 to 30), change (-10 to 10 degrees, which Alexa applies to the real setting). A temperature or change with the mains off fails | not yet run |
+| `home_theatre_volume` | huvu_silent | direction (up, down), steps (1 to 40) | not yet run |
 | `home_theatre_play` | huvu_silent | title, app (Netflix, Prime Video, YouTube, JioHotstar) | not yet run |
 
 ### Sensors exposed for the dream
 
-| Entity | Area | What |
-|---|---|---|
-| `sensor.home_theatre` | Home Theatre | on or off as the start and stop routines last left it; unknown until one runs (`input_select.home_theatre_power`) |
-| `sensor.home_theatre_ac` | Home Theatre | on or off, and the temperature, as last asked of Alexa; unknown where huvu never asked, or stepped from an unknown setting (`input_select.home_theatre_ac_power`, `input_text.home_theatre_ac_temperature`) |
+None of their own: the units' switches and the AC temperature carry the state.
 
 ### Open problems
 
-1. The AC's name in the Alexa app is assumed to be "AC" (`ac_name` in `home_theatre_ac`), and whether Alexa takes "increase the AC temperature by 2 degrees" is untested.
-1. A helper that holds state nobody can read (the AC, the projector's power) starts as unknown, never as a guessed value. Keep it that way for every device added like these.
-1. The projector turns off with two presses of power, 5 seconds apart (the owner, 2026-10-10), then its fans run for about 60 seconds before standby (Optoma's HD300X manual, "Powering Off the Projector"); `home_theatre_av_off` waits 90 seconds before the mains.
-1. The waits for the gear and the AC to wake (10 s) and for the AC to stop before its mains goes (60 s) are guesses, not measured.
+1. Model-facing text stays out of the package: entities get names, areas and aliases only, and scripts a one-line description of what they do. How a unit works, its waits and what to say about uncertainty belong in HA and in huvu's generic guide (`assumed`), never in a description.
+1. A helper that holds state nobody can read starts as unknown, never as a guessed value, and the template switches show unknown with it.
+1. On 2026-10-10 the AC's mains switched off 3 s after Alexa's "turn off", with no HA context: something on Alexa's side (a routine, a group, or the AC's own skill) works the Tuya switch too. Not yet explained.
+1. No Blue Star integration exists for HA. The Broadlink could learn the AC remote's codes (cool at 16 to 30, and off) and drop Alexa from the AC entirely.
+1. The 10 s wait for the gear and the AC to wake, the 90 s for the Echo to boot and the AC's minute before its mains goes are guesses, not measured.
 1. The theatre has no fans yet.
-1. Renaming an entity's id drops its Assist exposure. Expose it again after every rename, and check `ha_setup`.
+1. Renaming an entity's id drops its Assist exposure, and `customize` applies to an entity only when it is added: reload templates after `reload_core_config`. Expose again after every rename, and check `ha_setup`.
 1. The Alexa routines (movie time, pause movie, movie lights out, play movie, home theatre off, daily vacuum, text) are buttons in HA but not exposed: what each does isn't written down yet.
 1. The Broadlink's Wi-Fi link is weak (70 to 90 ms pings, timeouts): HA lost it once on 2026-10-09 and came back on a reload.
 1. `configuration.yaml` has a `xiaomi_cloud_map_extractor` camera whose integration isn't installed, with a cloud password in plain text.

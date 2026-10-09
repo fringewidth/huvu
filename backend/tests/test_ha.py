@@ -223,13 +223,13 @@ async def test_an_exposed_light_is_an_action_of_its_own(house):
     actions = {a.name: a for a in house.kernel.registry.spec("ha").actions}
     light = actions["light_hall"]
     assert (light.autonomy, light.requires_human) == ("silent", False)
-    assert light.description == "Hall light (light.hall). Turns the light on or off, and sets its brightness and color. Area: Hall. Also called: corridor light."
+    assert light.description == "Hall light (light.hall). Turns the light on or off, and sets its brightness and color when its arguments offer them. Area: Hall. Also called: corridor light."
     # No color modes known: on and brightness only.
     assert light.input_schema["required"] == ["on"]
     assert set(light.input_schema["properties"]) == {"on", "brightness_pct"}
     ac = actions["climate_bedroom_ac"]
     assert ac.autonomy == "notify"
-    assert ac.description.endswith("HA only assumes its state (infrared): say what you sent, not what the device did.")
+    assert ac.description.endswith("Nothing reports its state back, so HA only assumes it: say what you sent, not what the device did.")
     assert await rows(house.kernel, "SELECT entity_id, action, call FROM ha_entities WHERE domain IN ('light', 'sensor') ORDER BY entity_id") == [
         ["light.hall", "ha_light_hall", "`ha_light_hall(on: boolean, brightness_pct?: integer)`"],
         ["sensor.bedroom_temperature", None, None],
