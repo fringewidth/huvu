@@ -408,9 +408,9 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 
 | Device | Area | How HA works it (IR, cloud, local) | Real state from | Scripts |
 |---|---|---|---|---|
-| Projector | Home Theatre | IR, 18 learned codes, one template button each (`button.projector_*`) | nothing; `sensor.home_theatre` is what the routines last did | `home_theatre_start`, `home_theatre_stop` |
+| Projector | Home Theatre | IR, 18 learned codes, one template button each (`button.projector_*`) | nothing; `sensor.home_theatre` is what the routines last did, unknown until one runs | `home_theatre_start`, `home_theatre_stop` |
 | Amplifier | Home Theatre | IR, 4 learned codes (`button.amplifier_*`) | nothing | `home_theatre_start`, `home_theatre_stop`, `home_theatre_volume` |
-| AC | Home Theatre | Alexa only, by text command through the Echo Dot "Living Room" | nothing; `sensor.home_theatre_ac` is what huvu last asked | `home_theatre_ac` |
+| AC | Home Theatre | Alexa only, by text command through the Echo Dot "Living Room" | nothing; `sensor.home_theatre_ac` is what huvu last asked, unknown until it asks | `home_theatre_ac` |
 | Fire TV Stick (Dad's) | Home Theatre | Alexa, by text command | nothing | `home_theatre_play` |
 | Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | none |
 
@@ -423,19 +423,20 @@ All in `packages/home_theatre.yaml`.
 | `home_theatre_start` | huvu_ask | none | not yet run |
 | `home_theatre_stop` | huvu_ask | none | not yet run |
 | `home_theatre_volume` | huvu_silent | direction (up, down), steps (1 to 20) | not yet run |
-| `home_theatre_ac` | huvu_notify | power (on, off), temperature (16 to 30) | not yet run |
+| `home_theatre_ac` | huvu_notify | power (on, off), temperature (16 to 30), change (-10 to 10 degrees, which Alexa applies to the real setting) | not yet run |
 | `home_theatre_play` | huvu_silent | title, app (Netflix, Prime Video, YouTube, JioHotstar) | not yet run |
 
 ### Sensors exposed for the dream
 
 | Entity | Area | What |
 |---|---|---|
-| `sensor.home_theatre` | Home Theatre | on while the start routine has the room running |
-| `sensor.home_theatre_ac` | Home Theatre | on or off, and the temperature, as last asked of Alexa |
+| `sensor.home_theatre` | Home Theatre | on or off as the start and stop routines last left it; unknown until one runs (`input_select.home_theatre_power`) |
+| `sensor.home_theatre_ac` | Home Theatre | on or off, and the temperature, as last asked of Alexa; unknown where huvu never asked, or stepped from an unknown setting (`input_select.home_theatre_ac_power`, `input_text.home_theatre_ac_temperature`) |
 
 ### Open problems
 
-1. The AC's name in the Alexa app is assumed to be "AC" (`ac_name` in `home_theatre_ac`).
+1. The AC's name in the Alexa app is assumed to be "AC" (`ac_name` in `home_theatre_ac`), and whether Alexa takes "increase the AC temperature by 2 degrees" is untested.
+1. A helper that holds state nobody can read (the AC, the projector's power) starts as unknown, never as a guessed value. Keep it that way for every device added like these.
 1. Whether the projector needs one press of power to turn off, or two, is not known; `home_theatre_stop` sends one.
 1. The Alexa routines (movie time, pause movie, movie lights out, play movie, home theatre off, daily vacuum, text) are buttons in HA but not exposed: what each does isn't written down yet.
 1. The Broadlink's Wi-Fi link is weak (70 to 90 ms pings, timeouts): HA lost it once on 2026-10-09 and came back on a reload.
