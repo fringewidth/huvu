@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from huvu import prompts
 from huvu.config import Config
 from huvu.data import DataError
 from huvu.kernel import Kernel
@@ -229,10 +230,22 @@ async def test_an_exposed_light_is_an_action_of_its_own(house):
     ac = actions["climate_bedroom_ac"]
     assert ac.autonomy == "notify"
     assert ac.description.endswith("HA only assumes its state (infrared): say what you sent, not what the device did.")
-    assert await rows(house.kernel, "SELECT entity_id, action FROM ha_entities WHERE domain IN ('light', 'sensor') ORDER BY entity_id") == [
-        ["light.hall", "ha_light_hall"],
-        ["sensor.bedroom_temperature", None],
+    assert await rows(house.kernel, "SELECT entity_id, action, call FROM ha_entities WHERE domain IN ('light', 'sensor') ORDER BY entity_id") == [
+        ["light.hall", "ha_light_hall", "`ha_light_hall(on: boolean, brightness_pct?: integer)`"],
+        ["sensor.bedroom_temperature", None, None],
     ]
+
+
+async def test_the_skill_lists_scripts_and_counts_the_devices(house):
+    """One action per device would fill the skill, which is in every
+    request: the model finds them in ha_entities instead."""
+    spec = house.kernel.registry.spec("ha")
+    devices = [a for a in spec.actions if not a.listed]
+    text = prompts.skill(spec)
+    assert "light_hall" in {a.name for a in devices}
+    assert "- `ha_light_hall(" not in text
+    assert all(f"ha_{a.name}" in text for a in spec.actions if a.listed)
+    assert f"And {len(devices)} more, one per device" in text
 
 
 async def test_working_an_entity_calls_its_service_and_records_who(house, ha):

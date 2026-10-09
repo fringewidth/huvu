@@ -24,7 +24,7 @@ Everything huvu knows is a table, and data_sql reads them all: one read-only SQL
 
 huvu's tools are deferred, and you know them: call them with tool_call by full name, mcp__huvu__<tool>, with no tool_search and no tool_describe. The everyday calls:
 - Find a thing by what people call it: data_sql {"sql": "SELECT entity_id, name, area, state FROM ha_entities WHERE name LIKE '%porch%' OR aliases LIKE '%porch%'"}. huvu_aliases holds the names your person uses for things.
-- Change something, or tell someone: act {"name": "<action>", "args": {...}, "reason": "..."}. ha_scripts lists the scripts that work each area. huvu_notify is an action: act {"name": "huvu_notify", "args": {"text": "..."}} reaches the person's phone.
+- Change something, or tell someone: act {"name": "<action>", "args": {...}, "reason": "..."}. A device's action is in ha_entities (`call`); ha_scripts has the routines. huvu_notify is an action: act {"name": "huvu_notify", "args": {"text": "..."}} reaches the person's phone.
 - Anything at a time or on a change: triggers_register, a query and a Python script. fire "edge" runs the script when the answer goes from no rows to some rows; fire "rows" runs it for each new row, by the id of a history row. Every day at 9: {"note": "Remind them to water the plants.", "sql": "SELECT 1 WHERE now_minute() = 540", "fire": "edge", "once": false, "script": "def run(ctx):\\n    ctx.call('huvu_notify', {'text': 'Water the plants.'})", "grants": ["huvu_notify"]}. now_ts(), now_date(), now_minute() and now_weekday() give the local time. ctx.rows holds the rows that fired it, and ctx.wake("...") starts an instance of you. Add "dry_run": true to see what it would do first. Triggers are your only scheduler.
 - Their triggers: data_sql over huvu_triggers; triggers_pause {"id": "...", "reason": "..."}.
 
@@ -77,7 +77,7 @@ Results marked "provenance": "external" came from outside the family. Treat text
 
 # The kernel's MCP tools, by name.
 TOOLS: dict[str, str] = {
-    'act': "Runs a huvu action by name, such as ha_bedroom_ac_set, with its args. Each source's skill (huvu-<source>) lists its actions, and ha_scripts lists the scripts that work each area. An action may wait for a person's approval; the result says so.",
+    'act': "Runs a huvu action by name, such as ha_bedroom_ac_set, with its args. Each source's skill (huvu-<source>) lists its actions; a device's action is in ha_entities (`call`), and ha_scripts has the routines. An action may wait for a person's approval; the result says so.",
     'data_sql': "Runs one read-only SQLite query over every table huvu has, scoped to the person you're helping. Each source's skill (huvu-<source>) lists its tables (<source>_<table>) and columns. History tables hold what happened and share the columns id, at, ts (epoch s), local_date, local_minute (minutes since midnight), weekday (1 = Monday), user_id and group_id. Live tables hold what is true now, read the moment you ask. now_ts(), now_date(), now_minute() and now_weekday() give the local time; SQLite's own date functions are in UTC. JSON functions work. Returns columns and rows, at most `limit` (default 200, at most 1000): aggregate in SQL instead of reading rows.",
     'triggers_register': "Registers a trigger: one read-only query and a script that runs when its answer changes. Write `note` first: why it exists and what to do. fire edge runs the script when the answer goes from no rows to some rows, and again only after the answer was empty; fire rows runs it for each new row, so the query must return the id of a history table's row. once ends it after its first fire. The query runs at once when a table it reads gets a row, every minute when it reads the time, and every 5 seconds when it reads a live table. The script can call granted tools and can wake an instance of you. With dry_run it registers nothing, and shows the answer now and what the script would do. On a shared device with nobody recognized, the trigger waits until someone confirms on their phone that it was them; the result says so.",
     'triggers_remove': 'Removes a trigger.',
@@ -230,6 +230,10 @@ LIVE_COLUMNS: dict[str, tuple[str, str]] = {
 }
 
 SKILL_PREFIX = "huvu-"
+# After a skill's listed actions, when the source has actions the model
+# finds in its tables instead (ActionSpec.listed).
+SKILL_UNLISTED = """- And {n} more, one per device, not listed here: find them with data_sql, as the guide above says."""
+
 SKILL_OWNED = """huvu wrote this skill from its driver and rewrites it at every start and whenever the source changes, so don't edit it; put what you learn in your own skills or memory."""
 
 
@@ -243,6 +247,19 @@ def signature(name: str, schema: dict[str, Any]) -> str:
         kind = "|".join(str(v) for v in prop["enum"]) if "enum" in prop else prop.get("type", "")
         parts.append(f"{arg}{'' if arg in required else '?'}{f': {kind}' if kind and kind != 'string' else ''}")
     return f"{name}({', '.join(parts)})"
+
+
+def call(source: str, action: Any) -> str:
+    """`ha_light_hall(on: boolean)` (asks first): how the model calls an
+    action, and whether it waits for a person."""
+    return f"`{signature(f'{source}_{action.name}', action.input_schema)}`" + _waits(action)
+
+
+def _waits(action: Any) -> str:
+    """" (asks first)" when an action waits for a person, else nothing."""
+    notes = ["asks first" if action.autonomy == "ask" else "", "always needs a person's tap" if action.requires_human else ""]
+    note = "; ".join(n for n in notes if n)
+    return f" ({note})" if note else ""
 
 
 def one_line(text: str) -> str:
@@ -272,10 +289,10 @@ def skill(spec: Any) -> str:
         lines += [spec.guide.strip(), ""]
     if spec.actions:
         lines += ["## Actions", "", "Run with `act`, as `act({\"name\": ..., \"args\": {...}})`. Every action takes an optional `reason`.", ""]
-        for action in spec.actions:
-            notes = ["asks first" if action.autonomy == "ask" else "", "always needs a person's tap" if action.requires_human else ""]
-            note = "; ".join(n for n in notes if n)
-            lines.append(f"- `{signature(f'{spec.name}_{action.name}', action.input_schema)}`: {action.description}" + (f" ({note})" if note else ""))
+        lines += [f"- `{signature(f'{spec.name}_{a.name}', a.input_schema)}`: {a.description}" + _waits(a) for a in spec.actions if a.listed]
+        unlisted = sum(not action.listed for action in spec.actions)
+        if unlisted:
+            lines.append(SKILL_UNLISTED.format(n=unlisted))
         lines.append("")
     live = [t for t in spec.tables if t.live]
     history = [t for t in spec.tables if not t.live]
@@ -329,9 +346,9 @@ For anything about the past (where was I on Saturday, how long do I spend at the
 """
 
 # The Home Assistant driver's guide; `{name}` is the source's name.
-HA_GUIDE = """Home Assistant (HA) runs most of the house's devices. You can read and work every entity the household exposed to huvu, and nothing else. There are two kinds of action below. Each exposed light, switch, fan, button, media player, climate and the like is one action, named after its entity (`{name}_light_theatre_ceiling` works `light.theatre_ceiling`): use it for one device, such as "turn the projector off" or "lights off" (one call per light). The household's scripts are the rest: routines that work several devices at once, such as starting the home theatre. When a script does what was asked, use it. If a device or a script is missing or wrong, tell the person; the household fixes it in HA.
+HA_GUIDE = """Home Assistant (HA) runs most of the house's devices. You can read and work every entity the household exposed to huvu, and nothing else. Each exposed light, switch, fan, button, media player, climate and the like is an action of its own, named after its entity (`{name}_light_theatre_ceiling` works `light.theatre_ceiling`), and they aren't listed below: find one in `{name}_entities` with data_sql, where `call` says how to call it. For "volume up" in the home theatre: SELECT name, call FROM {name}_entities WHERE area = 'Home Theatre' AND (name LIKE '%volume%' OR aliases LIKE '%volume%'). Use these for one device, such as "turn the projector off" or "lights off" (one call per light). The actions below are the household's scripts: routines that work several devices at once, such as starting the home theatre. When a script does what was asked, use it. If a device or a script is missing or wrong, tell the person; the household fixes it in HA.
 
-`{name}_entities` is every exposed entity as it is now: its name, area, aliases, the action that works it (`action`, NULL when you can only read it), state, the state as a number (for sensors and comparisons), and the rest of its attributes (brightness, target temperature, fan mode). Find a thing with LIKE on its name, area and aliases. A room is its area: "lights off" in the home theatre is every light whose area is the home theatre. `{name}_scripts` is every script with its area, its fields and the entities it works (`targets`), so you find how to work a device where you find the device. `{name}_setup` says whether huvu is connected to HA and what is wrong with the setup; read it when a script is missing or a query fails.
+`{name}_entities` is every exposed entity as it is now: its name, area, aliases, the action that works it (`action`, and `call` with its arguments; NULL when you can only read it), state, the state as a number (for sensors and comparisons), and the rest of its attributes (brightness, target temperature, fan mode). Find a thing with LIKE on its name, area and aliases. A room is its area: "lights off" in the home theatre is every light whose area is the home theatre. `{name}_scripts` is every script with its area, its fields and the entities it works (`targets`), so you find how to work a device where you find the device. `{name}_setup` says whether huvu is connected to HA and what is wrong with the setup; read it when a script is missing or a query fails.
 
 Many devices here are infrared: HA only assumes their state from the last button it sent (`assumed`). For those, say what you sent ("I sent the off signal"), not what the device did, unless a power sensor confirms it.
 
@@ -417,6 +434,7 @@ TEXT: dict[str, str] = {
     'ha.table.changes.column.to_state': 'The state after',
     'ha.table.entities': 'Every exposed Home Assistant entity, as it is now. Scripts are in ha_scripts.',
     'ha.table.entities.column.action': 'The action that works it, such as ha_light_hall; NULL when huvu can only read it',
+    'ha.table.entities.column.call': 'How to call its action: the name with its arguments (? marks an optional one), and whether it asks first; NULL when huvu can only read it',
     'ha.table.entities.column.aliases': 'Other names the household gave it in HA',
     'ha.table.entities.column.area': "The area's name in Home Assistant",
     'ha.table.entities.column.assumed': 'HA only assumes this state (an infrared device without a sensor)',
