@@ -398,7 +398,7 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 |---|---|
 | HA version | 2026.7.2, in Docker on the Windows host (container `homeassistant`), at `http://host.docker.internal:8123` for huvu and `https://ha.hrishik.me` through the tunnel |
 | Config | `configuration.yaml` loads `packages/` (one file per room or job) and trusts the Docker networks as proxies (`http:`), both added 2026-10-09 |
-| Integrations used | Broadlink (RM4 Pro "Broadlink (HT)", IR), Alexa Devices (Dad's Amazon account: Echo devices, the Fire TV, Alexa routines as buttons, `alexa_devices.send_text_command`), Xiaomi Miot (vacuum). Tuya (light switches) is planned |
+| Integrations used | Broadlink (RM4 Pro "Broadlink (HT)", IR), Alexa Devices (Dad's Amazon account: Echo devices, the Fire TV, Alexa routines as buttons, `alexa_devices.send_text_command`), Xiaomi Miot (vacuum), Tuya (HA's own, linked to the Smart Life account by QR on 2026-10-10: the theatre's switchboards; the front door lock shows as unsupported, with no entities) |
 | huvu's HA user | `huvu`, id `4a96ccac5e3a4c31a7cc1a0aa7ca63b2`, administrator, local only; its long-lived token is `HA_TOKEN` in huvu's env file on the volume |
 | Family HA users (id, person) | `45c09fc9fc484f049ae31dced034cb82`, hrishik (the owner) |
 | Labels | `huvu_silent`, `huvu_notify`, `huvu_ask`, `huvu_human` |
@@ -412,6 +412,10 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 | Amplifier | Home Theatre | IR, 4 learned codes (`button.amplifier_*`) | nothing | `home_theatre_start`, `home_theatre_stop`, `home_theatre_volume` |
 | AC | Home Theatre | Alexa only, by text command through the Echo Dot "Living Room" | nothing; `sensor.home_theatre_ac` is what huvu last asked, unknown until it asks | `home_theatre_ac` |
 | Fire TV Stick (Dad's) | Home Theatre | Alexa, by text command | nothing | `home_theatre_play` |
+| Main Switchboard (Tuya 4-gang) | Home Theatre | cloud (Tuya). Gangs 1 to 3 are the strip lights, night sky and focus lights, shown as lights (`switch_as_x`): `light.home_theatre_strip_lights`, `_night_sky`, `_focus_lights`. Gang 4 is the AV mains, `switch.home_theatre_av_mains`, hidden | the switches | `home_theatre_start` |
+| AC Switch (Tuya 2-gang) | Home Theatre | cloud (Tuya). Gang 1 is the AC's mains, `switch.home_theatre_ac_mains`, hidden. Gang 2 is unnamed and unexposed | the switches | `home_theatre_ac` |
+| AV power (`switch.home_theatre_av`) | Home Theatre | template switch over the AV mains. On: mains, 10 s, amplifier and projector power. Off: projector power, 5 s, projector power, amplifier power, then mains. Nothing else may cut the AV mains | the mains switch | `home_theatre_av_on`, `home_theatre_av_off` (not exposed) |
+| AC power (`switch.home_theatre_ac`) | Home Theatre | template switch over the AC mains. On: mains, 10 s, then Alexa. Off: Alexa first, 15 s, then mains. Nothing else may cut the AC mains | the mains switch | `home_theatre_ac` |
 | Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | none |
 
 ### Scripts exposed to huvu
@@ -420,10 +424,10 @@ All in `packages/home_theatre.yaml`.
 
 | Script | Label | Fields | Checked on |
 |---|---|---|---|
-| `home_theatre_start` | huvu_ask | none | not yet run |
-| `home_theatre_stop` | huvu_ask | none | not yet run |
+| `home_theatre_start` | huvu_silent | none (AV power on, then all three lights) | not yet run |
+| `home_theatre_stop` | huvu_silent | none (AV power off, the safe way; lights stay) | not yet run |
 | `home_theatre_volume` | huvu_silent | direction (up, down), steps (1 to 20) | not yet run |
-| `home_theatre_ac` | huvu_notify | power (on, off), temperature (16 to 30), change (-10 to 10 degrees, which Alexa applies to the real setting) | not yet run |
+| `home_theatre_ac` | huvu_notify | power (on, off), temperature (16 to 30), change (-10 to 10 degrees, which Alexa applies to the real setting). A temperature or change with the mains off fails | not yet run |
 | `home_theatre_play` | huvu_silent | title, app (Netflix, Prime Video, YouTube, JioHotstar) | not yet run |
 
 ### Sensors exposed for the dream
@@ -437,7 +441,10 @@ All in `packages/home_theatre.yaml`.
 
 1. The AC's name in the Alexa app is assumed to be "AC" (`ac_name` in `home_theatre_ac`), and whether Alexa takes "increase the AC temperature by 2 degrees" is untested.
 1. A helper that holds state nobody can read (the AC, the projector's power) starts as unknown, never as a guessed value. Keep it that way for every device added like these.
-1. Whether the projector needs one press of power to turn off, or two, is not known; `home_theatre_stop` sends one.
+1. The projector turns off with two presses of power, 5 seconds apart (the owner, 2026-10-10). Whether it needs to cool before its mains is cut is not known; `home_theatre_av_off` cuts it right after the amplifier.
+1. The waits for the gear and the AC to wake (10 s) and for the AC to stop before its mains goes (15 s) are guesses, not measured.
+1. Where the theatre's fans are, and what the AC board's second gang does, is not known.
+1. Renaming an entity's id drops its Assist exposure. Expose it again after every rename, and check `ha_setup`.
 1. The Alexa routines (movie time, pause movie, movie lights out, play movie, home theatre off, daily vacuum, text) are buttons in HA but not exposed: what each does isn't written down yet.
 1. The Broadlink's Wi-Fi link is weak (70 to 90 ms pings, timeouts): HA lost it once on 2026-10-09 and came back on a reload.
 1. `configuration.yaml` has a `xiaomi_cloud_map_extractor` camera whose integration isn't installed, with a cloud password in plain text.
