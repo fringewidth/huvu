@@ -65,14 +65,84 @@ docker compose exec -u hermes huvu /opt/huvu/setup.sh hrishik '<password>' Hrish
 docker compose restart huvu
 ```
 
-Wipe someone there: `docker compose exec -u hermes huvu /opt/huvu/wipe.sh hrishik`
-(it stops nothing for you: stop the backend first with
-`docker compose exec huvu s6-svc -d /run/service/huvu`, and bring it back with
-`s6-svc -u`). Update: bring `D:\huvu` up to date, then
-`docker compose build && docker compose up -d`. Hermes is pinned in the
-`Dockerfile`; moving it is a change of its own.
+From the Mac, everything goes over `ssh laptop "..."`. Its shell is cmd:
+single quotes stay in the arguments, so quote with double quotes. On the
+laptop itself, drop the wrapper.
 
-Over `ssh laptop`, the shell is cmd: single quotes stay in the arguments,
-so quote with double quotes or none. Docker can't reach Windows's
-credential store over SSH either, so `docker compose build` fails to look
-up a base image it doesn't have: `docker pull` it first.
+Deploy what's on GitHub (push first; the laptop pulls with a read-only
+deploy key, `C:\Users\Hrishik\.ssh\huvu_deploy`):
+
+```sh
+ssh laptop "cd /d D:\huvu && git pull --ff-only origin main"
+ssh laptop "cd /d D:\huvu && docker compose build"
+ssh laptop "cd /d D:\huvu && docker compose up -d"
+ssh laptop "docker image prune -f"       # the last build's image, about 3 GB
+```
+
+Asks fail for about 65 seconds after a start, until the backend and then
+Hermes are up. Docker can't reach Windows's credential store over SSH, so
+a build that names a base image the laptop doesn't have fails with "A
+specified logon session does not exist": `docker pull` it first (the
+`FROM` lines in the `Dockerfile`). The prune removes only untagged images
+no container uses; immich's untagged ones are in use.
+
+Is it up:
+
+```sh
+curl -s https://huvu.hrishik.me/health
+ssh laptop "docker logs --tail 50 huvu-huvu-1"
+ssh laptop "docker exec huvu-huvu-1 curl -s http://127.0.0.1:8642/health"   # Hermes's API server
+```
+
+Restart everything, or stop and start the backend alone (a restart also
+clears the login limit):
+
+```sh
+ssh laptop "docker restart huvu-huvu-1"
+ssh laptop "docker exec huvu-huvu-1 /command/s6-svc -d /run/service/huvu"
+ssh laptop "docker exec huvu-huvu-1 /command/s6-svc -u /run/service/huvu"
+```
+
+Users. Add with a throwaway password and set the real one at the prompt,
+so it never shows on a command line; the restart lets Hermes load the
+new profile:
+
+```sh
+ssh laptop "docker exec -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huvu user list"
+ssh laptop "docker exec -u hermes -e HOME=/opt/data huvu-huvu-1 /opt/huvu/setup.sh mom TEMPPASS Mom"
+ssh -t laptop "docker exec -it -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huvu user passwd mom"
+ssh laptop "docker restart huvu-huvu-1"
+```
+
+Wipe someone (no name: the home group and Hermes's default profile). It
+refuses while the backend runs:
+
+```sh
+ssh laptop "docker exec huvu-huvu-1 /command/s6-svc -d /run/service/huvu"
+ssh laptop "docker exec -u hermes -e HOME=/opt/data huvu-huvu-1 /opt/huvu/wipe.sh hrishik --yes"
+ssh laptop "docker exec huvu-huvu-1 /command/s6-svc -u /run/service/huvu"
+```
+
+Start huvu's data over (a schema change; Hermes's login and profiles
+stay), then add every user again:
+
+```sh
+ssh laptop "docker exec huvu-huvu-1 /command/s6-svc -d /run/service/huvu"
+ssh laptop "docker exec -u hermes huvu-huvu-1 mv /opt/data/huvu/data /opt/data/huvu/data.old"
+ssh laptop "docker restart huvu-huvu-1"
+```
+
+Log Hermes in to ChatGPT again (asks fail with an auth error):
+
+```sh
+ssh -t laptop "docker exec -it -u hermes -e HOME=/opt/data huvu-huvu-1 hermes auth add openai-codex --type oauth --no-browser"
+```
+
+Hermes is pinned by digest in the `Dockerfile`. To move it, change the
+digest, deploy, and send one ask; "aiohttp not installed" in the
+gateway's log means go back.
+
+Where things are: the Groq key in `D:\huvu\.env`; huvu's own secrets,
+its data, and Hermes's profiles and login in the `huvu_huvu` volume
+(`/opt/data`, huvu's under `/opt/data/huvu`); the tunnel's route on
+immich's tunnel, served by the `immich-cloudflared-1` container.
