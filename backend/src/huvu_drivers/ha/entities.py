@@ -149,7 +149,9 @@ def level(control: Control) -> tuple[Autonomy, bool]:
 
 def action(control: Control) -> ActionSpec:
     autonomy, human = level(control)
-    return ActionSpec(name=control.action_name, description=describe(control), input_schema=control.input_schema, autonomy=autonomy, requires_human=human)
+    # Unlisted: one per device would fill the skill; the model finds them
+    # in ha_entities (`call`).
+    return ActionSpec(name=control.action_name, description=describe(control), input_schema=control.input_schema, autonomy=autonomy, requires_human=human, listed=False)
 
 
 def describe(control: Control) -> str:

@@ -99,6 +99,10 @@ class ActionSpec(Strict):
     requires_human: bool = False
     # How long a pending approval for this action stays answerable.
     approval_ttl: timedelta = timedelta(minutes=10)
+    # False keeps it out of the source's skill, which is in every request:
+    # for one action per device, which the model finds in the source's
+    # tables instead (ha_entities.call).
+    listed: bool = True
 
     @field_validator("name")
     @classmethod
