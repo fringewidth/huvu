@@ -16,7 +16,14 @@
     </style>
 
 
+    <!-- The launch screen: the icon's art on the paper colour, the way the
+         garden starts. Android 12 and later show the art in a circle 192dp
+         across, so splash_icon is the art at 200dp on a 288dp canvas, which
+         keeps the whole wordmark inside it. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
         <item name="android:background">@drawable/splash</item>
     </style>
 </resources>

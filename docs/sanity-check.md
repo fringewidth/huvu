@@ -58,7 +58,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Click the flower. It should move to the middle of the screen, and the text field should go away.
 1. In the browser's site settings, block the mic for huvu, then click the flower. Under it, it should say to allow the mic, and it should not keep trying. Allow the mic again and click the flower. It should listen.
 1. Stay quiet and watch the flower listen for about ten seconds. Each ring it sends out should fade in as it leaves the flower and fade out as it grows, with no ring popping in at full strength.
-1. Say a question with your name and "huvu" in it. The flower should grow while you talk, and no words should appear while you speak. About three seconds after you stop, your words should appear with your name and "huvu" spelled right, fly up, and huvu should answer.
+1. Say a question with your name and "huvu" in it. The flower should grow while you talk, and no words should appear while you speak. About three seconds after you stop, when the mic stops, your words should appear at once, with your name and "huvu" spelled right, fly up, and huvu should answer. On a phone too, there should be no wait between the mic stopping and your words.
 1. Listen for huvu saying its own name. It should say "hoo voo".
 1. Listen to huvu's answer. It should start speaking within a second or two of its first words on screen, and keep speaking without gaps between sentences, while the rest of the answer is still being written.
 1. Ask something by voice that might tempt an emoji, such as "say something cheerful about my morning". The spoken answer, and its words on screen, should have no emojis, no bullet points and no bold text. Switch back to typing and ask the same: emojis and formatting are allowed again.
@@ -86,11 +86,11 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## Approvals (phones only)
 
-1. Ask huvu: "set the house mode to away". A card should appear above the text field. It should say "approve?", what the action does, who asked, and a countdown.
-1. Tap "approve". The card should go away, and the action should run. Ask huvu "what's the house mode?" to check.
-1. Do it again, and tap "deny". The card should go away, and the action should not run.
+1. Ask huvu: "remind me every day at 9pm to drink water, and use the advanced model for it". A card should appear above the text field. It should say "approve?", what the action does, who asked, and a countdown.
+1. Tap "approve". The card should go away, and the reminder should show in the menu under your triggers as watching.
+1. Do it again, and tap "deny". The card should go away, and the reminder should not start. Delete the reminders from the menu afterwards.
 1. Ask from the laptop instead. The card should appear on your phone, not on the laptop.
-1. With the app closed, ask from the laptop. Your phone should show a notification that huvu needs a yes. Tap it. The card should be waiting in the app.
+1. With the app closed, ask from the laptop. Your phone should show a notification that huvu needs a yes. Tap it. The card should be waiting in the app as it opens, within a second. Do the same with the app in the background instead of closed.
 1. Let one card run out without answering. It should go away when the countdown reaches zero.
 
 ## Triggers

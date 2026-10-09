@@ -17,14 +17,20 @@ import * as waiting from "./waiting";
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 let run: AbortController | null = null;
+// The stream being read now, so coming back to the front can drop it.
+let attempt: AbortController | null = null;
 // Cuts a wait between tries short: the app came back to the front.
 let wake: (() => void) | null = null;
+// The next try comes at once, with the backoff started over.
+let again = false;
 
 export function startPush(): void {
   if (run) return;
   const abort = new AbortController();
   run = abort;
   document.addEventListener("visibilitychange", onVisible);
+  // What waits shows as soon as the app is up, not once the stream is.
+  void catchUp();
   void loop(abort.signal);
 }
 
@@ -35,17 +41,28 @@ export function stopPush(): void {
   document.removeEventListener("visibilitychange", onVisible);
 }
 
-// A phone's WebView drops the stream in the background. Back in front, it
-// tries again at once instead of waiting out its backoff.
+// A phone's WebView drops the stream in the background, often without the
+// stream noticing, so a card waiting on the phone took the rest of a dead
+// read or a backoff (up to 15s) to show. Back in front, what waits is
+// fetched at once, and the stream starts over.
 function onVisible(): void {
-  if (document.visibilityState === "visible") wake?.();
+  if (document.visibilityState !== "visible") return;
+  void catchUp();
+  again = true;
+  attempt?.abort();
+  wake?.();
 }
 
 async function loop(signal: AbortSignal): Promise<void> {
   let tries = 0;
   while (!signal.aborted) {
+    const current = new AbortController();
+    attempt = current;
+    again = false;
+    const stop = () => current.abort();
+    signal.addEventListener("abort", stop, { once: true });
     try {
-      const res = await call("/api/push", { signal });
+      const res = await call("/api/push", { signal: current.signal });
       if (!res.body) throw new Error("push: the backend sent no stream");
       tries = 0;
       void catchUp();
@@ -53,7 +70,14 @@ async function loop(signal: AbortSignal): Promise<void> {
     } catch (err) {
       // Logged out: the session has taken it from here.
       if (signal.aborted || (err instanceof HttpError && err.status === 401)) return;
-      console.error("push: stream lost", err);
+      if (!current.signal.aborted) console.error("push: stream lost", err);
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
+    if (again) {
+      again = false;
+      tries = 0;
+      continue;
     }
     await pause(BACKOFF_MS[Math.min(tries, BACKOFF_MS.length - 1)], signal);
     tries++;
@@ -73,8 +97,26 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function catchUp(): Promise<void> {
-  await Promise.all([thread.sync(), waiting.refresh(), household.refresh()]);
+// One catch-up at a time: two syncs at once would each merge the
+// conversation as it stood when they began. Asked for during one, it runs
+// once more after it.
+let catching: Promise<void> | null = null;
+let catchAgain = false;
+
+function catchUp(): Promise<void> {
+  if (catching) {
+    catchAgain = true;
+    return catching;
+  }
+  catching = (async () => {
+    do {
+      catchAgain = false;
+      await Promise.all([thread.sync(), waiting.refresh(), household.refresh()]);
+    } while (catchAgain);
+  })().finally(() => {
+    catching = null;
+  });
+  return catching;
 }
 
 function dispatch(name: string, data: Record<string, unknown>): void {
