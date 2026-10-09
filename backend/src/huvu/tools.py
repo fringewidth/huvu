@@ -296,7 +296,7 @@ class ToolBox:
 
     async def _data_sql(self, args: dict[str, Any], caller: Caller) -> Result:
         viewer = self._kernel.accounts.scope(caller.user, caller.group)
-        data = await self._kernel.data.sql(str(args["sql"]), viewer, int(args.get("limit") or 200))
+        data = await self._kernel.data.sql(str(args["sql"]), viewer, int(args.get("limit") or 200), here=caller.device)
         return Result(data=data, labels=["house"])
 
     async def _sources_list(self, args: dict[str, Any], caller: Caller) -> Result:

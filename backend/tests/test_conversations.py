@@ -275,6 +275,42 @@ async def test_a_warm_session_continues_and_a_cold_one_starts_over(kernel, herme
     assert "Them: one\nYou: ok\nThem: two\nYou: ok\n</earlier>" in message and message.endswith("three")
 
 
+async def test_a_fresh_session_reads_only_the_latest_turns_that_fit(kernel, hermes, clock, monkeypatch):
+    from huvu import conversations
+
+    for ask in ["one", "two", "three"]:
+        await collect(kernel, await kernel.conversations.ask("c1", ask, user="me"))
+    # Each turn is its ask and "ok": room for the last two.
+    monkeypatch.setattr(conversations, "TRANSCRIPT_CHARS", 12)
+    clock.advance(minutes=6)
+    await collect(kernel, await kernel.conversations.ask("c1", "four", user="me"))
+    message = hermes.messages[-1][1]
+    assert "starts at turn 2, and the turns before it were left out" in message and "`turns` table" in message
+    assert "Them: one" not in message and "<earlier>\nThem: two\nYou: ok\nThem: three\nYou: ok\n</earlier>" in message
+    # Every turn stays in the app.
+    assert [t.ask for t in kernel.conversations.turns("c1")] == ["one", "two", "three", "four"]
+
+
+async def test_data_sql_reads_the_turns_a_caller_may_see(kernel, hermes, family):
+    await collect(kernel, await kernel.conversations.ask(family.me_phone.id, "plant the tulips", user="me"))
+    await collect(kernel, await kernel.conversations.ask(family.me_phone.id, "water them", user="me"))
+    await collect(kernel, await kernel.conversations.ask(family.me_web.id, "tulips on the laptop", user="me"))
+    await collect(kernel, await kernel.conversations.ask(family.mom_phone.id, "tulips for mom", user="mom"))
+    await collect(kernel, await kernel.conversations.ask(family.tv.id, "tulips on tv", user=None, group="home"))
+    caller = Caller(kind="hermes", user="me", device=family.me_phone.id)
+    sql = "SELECT n, them, you, device, here FROM turns WHERE them LIKE '%tulips%' ORDER BY ts, n"
+    result = await kernel.tools.call("data_sql", {"sql": sql}, caller)
+    rows = result.data["rows"]
+    # Their own turns on every device and the group's TV; never mom's.
+    assert [r[1] for r in rows] == ["plant the tulips", "tulips on the laptop", "tulips on tv"]
+    assert [r[4] for r in rows] == [1, 0, 0] and rows[0][:3] == [1, "plant the tulips", "ok"]
+    here = await kernel.tools.call("data_sql", {"sql": "SELECT n, them FROM turns WHERE here ORDER BY n DESC LIMIT 1"}, caller)
+    assert here.data["rows"] == [[2, "water them"]]
+    # Outside a conversation, nothing is here.
+    wake = await kernel.tools.call("data_sql", {"sql": "SELECT count(*) FROM turns WHERE here"}, Caller(kind="hermes", user="me"))
+    assert wake.data["rows"] == [[0]]
+
+
 async def test_turns_log_their_usage(kernel, hermes):
     hermes.script = [("run.started", {"run_id": "r"}), ("assistant.delta", {"delta": "ok"}), ("run.completed", {"usage": {"input_tokens": 900, "cache_read_tokens": 800}})]
     await collect(kernel, await kernel.conversations.ask("c1", "hi", user="me"))

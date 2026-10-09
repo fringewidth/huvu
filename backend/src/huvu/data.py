@@ -61,6 +61,27 @@ SELECT id, at, ts,
 FROM kernel.events
 """
 
+# Conversations as a table, one row per ended turn, with the same time keys.
+# A turn is its user's on their own device, and the device's group's on a
+# shared one. A shared device's turns go once the device is removed. `here`
+# is filled in for the caller (see _sql).
+_TURNS_VIEW = """
+SELECT * FROM (
+    SELECT t.id, t.seq + 1 AS n, t.at,
+           CAST(strftime('%s', t.at) AS INTEGER) AS ts,
+           substr(t.at, 1, 10) AS local_date,
+           CAST(substr(t.at, 12, 2) AS INTEGER) * 60 + CAST(substr(t.at, 15, 2) AS INTEGER) AS local_minute,
+           (CAST(strftime('%w', substr(t.at, 1, 10)) AS INTEGER) + 6) % 7 + 1 AS weekday,
+           t.ask AS them, t.answer AS you, t.ending, t.actions,
+           d.name AS device, c.id AS device_id, c.id IS {here} AS here,
+           c.user_id, CASE WHEN c.user_id IS NULL THEN d.group_id END AS group_id
+    FROM kernel.turns t
+    JOIN kernel.conversations c ON c.id = t.conversation_id
+    LEFT JOIN kernel.devices d ON d.id = c.id
+    WHERE t.running = 0 AND (c.user_id IS NOT NULL OR d.id IS NOT NULL)
+)
+"""
+
 
 class DataError(ValueError):
     """A query that failed in a way the model can fix. The message goes
@@ -146,13 +167,14 @@ class DataStore:
         names = [d[0] for d in cursor.description]
         return [dict(zip(names, r, strict=True)) for r in cursor.fetchall()]
 
-    async def sql(self, query: str, viewer: Viewer, limit: int = SQL_LIMIT) -> dict[str, Any]:
+    async def sql(self, query: str, viewer: Viewer, limit: int = SQL_LIMIT, here: str | None = None) -> dict[str, Any]:
         """Runs one read-only statement for `viewer`, and returns at most
-        `limit` rows (SQL_MAX at most)."""
+        `limit` rows (SQL_MAX at most). `here` is the conversation the
+        caller is in, if any."""
         limit = max(1, min(int(limit), SQL_MAX))
-        return await asyncio.to_thread(self._sql, query, viewer, limit)
+        return await asyncio.to_thread(self._sql, query, viewer, limit, here)
 
-    def _sql(self, query: str, viewer: Viewer, limit: int) -> dict[str, Any]:
+    def _sql(self, query: str, viewer: Viewer, limit: int, here: str | None) -> dict[str, Any]:
         conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         try:
             conn.execute("ATTACH DATABASE ? AS kernel", (f"file:{self._kernel.config.data_dir / 'huvu.db'}?mode=ro",))
@@ -161,6 +183,7 @@ class DataStore:
             for table in tables:
                 conn.execute(f'CREATE TEMP VIEW "{table}" AS SELECT * FROM main."{table}" WHERE {where}')
             conn.execute(f"CREATE TEMP VIEW events AS {_EVENTS_VIEW} WHERE {where}")
+            conn.execute(f"CREATE TEMP VIEW turns AS {_TURNS_VIEW.format(here=_quoted(here))} WHERE {where}")
             conn.execute("PRAGMA query_only = ON")
             conn.set_authorizer(_authorize)
             deadline = time.monotonic() + SQL_TIMEOUT
@@ -175,7 +198,7 @@ class DataStore:
                 if "interrupted" in message:
                     message = f"the query ran longer than {SQL_TIMEOUT:.0f} s; narrow it with a WHERE on ts, or aggregate"
                 elif "prohibited" in message or "not authorized" in message:
-                    message = f"{message}: data_sql only reads the history tables and events, by their plain names"
+                    message = f"{message}: data_sql only reads the history tables, events and turns, by their plain names"
                 raise DataError(message) from err
             columns = [d[0] for d in cursor.description] if cursor.description else []
         finally:
@@ -195,6 +218,12 @@ def _stored(kind: str, value: Any) -> Any:
     return stored
 
 
+def _quoted(value: str | None) -> str:
+    """A value written into a view's SQL, since a view can't take
+    parameters."""
+    return "NULL" if value is None else "'" + value.replace("'", "''") + "'"
+
+
 def _inline(viewer: Viewer) -> str:
     """The scope clause with its values written in, since a view can't take
     parameters. The values are user and group ids; quoting doubles any
@@ -207,7 +236,7 @@ def _inline(viewer: Viewer) -> str:
         pieces = clause.split("?")
         out = pieces[0]
         for arg, piece in zip(args, pieces[1:], strict=True):
-            out += "'" + str(arg).replace("'", "''") + "'" + piece
+            out += _quoted(str(arg)) + piece
     return out
 
 

@@ -83,7 +83,7 @@ TOOLS: dict[str, str] = {
     'events_search': 'Searches the event log, newest first. `query` words must all match. `since` and `until` take 2h, 3d, today, yesterday or ISO 8601.',
     'events_get': 'One event by id, with its refs.',
     'events_digest': 'A rollup of one day (today, yesterday or YYYY-MM-DD), or one hour of it: counts per event type with a few summaries, and counts per hour.',
-    'data_sql': "Runs one read-only SQLite query over the history every source keeps, for finding patterns and preferences. Each source's skill (huvu-<source>) lists its tables (<source>_<table>) and columns. `events` is the event log (id, source, type, entity, summary, data as JSON). Every table has at, ts (epoch s), local_date, local_minute (minutes since midnight), weekday (1 = Monday), user_id and group_id. JSON functions work. Returns columns and rows, at most `limit` (default 200, at most 1000): aggregate in SQL instead of reading rows.",
+    'data_sql': "Runs one read-only SQLite query over the history every source keeps, for finding patterns and preferences. Each source's skill (huvu-<source>) lists its tables (<source>_<table>) and columns. `events` is the event log (id, source, type, entity, summary, data as JSON). `turns` is every conversation you may see, one row per turn (n from 1 in its conversation, them, you, ending, actions as JSON, device, device_id, and here = 1 for the conversation you're in). Every table has at, ts (epoch s), local_date, local_minute (minutes since midnight), weekday (1 = Monday), user_id and group_id. JSON functions work. Returns columns and rows, at most `limit` (default 200, at most 1000): aggregate in SQL instead of reading rows.",
     'sources_list': 'Every source with its values, events, actions and tables.',
     'triggers_register': 'Registers a trigger: a condition over source data, the clock included, and a script that runs each time it comes true. Write `note` first: why it exists and what to do. The script can call granted tools and can wake an instance of you. `when` is a flat list that must all hold. `repeat` is no, yes or daily. `include` lists values to bring along in the wake. `expires` takes 2h, tomorrow 09:00 or ISO; a repeat=no trigger without one expires in 7 days. On a shared device with nobody recognized, the trigger waits until someone confirms on their phone that it was them; the result says so.',
     'triggers_test': "Checks a trigger without registering it: each check's current reading and result, recent matching events, and what its script would do.",
@@ -162,6 +162,8 @@ def wake(readable: dict[str, Any], external: bool, wakes: int, warn: int, limit:
 # Opens a fresh session that continues a conversation, the way a compacted
 # session continues.
 COMPACTED = """This conversation is being continued from an earlier session that was compacted. What was said so far is below: their messages, and your answers. Carry on from where you left off as the same assistant. Don't mention or acknowledge this note; just answer their new message at the end."""
+# Added to COMPACTED when the conversation was too long to carry whole.
+CUT = """This conversation is long, so what's below starts at turn {start}, and the turns before it were left out. They are in data_sql's `turns` table: `here` marks this conversation, `n` numbers its turns from 1, `them` is what they said and `you` what you said. Look there before you say you don't remember something."""
 
 
 def action_note(when: str, text: str) -> str:
@@ -187,11 +189,11 @@ def huvu_note(time: str, text: str) -> str:
     return f"(huvu, {time}: {text}. Not a request, no reply needed.)"
 
 
-def continued(earlier: list[tuple[list[str], str, str]], text: str) -> str:
+def continued(earlier: list[tuple[list[str], str, str]], text: str, left_out: int = 0) -> str:
     """The first message of a fresh session that continues a conversation:
     each earlier turn as (its action notes, the ask, the answer), then the
-    new message."""
-    lines = [COMPACTED, "", "<earlier>"]
+    new message. `left_out` is how many of the oldest turns didn't fit."""
+    lines = [f"{COMPACTED} {CUT.format(start=left_out + 1)}" if left_out else COMPACTED, "", "<earlier>"]
     for notes, ask, answer in earlier:
         lines += notes
         lines.append(f"Them: {ask}")

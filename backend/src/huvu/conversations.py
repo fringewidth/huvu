@@ -12,7 +12,9 @@ session's prompt cached for CACHE_TTL after its last use, so an ask within
 that window continues the same Hermes session and hits the cache. An ask
 after it starts a fresh session, primed with a transcript of the asks and
 answers so far: with the cache cold, a short transcript costs less than
-replaying the old session's thinking and tool output. Each turn's cache
+replaying the old session's thinking and tool output. The transcript holds
+only the latest turns that fit in TRANSCRIPT_CHARS, and the model reads
+older ones with data_sql, from the `turns` view. Each turn's cache
 reads land in the event log (`conversation.turn`, `usage`), so the window
 can be checked against the provider.
 
@@ -55,6 +57,11 @@ Ending = Literal["failed", "stopped"] | None
 HUVU_PREFIX = "mcp__huvu__"
 # How long the provider keeps a session's prompt cached after its last use.
 CACHE_TTL = timedelta(minutes=5)
+# How much of the conversation a fresh session reads: the latest turns that
+# fit, about 12,000 tokens at four characters a token. Older turns are left
+# out, so a long conversation doesn't cost more on every cold start; the
+# model reads them from data_sql's `turns` view (data.py).
+TRANSCRIPT_CHARS = 50_000
 # How long a stopped turn may take to end before huvu cuts it off itself.
 STOP_GRACE = 15.0
 # How much of a turn the event log keeps in its summary.
@@ -596,10 +603,20 @@ def _seeded(kept: list[Turn], text: str, tz: tzinfo | None) -> str:
     """The first message of a fresh session that continues a conversation,
     the way a compacted session continues: what was asked and answered so
     far, then the new message. The model is told to carry on as if nothing
-    happened, not to acknowledge it."""
+    happened, not to acknowledge it. Only the latest turns that fit in
+    TRANSCRIPT_CHARS go in."""
     if not kept:
         return text
-    return prompts.continued([([_note(a, tz) for a in t.actions], t.ask, t.answer) for t in kept], text)
+    earlier: list[tuple[list[str], str, str]] = []
+    size = 0
+    for t in reversed(kept):
+        notes = [_note(a, tz) for a in t.actions]
+        size += sum(map(len, notes)) + len(t.ask) + len(t.answer)
+        if size > TRANSCRIPT_CHARS:
+            break
+        earlier.append((notes, t.ask, t.answer))
+    earlier.reverse()
+    return prompts.continued(earlier, text, left_out=len(kept) - len(earlier))
 
 
 def _turn(row) -> Turn:

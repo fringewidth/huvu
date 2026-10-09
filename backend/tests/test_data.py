@@ -94,6 +94,8 @@ async def test_each_caller_sees_their_own_rows_and_the_house(house):
         ("SELECT * FROM main.diary_entries", "prohibited"),
         ("SELECT count(*) FROM main.diary_entries", "not authorized"),
         ("SELECT * FROM kernel.users", "prohibited"),
+        ("SELECT * FROM kernel.turns", "prohibited"),
+        ("SELECT * FROM kernel.devices", "prohibited"),
         ("SELECT name FROM sqlite_master", "prohibited"),
         ("DELETE FROM diary_entries", "it is a view"),
         ("DELETE FROM main.diary_entries", "not authorized"),
