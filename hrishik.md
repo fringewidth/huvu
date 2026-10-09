@@ -68,4 +68,11 @@ docker compose restart huvu
 Wipe someone there: `docker compose exec -u hermes huvu /opt/huvu/wipe.sh hrishik`
 (it stops nothing for you: stop the backend first with
 `docker compose exec huvu s6-svc -d /run/service/huvu`, and bring it back with
-`s6-svc -u`). Update: `docker compose pull && docker compose up -d`.
+`s6-svc -u`). Update: bring `D:\huvu` up to date, then
+`docker compose build && docker compose up -d`. Hermes is pinned in the
+`Dockerfile`; moving it is a change of its own.
+
+Over `ssh laptop`, the shell is cmd: single quotes stay in the arguments,
+so quote with double quotes or none. Docker can't reach Windows's
+credential store over SSH either, so `docker compose build` fails to look
+up a base image it doesn't have: `docker pull` it first.

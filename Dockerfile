@@ -22,7 +22,11 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN VITE_TARGET=web npm run build:web
 
-FROM nousresearch/hermes-agent:latest
+# Hermes is pinned to the image huvu was last checked with (2026-09-24's
+# latest). The one after it (2026-10-08) shipped without uv and without
+# aiohttp, so its API server never started. Move the pin on purpose, and
+# check an ask end to end after.
+FROM nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db
 
 USER root
 
@@ -31,8 +35,8 @@ ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
     HUVU_WEB_DIR=/opt/huvu/web \
     UV_CACHE_DIR=/tmp/uv-cache
 
-# Hermes's image stopped shipping uv after 2026-10-08, so it comes from
-# Astral's own image, at the version the lock file was written with.
+# uv comes from Astral's own image, at the version the lock file was written
+# with, so the build doesn't hang on Hermes shipping one (2026-10-08's didn't).
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /uvx /usr/local/bin/
 
 WORKDIR /opt/huvu
