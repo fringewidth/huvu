@@ -48,13 +48,17 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 ## Talking to huvu by voice (laptop, in Chrome)
 
 1. Click the flower. It should move to the middle of the screen, and the text field should go away.
-1. Say a question with your name and "huvu" in it. The flower should grow while you talk, and no words should appear while you speak. About a second after you stop, your words should appear with your name and "huvu" spelled right, fly up, and huvu should answer.
+1. Say a question with your name and "huvu" in it. The flower should grow while you talk, and no words should appear while you speak. About three seconds after you stop, your words should appear with your name and "huvu" spelled right, fly up, and huvu should answer.
 1. Listen for huvu saying its own name. It should say "hoo voo".
 1. Listen to huvu's answer. It should start speaking within a second or two of its first words on screen, and keep speaking without gaps between sentences, while the rest of the answer is still being written.
 1. Ask something by voice that might tempt an emoji, such as "say something cheerful about my morning". The spoken answer, and its words on screen, should have no emojis, no bullet points and no bold text. Switch back to typing and ask the same: emojis and formatting are allowed again.
-1. Hold the space bar, talk, and let go. It should work the same as clicking the flower.
+1. Click the flower and ask something with a two-second pause in the middle, as if you stopped to think. It should keep listening through the pause and send the whole question.
+1. Hold the space bar, talk, and let go. Your words should go up when you let go, even if you paused while holding, and huvu should answer.
+1. After huvu answers a question asked with space, stay quiet. It should not start listening by itself.
+1. Ask with space, and talk while huvu speaks. huvu should keep speaking. Hold space while huvu speaks. huvu should stop at once and listen to you.
+1. Press Tab until the flower has a ring around it, then hold space, talk, and let go. It should be the same as holding space anywhere else, not the same as clicking the flower.
 1. Ask by voice something that makes huvu search the web, and stay quiet while it searches. huvu should say the line before its search, go quiet while it searches, and then say the rest of the answer.
-1. Talk while huvu speaks. huvu should stop speaking.
+1. Click the flower, ask something, and talk while huvu speaks. huvu should stop speaking and listen to you again by itself.
 1. Scroll the answer. The flower should shrink and dock at the bottom. Tap it, and it should come back to the middle.
 1. Tap "write". The text field should come back, and the conversation should be the same as before.
 

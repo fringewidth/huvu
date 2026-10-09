@@ -7,8 +7,10 @@ import { acquireMic, type Mic } from "./mic";
 // per sentence, each framed by its length as four big-endian bytes. Clips
 // are decoded in order and each is scheduled right after the one before,
 // so the sentences play without gaps. It plays through an analyser so the
-// garden can grow the garland with it, and while it plays, the mic listens
-// for the user talking over it. Only while it plays: between sentences,
+// garden can grow the garland with it. Hands-free, the mic listens while
+// it plays for the user talking over it; push-to-talk has no such thing,
+// since holding the key is how to cut huvu off there. Only while it
+// plays: between sentences,
 // while huvu runs its tools, there is nothing to talk over, and the mic's
 // gain climbs in the quiet until room noise would cut the rest off.
 // Mic loudness that counts as talking over huvu.
@@ -48,8 +50,9 @@ export function stopSpeaking(): void {
 }
 
 // Says turn `turnId`'s answer. Resolves once huvu is done: the last
-// sentence ended, the user talked over it, or there is no voice.
-export async function speak(turnId: string): Promise<void> {
+// sentence ended, the user talked over it (with `bargeIn`), or there is no
+// voice.
+export async function speak(turnId: string, bargeIn: boolean): Promise<void> {
   stopSpeaking();
   const ctx = audioContext();
   await ctx.resume();
@@ -97,7 +100,7 @@ export async function speak(turnId: string): Promise<void> {
       if (!started) {
         started = true;
         for (const listener of startListeners) listener();
-        listenForBargeIn();
+        if (bargeIn) listenForBargeIn();
       }
     };
 

@@ -94,7 +94,7 @@ function canHear(): Promise<boolean> {
 // Mic loudness that counts as speech, and how long a pause after speech
 // ends a hands-free ask.
 const SPEECH_RMS = 0.03;
-const PAUSE_MS = 700;
+const PAUSE_MS = 3000;
 // A hands-free listen that hears nothing gives up after this long.
 const NOTHING_MS = 6000;
 

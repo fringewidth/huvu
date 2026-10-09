@@ -57,6 +57,9 @@ export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label
       // A click must not pull focus out of the text field, or the next
       // space would press the flower instead of talking.
       onMouseDown={(e) => e.preventDefault()}
+      // Space on the flower, focused from the keyboard, is push-to-talk
+      // like anywhere else, never a press.
+      data-talk
       className="relative flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-1 focus-visible:ring-sindoor/70 focus-visible:ring-offset-8 focus-visible:ring-offset-transparent"
       style={{ width: size, height: size }}
     >

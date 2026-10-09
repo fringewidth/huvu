@@ -335,8 +335,10 @@ export function Stage() {
         e.preventDefault();
         return;
       }
-      // Space talks unless it would type into a draft.
-      const eligible = !e.repeat && t?.tagName !== "BUTTON" && (!inField || draft === "");
+      // Space talks unless it would type into a draft or press a button.
+      // The flower is the one button it talks on.
+      const button = t?.tagName === "BUTTON" && t.dataset.talk === undefined;
+      const eligible = !e.repeat && !button && (!inField || draft === "");
       if (eligible) {
         e.preventDefault();
         // In text mode a reply still coming in has to be stopped first.
@@ -385,19 +387,23 @@ export function Stage() {
     textareaRef.current?.focus({ preventScroll: true });
   });
 
-  const releasePtt = useEffectEvent(() => {
-    if (!ptt.current) return;
+  // Whether there was a hold to let go of.
+  const releasePtt = useEffectEvent((): boolean => {
+    if (!ptt.current) return false;
     const { timer, holding } = ptt.current;
     ptt.current = null;
     window.clearTimeout(timer);
     if (holding) voice.release();
     else voice.dropHold();
+    return true;
   });
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => onKeyDown(e);
     const up = (e: KeyboardEvent) => {
-      if (e.key === ui.pushToTalkKey) releasePtt();
+      if (e.key !== ui.pushToTalkKey) return;
+      // A focused button presses on space's keyup. Talking was the press.
+      if (releasePtt()) e.preventDefault();
     };
     // A key released while the window is in the background never fires
     // keyup, so losing focus counts as letting go.

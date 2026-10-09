@@ -8,9 +8,10 @@ import { createTranscriber } from "./transcriber";
 
 // One turn of voice mode goes listening, then thinking once the utterance
 // is sent, then speaking once huvu's reply starts, then back. Hands-free
-// (entered from the flower) listens again by itself after huvu speaks.
-// Push-to-talk (space on web) waits in idle for the
-// next hold. Either way in cuts huvu off first, voice and text both.
+// (entered from the flower) listens again by itself after huvu speaks,
+// and talking over huvu cuts it off. Push-to-talk (space on web) waits in
+// idle for the next hold, and only the next hold cuts huvu off. Either way
+// in cuts huvu off first, voice and text both.
 export type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
 
 // Silent rounds hands-free tolerates before it stops listening, so a quiet
@@ -153,7 +154,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
       awaiting.current = "none";
       setPhase("speaking");
       const id = ++utterance.current;
-      speak(turn.id)
+      speak(turn.id, handsFree.current)
         .catch((err) => console.error("voice: playback failed", err))
         .finally(() => onSpoke(id));
       return;
