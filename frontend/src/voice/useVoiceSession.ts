@@ -3,7 +3,7 @@ import { useMotionValue } from "motion/react";
 import { asked, getThread, stop as stopThread, subscribe } from "../chat/thread";
 import { resumeAudio } from "./audio";
 import { acquireMic, closeMic, type Mic } from "./mic";
-import { speak, stopSpeaking, warmSpeaker } from "./speaker";
+import { onAudible, speak, stopSpeaking, warmSpeaker } from "./speaker";
 import { createTranscriber } from "./transcriber";
 
 // One turn of voice mode goes listening, then thinking once the utterance
@@ -19,6 +19,9 @@ export type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
 const MAX_SILENT_ROUNDS = 3;
 // Share of the recent peak that counts as room noise, not speech.
 const NOISE_FLOOR = 0.12;
+// How long huvu's voice must stay quiet before it counts as quiet, so the
+// gap between two sentences doesn't.
+const QUIET_MS = 800;
 
 export function useVoiceSession(onUtterance: (text: string) => void) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
@@ -27,6 +30,10 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   const [heard, setHeard] = useState(false);
   const [transcriber] = useState(createTranscriber);
   const level = useMotionValue(0);
+  // Whether huvu's voice can be heard now. While speaking, a quiet voice
+  // means huvu is still working: its first sentence isn't ready, or it runs
+  // its tools after saying it's on it.
+  const [audible, setAudible] = useState(false);
   const handsFree = useRef(false);
   const silentRounds = useRef(0);
   // Where the sent utterance's reply stands. "sent" until its turn shows
@@ -108,10 +115,12 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     listen(false);
   }
 
-  // Push-to-talk.
-  function hold(): void {
+  // Push-to-talk. Without `cutOff`, a reply still coming in keeps going
+  // until the caller calls interrupt(), so a tap too short to be a hold
+  // leaves it alone.
+  function hold(cutOff: boolean): void {
     warm();
-    interrupt();
+    if (cutOff) interrupt();
     handsFree.current = false;
     listen(true);
   }
@@ -168,6 +177,19 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
 
   useEffect(() => subscribe(() => onThread()), []);
 
+  useEffect(() => {
+    let timer = 0;
+    const off = onAudible((on) => {
+      clearTimeout(timer);
+      if (on) setAudible(true);
+      else timer = window.setTimeout(() => setAudible(false), QUIET_MS);
+    });
+    return () => {
+      off();
+      clearTimeout(timer);
+    };
+  }, []);
+
   // The flower swells with your voice while it listens.
   useEffect(() => {
     if (phase !== "listening") return;
@@ -209,5 +231,5 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     [transcriber],
   );
 
-  return { phase, transcript, heard, level, begin, hold, dropHold, release, exit };
+  return { phase, audible, transcript, heard, level, begin, hold, interrupt, dropHold, release, exit };
 }

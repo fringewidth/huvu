@@ -1,18 +1,23 @@
-import { memo, useId } from "react";
+import { memo, useEffect, useId } from "react";
 import * as m from "motion/react-m";
-import { useSpring, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "motion/react";
+import { useMotionValue, useSpring, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "motion/react";
 import { BLUSH, IVORY, MARIGOLD, THREAD } from "../config/palette";
 import { EASE } from "../stage/style";
 
 // The flower is voice mode's stand-in for huvu. Closed to a bud while you
 // type; open and dancing once voice mode is on. While it listens it swells
 // gently with your voice (`level`, 0 to 1). Huvu's own voice goes to the
-// garland behind, not to the flower. Where the flower sits on screen is
-// the parent's job; this component only draws and animates it in place.
+// garland behind, not to the flower. While huvu works (before it speaks,
+// and while it runs tools) the flower half closes, turns, and a sindoor
+// halo breathes behind it. By the text field, the bud turns the same way
+// while a reply comes in. Where the flower sits on screen is the
+// parent's job; this component only draws and animates it in place.
 export type FlowerState = "bud" | "dancing" | "listening" | "thinking" | "speaking";
 
 interface VoiceFlowerProps {
   state: FlowerState;
+  // Turns the flower while huvu works, whatever the state.
+  spinning: boolean;
   size: number;
   level: MotionValue<number>;
   label: string;
@@ -33,6 +38,14 @@ const ECHO: Transition = {
   opacity: { duration: ECHO_SECONDS, repeat: Infinity, times: [0, 0.15, 1], ease: ["easeOut", "easeIn"] },
 };
 
+// Working turns the flower this many degrees a second. When it stops,
+// a spring carries it on to the next petal, so it comes to rest the way
+// it started: five petals look the same every 72 degrees.
+const SPIN_SPEED = 60;
+const PETAL_TURN = 72;
+// Thinking's halo, breathing in and out.
+const HALO: Transition = { duration: 2.4, repeat: Infinity, ease: "easeInOut" };
+
 // How the petals move in each state. Changing state tweens from wherever
 // the petals are, so a switch never snaps.
 const MOTION: Record<FlowerState, { animate: TargetAndTransition; transition: Transition }> = {
@@ -40,10 +53,10 @@ const MOTION: Record<FlowerState, { animate: TargetAndTransition; transition: Tr
   dancing: { animate: SWAY, transition: swayFor(3.4) },
   listening: { animate: SWAY, transition: swayFor(3.4) },
   speaking: { animate: SWAY, transition: swayFor(2.6) },
-  thinking: { animate: { rotate: 360, scale: 1 }, transition: { duration: 9, repeat: Infinity, ease: "linear" } },
+  thinking: { animate: STILL, transition: { duration: 0.8, ease: EASE } },
 };
 
-export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label, onClick }: VoiceFlowerProps) {
+export const VoiceFlower = memo(function VoiceFlower({ state, spinning, size, level, label, onClick }: VoiceFlowerProps) {
   // A loud voice swells the flower by at most a sixth, on a slow, heavy
   // spring, so it breathes with you instead of jumping at every syllable.
   const grow = useSpring(
@@ -51,6 +64,25 @@ export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label
     { stiffness: 70, damping: 18, mass: 1.4 },
   );
   const bud = state === "bud";
+  const thinking = state === "thinking";
+
+  const turned = useMotionValue(0);
+  const spin = useSpring(turned, { stiffness: 40, damping: 14 });
+  useEffect(() => {
+    if (!spinning) {
+      turned.set(Math.ceil(turned.get() / PETAL_TURN) * PETAL_TURN);
+      return;
+    }
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      turned.set(turned.get() + ((now - last) / 1000) * SPIN_SPEED);
+      last = now;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [spinning, turned]);
 
   // Every moving part is an HTML layer wrapped around a static drawing.
   // The watercolour filter is then rasterised once per drawing and the
@@ -77,6 +109,22 @@ export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label
         animate={{ opacity: state === "speaking" ? 0.32 : 0 }}
         transition={{ duration: 1.2, ease: EASE }}
       />
+      {/* The halo fades in and out as a whole, so its breathing never
+          starts or stops with a jump. */}
+      <m.span
+        aria-hidden="true"
+        className="absolute inset-[10%]"
+        initial={false}
+        animate={{ opacity: thinking ? 1 : 0 }}
+        transition={{ duration: 0.8, ease: EASE }}
+      >
+        <m.span
+          className="absolute inset-0 rounded-full bg-sindoor blur-2xl"
+          initial={false}
+          animate={thinking ? { opacity: [0.12, 0.4, 0.12], scale: [0.85, 1.05, 0.85] } : { opacity: 0.12, scale: 0.85 }}
+          transition={thinking ? HALO : { duration: 0.8 }}
+        />
+      </m.span>
       <m.span aria-hidden="true" className="absolute inset-0 will-change-transform" style={{ scale: grow }}>
         <m.span
           className="absolute inset-0 will-change-transform"
@@ -89,16 +137,18 @@ export const VoiceFlower = memo(function VoiceFlower({ state, size, level, label
         <m.span
           className="absolute inset-0 will-change-transform"
           initial={false}
-          animate={{ scale: bud ? 0.7 : 1, rotate: bud ? -26 : 0 }}
+          animate={{ scale: bud ? 0.7 : thinking ? 0.84 : 1, rotate: bud ? -26 : 0 }}
           transition={{ duration: 0.9, ease: EASE }}
         >
-          <m.span
-            className="absolute inset-0 will-change-transform"
-            initial={false}
-            animate={MOTION[state].animate}
-            transition={MOTION[state].transition}
-          >
-            <PetalArt inner />
+          <m.span className="absolute inset-0 will-change-transform" style={{ rotate: spin }}>
+            <m.span
+              className="absolute inset-0 will-change-transform"
+              initial={false}
+              animate={MOTION[state].animate}
+              transition={MOTION[state].transition}
+            >
+              <PetalArt inner />
+            </m.span>
           </m.span>
         </m.span>
       </m.span>

@@ -30,6 +30,10 @@ interface Profile {
   // belongs, so phone sends only with its send button.
   enterSends: boolean;
   sendButton: boolean;
+  // Whether the screen comes with a keyboard of its own: the text field
+  // keeps focus in text mode, and typing anywhere lands in it. A touch
+  // screen would pop its keyboard up each time.
+  keyboard: boolean;
   // The key held down to talk. Release sends. Phone has no hardware key
   // for this, so the flower is the only way into voice there. Left out
   // where there is no such key.
@@ -50,6 +54,10 @@ interface Profile {
   // mode. A phone screen has no room for it next to the flower and the
   // transcript, and huvu says the answer anyway.
   voiceAnswerText?: boolean;
+  // Whether the garden paints behind the stage. A phone's GPU can't keep
+  // up with it: on a OnePlus Nord CE 2 every tap and keystroke lagged while
+  // it painted, so phones go without (decided 2026-10-09).
+  garden: boolean;
   // Phone screens are dense enough that 1.5x looks like 2x, at almost half
   // the pixels for the garden to wash every frame.
   maxPixelDensity: number;
@@ -63,6 +71,7 @@ const PROFILES: Record<Target, Profile> = {
     modeSwitchable: true,
     enterSends: true,
     sendButton: false,
+    keyboard: true,
     pushToTalkKey: " ",
     placeholder: "write, or hold space to speak",
     idleHint: "hold space to speak, or click the flower",
@@ -76,6 +85,7 @@ const PROFILES: Record<Target, Profile> = {
     ],
     flowerSize: 168,
     voiceAnswerText: true,
+    garden: true,
     maxPixelDensity: 2,
   },
   phone: {
@@ -85,6 +95,7 @@ const PROFILES: Record<Target, Profile> = {
     modeSwitchable: true,
     enterSends: false,
     sendButton: true,
+    keyboard: false,
     placeholder: "write, or tap the flower",
     idleHint: "tap the flower to listen",
     greetings: [
@@ -97,6 +108,7 @@ const PROFILES: Record<Target, Profile> = {
     ],
     flowerSize: 168,
     voiceAnswerText: false,
+    garden: false,
     maxPixelDensity: 1.5,
   },
   // Display only. It asks nothing, so the voice and text fields are left
@@ -108,6 +120,7 @@ const PROFILES: Record<Target, Profile> = {
     modeSwitchable: false,
     enterSends: false,
     sendButton: false,
+    keyboard: false,
     feedsKey: "ContextMenu",
     // Asks reach the TV through Alexa, so each greeting shows one.
     greetings: [
@@ -146,6 +159,7 @@ const PROFILES: Record<Target, Profile> = {
                 ];
       })(),
     ],
+    garden: true,
     maxPixelDensity: 2,
   },
 };
@@ -160,7 +174,13 @@ function resolveTarget(): Target {
 }
 
 export const TARGET: Target = resolveTarget();
-export const ui: Profile = PROFILES[TARGET];
+// The web build in a phone's browser: a touch screen with no mouse or
+// trackpad. It looks like a phone, so it takes the phone's screen rules (no
+// space to talk, a send button, the phone's hints and garden density). To
+// the backend it stays a browser: it logs in like one and gets no native
+// push.
+const TOUCH_WEB = TARGET === "web" && window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
+export const ui: Profile = TOUCH_WEB ? { ...PROFILES.phone, deviceKind: "web" } : PROFILES[TARGET];
 export const TV = TARGET === "firetv";
 // A shared device pairs instead of logging in, and can recognize who is at
 // it. A phone answers approvals and "is it you?" questions, and gets

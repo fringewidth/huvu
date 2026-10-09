@@ -341,15 +341,17 @@ export function Stage() {
       const eligible = !e.repeat && !button && (!inField || draft === "");
       if (eligible) {
         e.preventDefault();
-        // In text mode a reply still coming in has to be stopped first.
-        // Voice mode talks over it.
-        if (mode === "text" && running) return;
+        // Voice mode talks over a reply still coming in at once. Text mode
+        // cuts it off only once the press is a real hold, so a tap of
+        // space leaves it running.
+        const later = mode === "text" && running;
         setDocked(false);
-        voice.hold();
+        voice.hold(!later);
         // Held in history, the latest turn comes back to the stage, so
         // what is heard and what huvu answers have somewhere to show.
         const timer = window.setTimeout(() => {
           if (!ptt.current) return;
+          if (later) voice.interrupt();
           ptt.current.holding = true;
           textareaRef.current?.blur();
           setMode("voice");
@@ -376,7 +378,7 @@ export function Stage() {
     // Web: typing always lands in the field, wherever focus happens to be.
     // In voice mode it also brings the field back.
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-    if (TARGET !== "web" || inField || !printable) return;
+    if (!ui.keyboard || inField || !printable) return;
     if (mode === "voice") {
       e.preventDefault();
       leaveVoice();
@@ -448,11 +450,12 @@ export function Stage() {
     wrote.current = { id: turn.id, words, sent: w.sent + grow };
   }, [allTurns, mode, sessionStart]);
 
-  // Web: the text field is always the one in focus while in text mode, so
-  // typing and holding space both work without a click first. Phone is
-  // left alone, since focusing there pops up the keyboard.
+  // With a keyboard, the text field is always the one in focus while in
+  // text mode, so typing and holding space both work without a click
+  // first. A touch screen is left alone, since focusing there pops up its
+  // keyboard.
   useEffect(() => {
-    if (TARGET === "web" && mode === "text") textareaRef.current?.focus({ preventScroll: true });
+    if (ui.keyboard && mode === "text") textareaRef.current?.focus({ preventScroll: true });
   }, [mode, view]);
 
   useEffect(() => {
@@ -479,7 +482,11 @@ export function Stage() {
   }, [view]);
 
   const inVoice = mode === "voice";
-  const hint = voice.phase === "idle" ? ui.idleHint : PHASE_HINT[voice.phase];
+  // The session speaks from huvu's first written words, but huvu is only
+  // heard once a sentence plays. Until then, and in any quiet while it
+  // runs its tools, it is still at work, and the flower says so.
+  const phase: VoicePhase = voice.phase === "speaking" && !voice.audible ? "thinking" : voice.phase;
+  const hint = phase === "idle" ? ui.idleHint : PHASE_HINT[phase];
   // Browsing history in voice mode puts the flower away: it shrinks and
   // fades where it is, and the list takes the whole height. Opening a turn
   // (or scrolling back down) brings it back.
@@ -640,10 +647,13 @@ export function Stage() {
           className={`absolute left-0 top-0 z-30 ${flowerAway ? "pointer-events-none" : ""}`}
         >
           <VoiceFlower
-            state={inVoice ? PHASE_FLOWER[voice.phase] : "bud"}
+            state={inVoice ? PHASE_FLOWER[phase] : "bud"}
+            // Working spins it the same way in both modes: thinking in
+            // voice, a reply still coming in by the text field.
+            spinning={inVoice ? phase === "thinking" : running}
             size={FLOWER_BIG}
             level={voice.level}
-            label={docked ? "bring the flower back" : voice.phase === "thinking" || voice.phase === "speaking" ? "interrupt huvu" : "speak to huvu"}
+            label={docked ? "bring the flower back" : phase === "thinking" || phase === "speaking" ? "interrupt huvu" : "speak to huvu"}
             onClick={onFlower}
           />
         </m.div>

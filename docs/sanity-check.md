@@ -16,7 +16,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## Logging in
 
-1. Open the app on a phone for the first time. You should see the login screen on top of the garden.
+1. Open the app on a phone for the first time. You should see the login screen.
 1. Type a wrong password. You should see a message that says so, and you stay on the login screen.
 1. Type the right password and tap "come in". You should see the greeting, for example "Ready?".
 1. Close the app fully and open it again. You should not have to log in again.
@@ -31,7 +31,8 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask huvu to remind you of something every day at a time, such as "remind me to water the plants every day at 9". Within a few seconds it should say it's on it, and within about ten it should say it's done. The reminder should show in the menu under your triggers.
 1. Ask something that needs thought, such as a small puzzle. While huvu works, a faint line of its thinking should show under the answer and change as it thinks. It should fade away once the answer is done. (Only with a model that sends its thinking, such as gpt-6-sol.)
 1. Ask something that makes huvu search the web more than once, such as "what did OpenAI announce yesterday, and what does it mean?". Each "searched the web" line should show where huvu searched: after the words it said before searching, and before the words it wrote after. The lines should not all gather at the top of the answer.
-1. While huvu answers, look at the garden. A little more should grow as the words come in.
+1. On the laptop, while huvu answers, look at the garden. A little more should grow as the words come in, slowly enough to watch each petal paint in. On a phone there should be no garden at all, and typing should never lag.
+1. While huvu answers, look at the closed flower by the text field. It should turn slowly until the answer is done, then settle with its petals where they started.
 1. Ask for something long, such as a recipe, and scroll down through the answer, then back up to the top. The answer should stay on screen. It should not jump to the history while you read.
 1. Read a few paragraphs of that long answer. The letters should be smaller than in a short answer and the lines well spaced, easy to read for a minute or two without strain.
 1. At the top of the answer, scroll up once more. The screen should fold into a list of all earlier questions, one per line. Tap one. It should open large again. Scroll again, and it folds back.
@@ -40,6 +41,8 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask something that makes huvu offer choices, such as "help me pick a movie, give me three options". Tap one choice. It should be sent as your next question.
 1. In a conversation from a day or more ago, ask about something you said early on, such as "what was that recipe we talked about yesterday?". huvu should find it, even if a lot was said since.
 1. Turn the backend off and ask something. The answer should fail and show "try again". Turn the backend on and tap "try again". huvu should answer.
+1. Open https://huvu.hrishik.me in a phone's browser (Chrome on Android, Safari on an iPhone). The text field should say "write, or tap the flower", not "hold space to speak". The keyboard should not pop up by itself. There should be a send button, and the keyboard's Enter should make a new line.
+1. Open it on a laptop. The text field should say "write, or hold space to speak", and typing should go straight into it without a click.
 
 ## Coming back to the app
 
@@ -59,8 +62,11 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Hold the space bar, talk, and let go. Your words should go up when you let go, even if you paused while holding, and huvu should answer.
 1. After huvu answers a question asked with space, stay quiet. It should not start listening by itself.
 1. Ask with space, and talk while huvu speaks. huvu should keep speaking. Hold space while huvu speaks. huvu should stop at once and listen to you.
+1. Write a question and send it, and while huvu's answer still writes itself in, tap space once with the text field empty. The answer should keep coming. Then hold space and talk. The answer should stop, and huvu should listen to you.
 1. Press Tab until the flower has a ring around it, then hold space, talk, and let go. It should be the same as holding space anywhere else, not the same as clicking the flower.
 1. Ask by voice something that makes huvu search the web, and stay quiet while it searches. huvu should say the line before its search, go quiet while it searches, and then say the rest of the answer.
+1. Click the flower and ask something that needs a tool, such as the weather. Once you stop talking, the flower should half close, turn slowly, and glow red behind. It should keep doing that through every quiet moment while huvu works, also after huvu says it's on it. When huvu's voice plays, the flower should open, sway and glow gold. Once huvu has finished and listens again, it should send out rings and never turn.
+1. While huvu speaks, look at the garden. It should grow about as slowly as huvu talks, not race ahead of it.
 1. Click the flower, ask something, and talk while huvu speaks. huvu should stop speaking and listen to you again by itself.
 1. Scroll the answer. The flower should shrink and dock at the bottom. Tap it, and it should come back to the middle.
 1. Tap "write". The text field should come back, and the conversation should be the same as before.
