@@ -486,7 +486,7 @@ export function Stage() {
   // heard once a sentence plays. Until then, and in any quiet while it
   // runs its tools, it is still at work, and the flower says so.
   const phase: VoicePhase = voice.phase === "speaking" && !voice.audible ? "thinking" : voice.phase;
-  const hint = phase === "idle" ? ui.idleHint : PHASE_HINT[phase];
+  const hint = voice.micProblem ?? (phase === "idle" ? ui.idleHint : PHASE_HINT[phase]);
   // Browsing history in voice mode puts the flower away: it shrinks and
   // fades where it is, and the list takes the whole height. Opening a turn
   // (or scrolling back down) brings it back.

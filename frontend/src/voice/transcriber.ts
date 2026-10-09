@@ -1,5 +1,5 @@
 import { call, getJson } from "../net/http";
-import { acquireMic, type Mic } from "./mic";
+import { acquireMic, micTrouble, type Mic } from "./mic";
 
 // Speech to text for voice mode. When the backend can hear (Groq's
 // Whisper behind POST /api/transcribe, see GET /api/speech), the ask is
@@ -16,6 +16,9 @@ export interface ListenOptions {
   onSpeech: () => void;
   // Fires once per utterance with what was heard, possibly empty.
   onEnd: (text: string) => void;
+  // Fires instead of onEnd when there is no listening at all (the mic
+  // can't be opened), with why, in words for the user.
+  onFail: (reason: string) => void;
 }
 
 export interface Transcriber {
@@ -123,7 +126,7 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
   }
   let session: Session | null = null;
 
-  function start({ hold, onSpeech, onEnd }: ListenOptions): void {
+  function start({ hold, onSpeech, onEnd, onFail }: ListenOptions): void {
     abort();
     const own: Session = { dropped: false, stopped: false, heard: false, recorder: null, raf: 0 };
     session = own;
@@ -131,13 +134,13 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
     // since the recording decides when the ask is over.
     let shadowText: (text: string) => void = () => {};
     own.shadowHeard = new Promise((resolve) => (shadowText = resolve));
-    shadow?.start({ hold: true, onSpeech: () => {}, onEnd: shadowText });
+    shadow?.start({ hold: true, onSpeech: () => {}, onEnd: shadowText, onFail: () => shadowText("") });
     if (!shadow) shadowText("");
     acquireMic()
       .then((mic) => record(own, mic, hold, onSpeech, onEnd))
       .catch((err) => {
         console.error("transcriber: no mic", err);
-        if (!own.dropped) onEnd("");
+        if (!own.dropped) onFail(micTrouble(err));
       });
   }
 

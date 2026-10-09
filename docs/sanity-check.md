@@ -53,6 +53,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 ## Talking to huvu by voice (laptop, in Chrome)
 
 1. Click the flower. It should move to the middle of the screen, and the text field should go away.
+1. In the browser's site settings, block the mic for huvu, then click the flower. Under it, it should say to allow the mic, and it should not keep trying. Allow the mic again and click the flower. It should listen.
 1. Stay quiet and watch the flower listen for about ten seconds. Each ring it sends out should fade in as it leaves the flower and fade out as it grows, with no ring popping in at full strength.
 1. Say a question with your name and "huvu" in it. The flower should grow while you talk, and no words should appear while you speak. About three seconds after you stop, your words should appear with your name and "huvu" spelled right, fly up, and huvu should answer.
 1. Listen for huvu saying its own name. It should say "hoo voo".
