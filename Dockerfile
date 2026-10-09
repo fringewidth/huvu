@@ -32,8 +32,7 @@ USER root
 
 ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
     HUVU_ENV_FILE=/opt/data/huvu/.env \
-    HUVU_WEB_DIR=/opt/huvu/web \
-    UV_CACHE_DIR=/tmp/uv-cache
+    HUVU_WEB_DIR=/opt/huvu/web
 
 # uv comes from Astral's own image, at the version the lock file was written
 # with, so the build doesn't hang on Hermes shipping one (2026-10-08's didn't).
@@ -41,7 +40,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /uvx /usr/local/bin/
 
 WORKDIR /opt/huvu
 COPY --chown=hermes:hermes backend/ backend/
-RUN cd backend && uv sync -q --frozen --no-dev && chown -R hermes:hermes .venv
+# The build's uv cache is a cache mount, kept between builds and never in
+# the image. Left in the image, it was root's, and it broke Hermes's browser
+# tool, whose launcher runs uv as hermes. Copy, since a mount can't hardlink.
+RUN --mount=type=cache,target=/tmp/uv-build \
+    cd backend && UV_CACHE_DIR=/tmp/uv-build UV_LINK_MODE=copy uv sync -q --frozen --no-dev && \
+    chown -R hermes:hermes .venv
 COPY --chown=hermes:hermes hermes-plugin/ hermes-plugin/
 COPY --chown=hermes:hermes SOUL.md setup.sh wipe.sh ./
 COPY --chown=hermes:hermes docker/huvu.toml docker/huvu.toml
