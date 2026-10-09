@@ -5,8 +5,8 @@ export interface Brush {
   createCanvas(
     w: number,
     h: number,
-    opts?: { parent?: string | HTMLElement; pixelDensity?: number },
-  ): void;
+    opts?: { parent?: string | HTMLElement | null; pixelDensity?: number },
+  ): unknown;
   clear(color?: string): void;
   render(): void;
   push(): void;

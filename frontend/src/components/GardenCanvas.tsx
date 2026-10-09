@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { startGarden } from "../canvas/garden";
+import { startGarden } from "../canvas/host";
 
 export function GardenCanvas() {
   const ref = useRef<HTMLDivElement>(null);
