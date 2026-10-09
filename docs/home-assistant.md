@@ -408,14 +408,14 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 
 | Device | Area | How HA works it (IR, cloud, local) | Real state from | Scripts |
 |---|---|---|---|---|
-| Projector | Home Theatre | IR, 18 learned codes, one template button each (`button.projector_*`) | nothing; `sensor.home_theatre` is what the routines last did, unknown until one runs | `home_theatre_start`, `home_theatre_stop` |
+| Projector (Optoma HD300) | Home Theatre | IR, 18 learned codes, one template button each (`button.projector_*`) | nothing; `sensor.home_theatre` is what the routines last did, unknown until one runs | `home_theatre_start`, `home_theatre_stop` |
 | Amplifier | Home Theatre | IR, 4 learned codes (`button.amplifier_*`) | nothing | `home_theatre_start`, `home_theatre_stop`, `home_theatre_volume` |
 | AC | Home Theatre | Alexa only, by text command through the Echo Dot "Living Room" | nothing; `sensor.home_theatre_ac` is what huvu last asked, unknown until it asks | `home_theatre_ac` |
 | Fire TV Stick (Dad's) | Home Theatre | Alexa, by text command | nothing | `home_theatre_play` |
 | Main Switchboard (Tuya 4-gang) | Home Theatre | cloud (Tuya). Gangs 1 to 3 are the strip lights, night sky and focus lights, shown as lights (`switch_as_x`): `light.home_theatre_strip_lights`, `_night_sky`, `_focus_lights`. Gang 4 is the AV mains, `switch.home_theatre_av_mains`, hidden | the switches | `home_theatre_start` |
-| AC Switch (Tuya 2-gang) | Home Theatre | cloud (Tuya). Gang 1 is the AC's mains, `switch.home_theatre_ac_mains`, hidden. Gang 2 is unnamed and unexposed | the switches | `home_theatre_ac` |
-| AV power (`switch.home_theatre_av`) | Home Theatre | template switch over the AV mains. On: mains, 10 s, amplifier and projector power. Off: projector power, 5 s, projector power, amplifier power, then mains. Nothing else may cut the AV mains | the mains switch | `home_theatre_av_on`, `home_theatre_av_off` (not exposed) |
-| AC power (`switch.home_theatre_ac`) | Home Theatre | template switch over the AC mains. On: mains, 10 s, then Alexa. Off: Alexa first, 15 s, then mains. Nothing else may cut the AC mains | the mains switch | `home_theatre_ac` |
+| AC Switch (Tuya 2-gang) | Home Theatre | cloud (Tuya). Gang 1 is the AC's mains, `switch.home_theatre_ac_mains`, hidden. Gang 2 is a dummy, hidden | the switches | `home_theatre_ac` |
+| AV power (`switch.home_theatre_av`) | Home Theatre | template switch over the AV mains. On: mains, 10 s, amplifier and projector power. Off: projector power, 5 s, projector power, amplifier power, then 90 s of cooling (`sensor.home_theatre` says cooling) before the mains. Nothing else may cut the AV mains. Both are started, not waited for, and on waits out a cool-down | the mains switch | `home_theatre_av_on`, `home_theatre_av_off` (not exposed) |
+| AC power (`switch.home_theatre_ac`) | Home Theatre | template switch over the AC mains. On: mains, 10 s, then Alexa. Off: Alexa first, 60 s for the indoor unit to finish, then mains. Nothing else may cut the AC mains | the mains switch | `home_theatre_ac` |
 | Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | none |
 
 ### Scripts exposed to huvu
@@ -441,9 +441,9 @@ All in `packages/home_theatre.yaml`.
 
 1. The AC's name in the Alexa app is assumed to be "AC" (`ac_name` in `home_theatre_ac`), and whether Alexa takes "increase the AC temperature by 2 degrees" is untested.
 1. A helper that holds state nobody can read (the AC, the projector's power) starts as unknown, never as a guessed value. Keep it that way for every device added like these.
-1. The projector turns off with two presses of power, 5 seconds apart (the owner, 2026-10-10). Whether it needs to cool before its mains is cut is not known; `home_theatre_av_off` cuts it right after the amplifier.
-1. The waits for the gear and the AC to wake (10 s) and for the AC to stop before its mains goes (15 s) are guesses, not measured.
-1. Where the theatre's fans are, and what the AC board's second gang does, is not known.
+1. The projector turns off with two presses of power, 5 seconds apart (the owner, 2026-10-10), then its fans run for about 60 seconds before standby (Optoma's HD300X manual, "Powering Off the Projector"); `home_theatre_av_off` waits 90 seconds before the mains.
+1. The waits for the gear and the AC to wake (10 s) and for the AC to stop before its mains goes (60 s) are guesses, not measured.
+1. The theatre has no fans yet.
 1. Renaming an entity's id drops its Assist exposure. Expose it again after every rename, and check `ha_setup`.
 1. The Alexa routines (movie time, pause movie, movie lights out, play movie, home theatre off, daily vacuum, text) are buttons in HA but not exposed: what each does isn't written down yet.
 1. The Broadlink's Wi-Fi link is weak (70 to 90 ms pings, timeouts): HA lost it once on 2026-10-09 and came back on a reload.
