@@ -36,7 +36,7 @@ import hashlib
 import hmac
 import re
 import secrets
-import sqlite3
+import apsw
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -149,7 +149,7 @@ class Pairing:
 
 
 class Accounts:
-    def __init__(self, conn: sqlite3.Connection, now: Callable[[], datetime], *, household_key: str | None, household_mcp_token: str | None) -> None:
+    def __init__(self, conn: apsw.Connection, now: Callable[[], datetime], *, household_key: str | None, household_mcp_token: str | None) -> None:
         self._conn = conn
         self._now = now
         self._household_key = household_key

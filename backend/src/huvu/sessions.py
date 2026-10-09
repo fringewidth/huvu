@@ -10,7 +10,7 @@ the profile's MCP token.
 
 from __future__ import annotations
 
-import sqlite3
+import apsw
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -28,7 +28,7 @@ class SessionOwner:
 
 
 class SessionBook:
-    def __init__(self, conn: sqlite3.Connection, now) -> None:
+    def __init__(self, conn: apsw.Connection, now) -> None:
         self._conn = conn
         self._now = now
 

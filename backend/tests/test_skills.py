@@ -18,8 +18,10 @@ def test_a_source_becomes_a_skill(kernel):
     assert "Search for a light before turning it on." in text
     assert "- `home_turn_on(entity_id)`: Turns a light on." in text
     assert "- `home_unlock()`: Unlocks the front door. (always needs a person's tap)" in text
-    assert "- `home.light[entity_id]`: State of a light (string, pushed)" in text
-    assert "- `home.unlock`: The door was unlocked. Fields: method (string), person (string)." in text
+    assert "## Live tables" in text and "### `home_lights`" in text and "- `state` (text): on or off" in text
+    assert "## History tables" in text and "### `home_unlocks`" in text and "Indexed on (id), (ts), (user_id, ts)." in text
+    # A live table is listed before the history, and isn't indexed.
+    assert text.index("### `home_lights`") < text.index("### `home_unlocks`")
 
 
 def test_skills_are_written_read_only_and_stale_ones_go(kernel, tmp_path):
@@ -34,7 +36,7 @@ def test_skills_are_written_read_only_and_stale_ones_go(kernel, tmp_path):
     assert not (folder / "huvu-gone").exists() and (folder / "someone-elses").exists()
     # Writing again over a read-only file works.
     skills.write_all(kernel.registry.specs(), folder)
-    assert {p.name for p in folder.iterdir()} == {"huvu-home", "huvu-huvu", "huvu-clock", "someone-elses"}
+    assert {p.name for p in folder.iterdir()} == {"huvu-home", "huvu-huvu", "huvu-chat", "someone-elses"}
 
 
 async def test_act_reaches_source_actions(kernel, home, family):
@@ -48,13 +50,8 @@ async def test_act_reaches_source_actions(kernel, home, family):
     with pytest.raises(ToolError, match="takes no colour"):
         await kernel.tools.call("act", {"name": "home_turn_on", "args": {"entity_id": "x", "colour": "red"}}, me)
     # A kernel tool isn't an action.
-    with pytest.raises(ToolError, match="no action named 'state_get'"):
-        await kernel.tools.call("act", {"name": "state_get"}, me)
-
-
-async def test_search_says_how_to_work_a_thing(kernel):
-    found = await kernel.tools.call("state_search", {"query": "porch"}, Caller(kind="hermes"))
-    assert found.data[0].actions == ["home_turn_on"]
+    with pytest.raises(ToolError, match="no action named 'data_sql'"):
+        await kernel.tools.call("act", {"name": "data_sql"}, me)
 
 
 def test_skills_are_linked_into_the_hermes_folder(kernel, tmp_path):
@@ -76,4 +73,4 @@ def test_skills_are_linked_into_the_hermes_folder(kernel, tmp_path):
     shutil.rmtree(folder)
     skills.write_all(specs, folder)
     skills.link_all(specs, folder, links)
-    assert (links / "huvu-clock" / "SKILL.md").exists()
+    assert (links / "huvu-chat" / "SKILL.md").exists()

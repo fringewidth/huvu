@@ -9,13 +9,16 @@ import type { DeviceInfo, Person } from "./session";
 export interface Trigger {
   id: string;
   note: string;
-  repeat: string;
+  // edge: runs when its query's answer turns up; rows: for each new row.
+  fire: "edge" | "rows";
+  // Ends after its first fire.
+  once: boolean;
   // `awaiting`: an advanced trigger waiting for its person's yes.
   status: "active" | "unconfirmed" | "awaiting" | "paused";
   // The model its wakes run on: basic, pro or advanced.
   tier: "basic" | "pro" | "advanced";
-  // Who paused it. One the wake limit paused (`limit`) comes back only by
-  // a person's tap, here.
+  // Who paused it. One a limit paused (`limit`: it fired or woke huvu too
+  // often) comes back only by a person's tap, here.
   paused_by: "model" | "user" | "limit" | null;
   last_fired_at: string | null;
   fire_count: number;

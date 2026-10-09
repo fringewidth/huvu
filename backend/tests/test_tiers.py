@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import timedelta
 
 import pytest
@@ -13,18 +12,12 @@ from .fakes import WAKE
 pytestmark = pytest.mark.usefixtures("family")
 
 ME = Caller(kind="hermes", session="s1", user="me")
-BELL = {"note": "Doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": WAKE}
-
-
-async def settle(kernel) -> None:
-    for _ in range(3):
-        await asyncio.sleep(0)
-        await asyncio.gather(*kernel.triggers._tasks, return_exceptions=True)
+BELL = {"note": "Doorbell.", "sql": "SELECT id FROM home_doorbell", "fire": "rows", "once": False, "script": WAKE}
 
 
 async def ring(kernel) -> None:
-    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
-    await settle(kernel)
+    await kernel.registry.get("home").press()
+    await kernel.triggers.settle()
 
 
 def wake_models(hermes) -> list[str | None]:
@@ -99,7 +92,8 @@ async def test_everyone_gets_one_dream_and_a_removed_one_stays_gone(kernel):
     dreams = {u: [t for t in kernel.triggers.list(Caller(kind="hermes", user=u)) if t.spec.note.startswith("Your dream.")] for u in ("me", "mom")}
     assert [len(d) for d in dreams.values()] == [1, 1]
     [mine] = dreams["me"]
-    assert mine.spec.tier == "pro" and mine.spec.repeat == "daily" and "ctx.wake" in mine.spec.script
+    assert mine.spec.tier == "pro" and mine.spec.fire == "edge" and not mine.spec.once and "ctx.wake" in mine.spec.script
+    assert mine.spec.sql == "SELECT 1 WHERE now_minute() = 240"
     assert "brief" in mine.spec.note and "quick notes" in mine.spec.note
     await kernel.triggers.remove(mine.id, ME)
     await kernel.dreams.ensure()

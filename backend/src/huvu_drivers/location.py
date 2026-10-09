@@ -18,16 +18,19 @@ one of their groups, whose members' phones then get it too. `home` and
 `near_home` is the early warning: entering it means someone is on their way
 back, which is what triggers use in place of an ETA.
 
-Everything here is one person's. Every value is personal (only its person
-reads it or uses it in a trigger), and every event is theirs alone. The
-members of their groups see none of it.
+Everything here is one person's. Every row is its person's alone, so
+nobody else reads it or uses it in a trigger; the members of their groups
+see none of it. A waypoint is the exception: one shared with a group shows
+to its members.
 
 Every fix and transition is a row in the history tables (`location_fixes`,
 `location_transitions`), kept for good for the dream, and read by the model
-with data_sql; each row is its person's, so data_sql shows it to nobody
-else. Only arrivals and departures go to the event log. The source's own
-database (`location.db` in its folder) holds what it works from: the
-waypoints, where each person is, and what each phone was last sent.
+with data_sql. A transition that changed where huvu thinks the person is
+(`changed`) is an arrival or a departure. What is true now is in the live
+tables: where each person is (`location_people`) and the waypoints
+(`location_waypoints`). The source's own database (`location.db` in its
+folder) holds what it works from: the waypoints, where each person is, and
+what each phone was last sent.
 
     [[sources]]
     name = "location"
@@ -43,33 +46,20 @@ import json
 import logging
 import math
 import secrets
-import sqlite3
 import statistics
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
-from huvu.db import dumps, loads
+import apsw
+
+from huvu.db import Row, dumps, loads, open_db
 from huvu.prompts import LOCATION_GUIDE, TEXT
 from huvu.source import Source, SourceError
-from huvu.spec import (
-    ActionSpec,
-    Caller,
-    ColumnSpec,
-    EventSpec,
-    Reading,
-    Result,
-    SourceSpec,
-    TableSpec,
-    ValueSpec,
-)
-from huvu.times import format_span
+from huvu.spec import ActionSpec, Caller, ColumnSpec, Result, SourceSpec, TableSpec
 
 log = logging.getLogger("huvu.source.location")
 
-# A fix older than this says little about where someone is now: their
-# phone may be off, or out of signal.
-FRESH = timedelta(hours=2)
 DEFAULT_RADIUS_M = 150
 MIN_RADIUS_M = 50
 MAX_RADIUS_M = 50_000
@@ -79,8 +69,6 @@ ELSEWHERE = "elsewhere"
 # The waypoints the config makes, by id.
 HOME = "wp_home"
 NEAR_HOME = "wp_near_home"
-# An arrival reported this many minutes late or more says so in its summary.
-LATE_MIN = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS waypoints (
@@ -155,12 +143,25 @@ class Waypoint:
             "from_config": self.origin == "config",
         }
 
+    def row(self) -> dict[str, Any]:
+        """Its row of location_waypoints. One named by a person is theirs
+        alone until they share it; a shared one, and a group's own, show to
+        the group's members."""
+        return {
+            "name": self.name,
+            "lat": self.lat,
+            "lon": self.lon,
+            "radius_m": self.radius_m,
+            "named_by": self.user,
+            "from_config": self.origin == "config",
+            "user_id": self.user if self.group is None else None,
+            "group_id": self.group,
+        }
+
 
 def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
-
-PERSON = {"user": "string"}
 
 _DEVICE = ColumnSpec(name="device", type="text", description=TEXT["location.column.device"])
 _RAW = ColumnSpec(name="raw", type="json", description=TEXT["location.column.raw"])
@@ -198,78 +199,70 @@ TABLES = [
             ColumnSpec(name="lat", type="real", description=TEXT["location.table.transitions.column.lat"]),
             ColumnSpec(name="lon", type="real", description=TEXT["location.table.transitions.column.lon"]),
             ColumnSpec(name="accuracy_m", type="real", description=TEXT["location.table.transitions.column.accuracy_m"]),
+            ColumnSpec(name="stayed_min", type="integer", description=TEXT["location.table.transitions.column.stayed_min"]),
+            ColumnSpec(name="delay_min", type="integer", description=TEXT["location.table.transitions.column.delay_min"]),
             _RAW,
         ],
         indexes=[["waypoint", "ts"], ["device", "ts"]],
+    ),
+    TableSpec(
+        name="people",
+        description=TEXT["location.table.people"].format(elsewhere=ELSEWHERE),
+        columns=[
+            ColumnSpec(name=n, type=t, description=TEXT[f"location.table.people.column.{n}"].format(elsewhere=ELSEWHERE))
+            for n, t in (
+                ("place", "text"),
+                ("inside", "json"),
+                ("lat", "real"),
+                ("lon", "real"),
+                ("accuracy_m", "real"),
+                ("fix_at", "text"),
+                ("distance_home_km", "real"),
+                ("battery", "integer"),
+                ("wifi", "text"),
+            )
+        ],
+        live=True,
+    ),
+    TableSpec(
+        name="waypoints",
+        description=TEXT["location.table.waypoints"],
+        columns=[
+            ColumnSpec(name=n, type=t, description=TEXT[f"location.table.waypoints.column.{n}"])
+            for n, t in (
+                ("name", "text"),
+                ("lat", "real"),
+                ("lon", "real"),
+                ("radius_m", "real"),
+                ("named_by", "text"),
+                ("from_config", "boolean"),
+            )
+        ],
+        live=True,
     ),
 ]
 
 class LocationSource(Source):
     def __init__(self, options: dict[str, Any] | None = None) -> None:
         super().__init__(options)
-        self._conn: sqlite3.Connection | None = None
+        self._conn: apsw.Connection | None = None
+        # Each person's row of location_people, kept up to date on the event
+        # loop, so a query's worker thread only copies it.
+        self._people: dict[str, dict[str, Any]] = {}
+
+    async def run(self) -> None:
+        """Fills in where everyone is, from before the last restart."""
+        latest = self.ctx.rows("fixes", "id IN (SELECT max(id) FROM location_fixes GROUP BY user_id)", ())
+        users = {r["user_id"] for r in latest} | {r["user_id"] for r in self.db.execute("SELECT DISTINCT user_id FROM presence").fetchall()}
+        for user in users:
+            if user is not None:
+                await self._publish(user)
 
     def describe(self) -> SourceSpec:
         return SourceSpec(
             name="location",
             description=TEXT["location.description"],
             guide=LOCATION_GUIDE,
-            values=[
-                ValueSpec(
-                    name="place",
-                    description=TEXT["location.value.place"].format(elsewhere=ELSEWHERE),
-                    type="string",
-                    params=PERSON,
-                    personal=True,
-                ),
-                ValueSpec(name="inside", description=TEXT["location.value.inside"], type="list", params=PERSON, personal=True),
-                ValueSpec(
-                    name="fix",
-                    description=TEXT["location.value.fix"],
-                    type="object",
-                    params=PERSON,
-                    max_age=FRESH,
-                    personal=True,
-                ),
-                ValueSpec(
-                    name="distance_home_km",
-                    description=TEXT["location.value.distance_home_km"],
-                    type="number",
-                    unit="km",
-                    params=PERSON,
-                    max_age=FRESH,
-                    personal=True,
-                ),
-                ValueSpec(name="battery", description=TEXT["location.value.battery"], type="number", unit="%", params=PERSON, max_age=FRESH, personal=True),
-                ValueSpec(
-                    name="wifi",
-                    description=TEXT["location.value.wifi"],
-                    type="string",
-                    params=PERSON,
-                    max_age=FRESH,
-                    personal=True,
-                ),
-                ValueSpec(
-                    name="waypoints",
-                    description=TEXT["location.value.waypoints"],
-                    type="list",
-                    params=PERSON,
-                    updates="on_demand",
-                    personal=True,
-                ),
-            ],
-            events=[
-                EventSpec(
-                    type="arrived",
-                    description=TEXT["location.event.arrived"],
-                    data={"waypoint": "string", "delay_min": "number"},
-                ),
-                EventSpec(
-                    type="left",
-                    description=TEXT["location.event.left"],
-                    data={"waypoint": "string", "stayed_min": "number", "delay_min": "number"},
-                ),
-            ],
             actions=[
                 ActionSpec(
                     name="waypoint_add",
@@ -310,12 +303,11 @@ class LocationSource(Source):
     # Storage
 
     @property
-    def db(self) -> sqlite3.Connection:
+    def db(self) -> apsw.Connection:
         if self._conn is None:
-            conn = sqlite3.connect(self.ctx.data_dir / "location.db", check_same_thread=False, isolation_level=None)
-            conn.row_factory = sqlite3.Row
+            conn = open_db(self.ctx.data_dir / "location.db")
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(SCHEMA)
+            conn.execute(SCHEMA)
             self._conn = conn
             self._seed()
         return self._conn
@@ -417,17 +409,18 @@ class LocationSource(Source):
         repeat = self.ctx.rows("transitions", "device = ? AND ts = ? AND name_on_phone IS ? AND event = ?", (device, at.timestamp(), name, event), limit=1)
         # A region made on the phone itself is kept, and changes nothing.
         waypoint = self._match(user, p.get("wtst"), name)
-        changed = not repeat and waypoint is not None and await self._cross(user, waypoint, event == "enter", at)
+        crossing = await self._cross(user, waypoint, event == "enter", at) if not repeat and waypoint is not None else None
         if not repeat:
             row = {
                 "device": device,
                 "waypoint": waypoint.name if waypoint else None,
                 "name_on_phone": name,
                 "event": event,
-                "changed": changed,
+                "changed": crossing is not None,
                 "lat": _number(p.get("lat")),
                 "lon": _number(p.get("lon")),
                 "accuracy_m": _number(p.get("acc")),
+                **(crossing or {}),
                 "raw": p,
             }
             await self.ctx.record("transitions", row, at=at, user=user)
@@ -440,43 +433,24 @@ class LocationSource(Source):
         by_tst = next((w for w in visible if wtst is not None and w.tst == int(wtst)), None)
         return by_tst or next((w for w in visible if w.name == desc), None)
 
-    async def _cross(self, user: str, waypoint: Waypoint, entering: bool, at: datetime) -> bool:
-        """Takes a crossing, and logs it when it changes where the person
-        is. One older than the latest crossing huvu knows (a queue the phone
-        sent late) changes nothing. Returns whether it changed anything."""
+    async def _cross(self, user: str, waypoint: Waypoint, entering: bool, at: datetime) -> dict[str, Any] | None:
+        """Takes a crossing, and when it changes where the person is,
+        returns how late it came and how long they stayed, for its row. One
+        older than the latest crossing huvu knows (a queue the phone sent
+        late) changes nothing."""
         row = self.db.execute("SELECT * FROM presence WHERE user_id = ? AND waypoint_id = ?", (user, waypoint.id)).fetchone()
         newer = row is None or at.timestamp() > row["ts"]
-        changed = newer and (row is None or bool(row["inside"]) != entering)
-        if changed:
-            self.db.execute(
-                "INSERT INTO presence (user_id, waypoint_id, inside, ts) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT (user_id, waypoint_id) DO UPDATE SET inside = excluded.inside, ts = excluded.ts",
-                (user, waypoint.id, int(entering), at.timestamp()),
-            )
-            stayed = at - datetime.fromtimestamp(row["ts"]).astimezone() if row is not None and row["inside"] and not entering else None
-            await self._log_crossing(user, waypoint, entering, at, stayed)
-        return changed
-
-    async def _log_crossing(self, user: str, waypoint: Waypoint, entering: bool, at: datetime, stayed: timedelta | None) -> None:
-        name = self.ctx.user_name(user)
-        delay_min = max(0, int((self.ctx.now() - at).total_seconds() // 60))
-        data: dict[str, Any] = {"waypoint": waypoint.name, "delay_min": delay_min}
-        if entering:
-            summary = f"{name} arrived at {waypoint.name}"
-        else:
-            summary = f"{name} left {waypoint.name}" + (f" after {format_span(stayed)}" if stayed is not None else "")
-            if stayed is not None:
-                data["stayed_min"] = int(stayed.total_seconds() // 60)
-        if delay_min >= LATE_MIN:
-            summary += f" (reported {delay_min} min late)"
-        await self.ctx.emit(
-            "arrived" if entering else "left",
-            summary,
-            entity=f"waypoint:{waypoint.name}",
-            data=data,
-            at=at,
-            user=user,
+        if not (newer and (row is None or bool(row["inside"]) != entering)):
+            return None
+        self.db.execute(
+            "INSERT INTO presence (user_id, waypoint_id, inside, ts) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (user_id, waypoint_id) DO UPDATE SET inside = excluded.inside, ts = excluded.ts",
+            (user, waypoint.id, int(entering), at.timestamp()),
         )
+        crossing: dict[str, Any] = {"delay_min": max(0, int((self.ctx.now() - at).total_seconds() // 60))}
+        if row is not None and row["inside"] and not entering:
+            crossing["stayed_min"] = int((at - datetime.fromtimestamp(row["ts"]).astimezone()).total_seconds() // 60)
+        return crossing
 
     def _sync(self, user: str, device: str) -> list[dict[str, Any]]:
         """The commands that bring a tracker's waypoints up to date: none
@@ -499,48 +473,41 @@ class LocationSource(Source):
             )
         return commands
 
-    # Values
+    # Live tables
 
-    async def read(self, value: str, params: dict[str, Any]) -> Reading:
-        return self._values(params["user"])[value]
+    def live(self, table: str) -> list[dict[str, Any]]:
+        if table == "people":
+            return [dict(row) for row in list(self._people.values())]
+        conn = open_db(self.ctx.data_dir / "location.db", readonly=True)
+        try:
+            rows = conn.execute("SELECT * FROM waypoints WHERE removed_at IS NULL ORDER BY radius_m, name").fetchall()
+        finally:
+            conn.close()
+        return [_waypoint(r).row() for r in rows]
 
     async def _publish(self, user: str) -> None:
-        """Pushes the person's pushed values, so triggers and the kernel's
-        readings follow."""
-        for name, reading in self._values(user).items():
-            if name != "waypoints" and reading.value is not None:
-                await self.ctx.update(name, reading.value, params={"user": user}, at=reading.at)
+        """Brings the person's row of location_people up to date."""
+        self._people[user] = self._person(user)
 
-    def _values(self, user: str) -> dict[str, Reading]:
+    def _person(self, user: str) -> dict[str, Any]:
         visible = self._visible(user)
         fix = self._latest_fix(user)
         entered = {r["waypoint_id"] for r in self.db.execute("SELECT waypoint_id FROM presence WHERE user_id = ? AND inside = 1", (user,)).fetchall()}
         # Smallest first, as `_visible` sorts them.
         inside = [w for w in visible if w.id in entered]
-        crossed = self.db.execute("SELECT MAX(ts) AS ts FROM presence WHERE user_id = ?", (user,)).fetchone()["ts"]
-        crossed_at = datetime.fromtimestamp(crossed).astimezone() if crossed is not None else None
-        no_fix = f"{user}'s phone has sent no location yet"
-        values = {
-            "place": Reading(value=inside[0].name if inside else ELSEWHERE, at=crossed_at or self.ctx.now()),
-            "inside": Reading(value=[w.name for w in inside], at=crossed_at or self.ctx.now()),
-            "waypoints": Reading(value=[w.public() for w in visible], at=self.ctx.now()),
-            "fix": Reading(reason=no_fix),
-            "distance_home_km": Reading(reason=no_fix),
-            "battery": Reading(reason=no_fix),
-            "wifi": Reading(reason=no_fix),
-        }
+        row: dict[str, Any] = {"place": inside[0].name if inside else ELSEWHERE, "inside": [w.name for w in inside], "user_id": user}
         if fix is not None:
-            at = datetime.fromisoformat(fix["at"])
             home = next((w for w in visible if w.name == "home"), None)
-            values["fix"] = Reading(value={"lat": fix["lat"], "lon": fix["lon"], "accuracy_m": fix["accuracy_m"]}, at=at)
-            values["wifi"] = Reading(value=fix["wifi"] or "", at=at)
-            values["battery"] = Reading(value=fix["battery"], at=at) if fix["battery"] is not None else Reading(reason="the phone didn't say")
-            values["distance_home_km"] = (
-                Reading(value=round(_metres(fix["lat"], fix["lon"], home.lat, home.lon) / 1000, 2), at=at)
-                if home is not None
-                else Reading(reason="no waypoint is named home")
-            )
-        return values
+            row |= {
+                "lat": fix["lat"],
+                "lon": fix["lon"],
+                "accuracy_m": fix["accuracy_m"],
+                "fix_at": fix["at"],
+                "battery": fix["battery"],
+                "wifi": fix["wifi"],
+                "distance_home_km": round(_metres(fix["lat"], fix["lon"], home.lat, home.lon) / 1000, 2) if home is not None else None,
+            }
+        return row
 
     def _latest_fix(self, user: str | None) -> dict[str, Any] | None:
         latest = self.ctx.rows("fixes", "user_id = ?", (user,), order="ts DESC", limit=1)
@@ -686,7 +653,7 @@ def setup_link(url: str, user: str, device: str, token: str) -> str:
     return "owntracks:///config?inline=" + base64.b64encode(json.dumps(config).encode()).decode()
 
 
-def _waypoint(row: sqlite3.Row) -> Waypoint:
+def _waypoint(row: Row) -> Waypoint:
     return Waypoint(
         id=row["id"],
         name=row["name"],

@@ -1,9 +1,9 @@
 """The kernel: every part of the backend, wired together.
 
 Sources (the drivers) plug in through the registry. Everything else here is
-the orchestration around them: state, the event log, triggers and their
-scripts, the action policy, the tool box Hermes and scripts call, the
-Hermes client with its sessions and wakes, and the link to the frontend.
+the orchestration around them: the tables, triggers and their scripts, the
+action policy, the tool box Hermes and scripts call, the Hermes client
+with its sessions and wakes, and the link to the frontend.
 """
 
 from __future__ import annotations
@@ -19,14 +19,13 @@ from typing import Any
 from . import skills
 from .accounts import Accounts
 from .attendance import Attendance
-from .builtin.clock import ClockSource
+from .builtin.chat import ChatSource
 from .builtin.huvu import HuvuSource
 from .config import Config
 from .conversations import ConversationHub
 from .data import DataStore
 from .db import connect, from_iso, iso
 from .dream import Dreams
-from .events import EventLog
 from .hearing import Hearing
 from .hermes import HermesClient
 from .media import MediaStore
@@ -36,10 +35,9 @@ from .push import PushHub
 from .registry import Registry
 from .scripts import ScriptRunner
 from .sessions import SessionBook
-from .source import Source, SourceError
-from .spec import Event, Feed, Label
+from .source import Source
+from .spec import Feed, Label
 from .speech import Voice
-from .state import StateService
 from .tools import ToolBox
 from .triggers import TriggerEngine
 from .wake import Waker
@@ -47,8 +45,8 @@ from .wake import Waker
 log = logging.getLogger("huvu.kernel")
 
 TICK = 60.0
-# Hermes sessions huvu started are deleted after this long unused. The event
-# log and the turns huvu keeps for the stage stay.
+# Hermes sessions huvu started are deleted after this long unused. The
+# history and the turns huvu keeps for the stage stay.
 SESSION_RETENTION = timedelta(days=30)
 # How often the sweep runs.
 SWEEP_EVERY = timedelta(days=1)
@@ -73,9 +71,8 @@ class Kernel:
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = connect(config.data_dir / "huvu.db")
         self.accounts = Accounts(self.db, self.now, household_key=config.hermes_api_key, household_mcp_token=config.mcp_token)
-        self.events = EventLog(self.db)
+        self.data = DataStore(self)
         self.registry = Registry(self)
-        self.state = StateService(self)
         self.policy = Policy(self, config.policy)
         self.tools = ToolBox(self)
         self.triggers = TriggerEngine(self)
@@ -91,12 +88,11 @@ class Kernel:
         self.voice = Voice(config)
         self.hearing = Hearing(self)
         self.dreams = Dreams(self)
-        self.data = DataStore(self)
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None
 
-        self.registry.add("clock", ClockSource())
         self.registry.add("huvu", self.huvu)
+        self.registry.add("chat", ChatSource())
         for source in config.sources:
             self.registry.load(source.name, source.driver, source.options)
         for name, source in (sources or {}).items():
@@ -104,7 +100,7 @@ class Kernel:
         for spec in self.registry.specs():
             self.data.ensure(spec)
         self.tools.build()
-        self.state.load()
+        self.data.on_record = self.triggers.nudge
 
     def now(self) -> datetime:
         return self._clock() if self._clock else datetime.now().astimezone()
@@ -114,7 +110,7 @@ class Kernel:
         self.db.execute("UPDATE turns SET running = 0, ending = 'failed' WHERE running = 1")
         await self.registry.start()
         self.write_skills()
-        await self.triggers.load()
+        await self.triggers.start()
         await self.dreams.ensure()
         if self.native_push.sender is None:
             log.info("native push is off: HUVU_FCM_CREDENTIALS is not set")
@@ -132,7 +128,7 @@ class Kernel:
         tool list doesn't change, since source actions run through `act`,
         so no Hermes session loses its prompt cache; only the source's
         skill does. A trigger script whose grant names a tool that is gone
-        fails at its next run, as a trigger.error event the dream reads."""
+        fails at its next run, as a trigger.error row the dream reads."""
         old, new = self.registry.respec(name)
         self.data.ensure(new)
         self.tools.build()
@@ -207,16 +203,6 @@ class Kernel:
             await self.kernel_event("sessions.swept", f"deleted {deleted} Hermes sessions unused for {SESSION_RETENTION.days} days")
         return deleted
 
-    async def emit(self, event: Event) -> Event:
-        """Logs a source's event, then lets triggers see it. The type must be
-        one the source declared."""
-        source, _, type_ = event.type.partition(".")
-        if source != event.source or self.registry.spec(source).event(type_) is None:
-            raise SourceError(f"{event.source} emitted {event.type}, which its spec doesn't declare")
-        stored = self.events.append(event)
-        await self.triggers.on_event(stored)
-        return stored
-
     async def kernel_event(
         self,
         type: str,
@@ -229,26 +215,33 @@ class Kernel:
         user: str | None = None,
         group: str | None = None,
         device: str | None = None,
-    ) -> Event:
-        """Logs one of the kernel's own events: trigger runs and errors,
-        actions, approvals, wakes, chat turns. Triggers can't watch these.
-        `user` makes it that user's alone, and `group` its members' (see
-        events.py)."""
-        return self.events.append(
-            Event(
-                at=self.now(),
-                source="kernel",
-                type=type,
-                entity=entity,
-                summary=summary,
-                refs=refs or {},
-                data=data or {},
-                labels=labels or ["house"],
-                user=user,
-                group=group,
-                device=device,
-            )
-        )
+    ) -> int:
+        """Logs one of the kernel's own events in `huvu_events`: trigger runs
+        and errors, actions, approvals, wakes, attendance. `user` makes it
+        that user's alone, and `group` its members' (see scope.py). Returns
+        the row's id."""
+        row = {
+            "type": type,
+            "entity": entity,
+            "summary": summary,
+            "refs": refs or {},
+            "data": data or {},
+            "labels": labels or ["house"],
+            "device_id": device,
+        }
+        return self.data.record("huvu", "events", row, at=self.now(), user=user, group=group)
+
+    def events_since(self, type: str, since: datetime, *, entity: str | None = None, user: str | None = None) -> int:
+        """How many of the kernel's events of a type since a time, for one
+        entity or user."""
+        where, args = ["type = ?", "ts >= ?"], [type, since.timestamp()]
+        if entity is not None:
+            where.append("entity = ?")
+            args.append(entity)
+        if user is not None:
+            where.append("user_id = ?")
+            args.append(user)
+        return self.data.count("huvu", "events", " AND ".join(where), args)
 
     async def notify(
         self, user: str | None, group: str | None, text: str, *, image: str | None = None, urgency: str = "normal", opens: str | None = None

@@ -1,15 +1,14 @@
 """The source contract: what a driver implements, and what the kernel gives it.
 
 A source owns its own working storage and processing. The kernel never
-tells it where to keep things, except its history: rows for analysis go
-through `ctx.record` into the kernel's history tables, which the model
-reads with data_sql (data.py). It only asks the source
-questions through the methods below, and hears from it through the context.
+tells it where to keep things, except its history: what happened goes
+through `ctx.record` into the kernel's history tables. What is true now it
+answers itself, each time a query reads one of its live tables (`live`).
+The model reads both with data_sql (data.py), and so do triggers.
 
 Every method has a default, so a driver implements only what it has. A
-source with no long-lived connection leaves `run` alone. A source whose
-values are all pushed leaves `read` alone, since the kernel answers from
-what it pushed.
+source with no long-lived connection leaves `run` alone. A source with no
+live tables leaves `live` alone.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .spec import Blob, Caller, Event, Feed, Label, Match, Reading, Result, SourceSpec
+from .spec import Blob, Caller, Feed, Result, SourceSpec
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -49,25 +48,24 @@ class Source:
         self._ctx = ctx
 
     def describe(self) -> SourceSpec:
-        """The source's values, events, actions and history tables. Called at load, after `bind`, and again each time the source
-        calls `ctx.respec()`. The kernel builds the model's tools, the
-        trigger catalog, the history tables and the source's skill from
-        it."""
+        """The source's tables and actions. Called at load, after `bind`, and
+        again each time the source calls `ctx.respec()`. The kernel builds
+        the history tables, the live tables, the actions and the source's
+        skill from it."""
         raise NotImplementedError
 
     async def run(self) -> None:
         """The long-lived part: a Pulsar consumer, a websocket, a polling
         loop. It reports through `self.ctx`. If it raises, the kernel logs a
-        `<source>.error` event and starts it again after a backoff."""
+        `source_error` row and starts it again after a backoff."""
 
-    async def read(self, value: str, params: dict[str, Any]) -> Reading:
-        """The current reading of one value. Only `on_demand` values need it;
-        the kernel answers pushed values from what the source pushed."""
-        return Reading(reason="this source has not reported this value yet")
-
-    async def search(self, text: str) -> list[Match]:
-        """The source's things whose name, area or alias matches `text`,
-        such as HA entities. The kernel merges every source's answer."""
+    def live(self, table: str) -> list[dict[str, Any]]:
+        """The rows of one of the source's live tables, now, as dicts by
+        column name, with `user_id` and `group_id` for a row that is one
+        person's or one group's. It runs on a query's worker thread, so it
+        answers from what the source already holds, without awaiting and
+        without touching what the event loop may be changing: copy a dict
+        before walking it."""
         return []
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
@@ -76,10 +74,6 @@ class Source:
         `caller.user` is whom it's for, so a source with per-person data
         acts on that person's; it is None for the household."""
         raise SourceError(f"{self.ctx.name} has no action {name!r}")
-
-    async def watch(self, value: str, params: dict[str, Any]) -> None:
-        """Asks the source to push changes for one value from now on. A
-        source that pushes everything anyway can leave this alone."""
 
     async def fetch(self, ref: str) -> Blob:
         """The binary content behind one of the source's refs."""
@@ -103,10 +97,8 @@ class NotIngesting(SourceError):
 
 
 class SourceContext:
-    """What the kernel gives a source: a way to report events, values and
-    history rows, a way to say its spec changed, a way to read other
-    sources (for derived sources like presence), a folder of its own, and
-    its logger."""
+    """What the kernel gives a source: a way to record history rows, a way
+    to say its spec changed, a folder of its own, and its logger."""
 
     def __init__(self, kernel: Kernel, name: str, data_dir: Path) -> None:
         self._kernel = kernel
@@ -123,59 +115,10 @@ class SourceContext:
         return self._kernel.accounts.member_groups(user)
 
     def user_name(self, user: str) -> str:
-        """What to call a user in an event's summary: their name, or their
-        username if they're gone."""
+        """What to call a user in a summary: their name, or their username
+        if they're gone."""
         found = self._kernel.accounts.user(user)
         return found.name if found else user
-
-    async def emit(
-        self,
-        type: str,
-        summary: str,
-        *,
-        entity: str | None = None,
-        refs: dict[str, str] | None = None,
-        data: dict[str, Any] | None = None,
-        labels: list[Label] | None = None,
-        at: datetime | None = None,
-        user: str | None = None,
-        group: str | None = None,
-    ) -> Event:
-        """Logs an event. `type` is unqualified (`doorbell`); the kernel adds
-        the source's name. It must be one of the types in the spec. `user`
-        makes it one person's (their calendar), and `group` one group's (a
-        second house's lock), not the whole house's."""
-        event = Event(
-            at=at or self._kernel.now(),
-            source=self.name,
-            type=f"{self.name}.{type}",
-            entity=entity,
-            summary=summary,
-            refs=refs or {},
-            data=data or {},
-            labels=labels or ["house"],
-            user=user,
-            group=group,
-        )
-        return await self._kernel.emit(event)
-
-    async def update(
-        self,
-        value: str,
-        reading: Any,
-        *,
-        params: dict[str, Any] | None = None,
-        at: datetime | None = None,
-        labels: list[Label] | None = None,
-    ) -> None:
-        """Reports the current reading of one of the source's values. Only
-        watchers hear each change; the event log doesn't."""
-        await self._kernel.state.update(
-            self.name,
-            value,
-            params or {},
-            Reading(value=reading, at=at or self._kernel.now(), labels=labels or ["house"]),
-        )
 
     async def record(
         self,
@@ -185,12 +128,21 @@ class SourceContext:
         at: datetime | None = None,
         user: str | None = None,
         group: str | None = None,
-    ) -> None:
+    ) -> int:
         """Adds a row to one of the source's history tables (`table` is
-        unqualified, as in the spec). The kernel fills in the standard
-        columns: the time keys from `at`, and whose row it is from `user`
-        and `group`, with the same meaning as on events. See data.py."""
-        self._kernel.data.record(self.name, table, row, at=at or self._kernel.now(), user=user, group=group)
+        unqualified, as in the spec), and returns its id. The kernel fills
+        in the standard columns: the id, the time keys from `at`, and whose
+        row it is from `user` and `group` (see scope.py). The triggers that
+        read this source run at once. See data.py."""
+        return self._kernel.data.record(self.name, table, row, at=at or self._kernel.now(), user=user, group=group)
+
+    def nudge(self) -> None:
+        """Says something the source's live tables show may have changed,
+        with no row to record, such as a sensor reading that only goes
+        into a 5-minute bucket. The triggers that read the source run at
+        once. Only a matter of speed: the 5-second poll catches the change
+        anyway, so a nudge that is missed costs at most that."""
+        self._kernel.triggers.nudge(self.name)
 
     def rows(self, table: str, where: str, args: Sequence[Any] = (), *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
         """Reads the source's own history rows back, every person's, for a
@@ -203,12 +155,3 @@ class SourceContext:
         scripts in Home Assistant change. The kernel calls `describe` again,
         and rebuilds the tools, the history tables and the source's skill."""
         await self._kernel.respec(self.name)
-
-    async def read(self, keys: list[str]) -> dict[str, Reading]:
-        """Reads values from any source, by their keys (`ha.entity_state[light.porch]`)."""
-        return await self._kernel.state.get(keys)
-
-    async def watch(self, key: str, callback) -> None:
-        """Calls `callback(key, reading)` on each change of another source's
-        value. For derived sources."""
-        await self._kernel.state.watch(key, callback)

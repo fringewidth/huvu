@@ -32,7 +32,6 @@ from .push import api_json, sse
 from .source import NotIngesting, SourceError
 from .spec import Caller
 from .speech import MEDIA_TYPE as SPEECH
-from .times import for_model
 from .tools import ToolError
 from .triggers import TriggerError
 
@@ -88,10 +87,6 @@ class IdentifyAnswer(BaseModel):
 class PushToken(BaseModel):
     token: str = Field(min_length=1)
     platform: Literal["android", "ios"]
-
-
-class Situation(BaseModel):
-    values: list[str]
 
 
 class Thinking(BaseModel):
@@ -419,14 +414,13 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         return {"shown": kernel.conversations.think(body.session, body.text, body.start, user, group)}
 
     @app.post("/api/situation")
-    async def situation(request: Request, body: Situation) -> dict[str, str]:
-        """The situation block for the huvu Hermes plugin: chosen values,
-        readable, and what waits on the profile's user. Which values go in
-        is Hermes's choice; the plugin sends them."""
+    async def situation(request: Request) -> dict[str, str]:
+        """The situation block for the huvu Hermes plugin: the time, who
+        huvu is helping, the family mode, and what waits on the profile's
+        user."""
         known, user, group = mcp_caller(config, accounts, bearer(request))
         if not known:
             raise HTTPException(401, "unauthorized")
-        readings = for_model(await kernel.state.get(body.values, accounts.scope(user, group)), kernel.now())
         helping = shared = None
         if user:
             named = accounts.user(user)
@@ -435,9 +429,8 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             group_named = accounts.group(group)
             people = ", ".join(f"{u.name} ({u.id})" for u in accounts.people(group or accounts.default_group()))
             shared = (group_named.name if group_named else group, people)
-        values = [(key, r.get("value", r.get("reason")), r.get("at", "no time")) for key, r in readings.items()]
         pending = kernel.policy.pending_for(accounts.scope(user, group))
-        return {"text": prompts.situation(f"{kernel.now():%a %Y-%m-%d %H:%M}", helping, shared, values, len(pending))}
+        return {"text": prompts.situation(f"{kernel.now():%a %Y-%m-%d %H:%M}", helping, shared, kernel.huvu.mode(), len(pending))}
 
     # The web client, so huvu.hrishik.me is both the app and its backend.
     # Mounted last, so every route above wins over a file of the same path.

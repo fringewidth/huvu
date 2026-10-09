@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("huvu.scripts")
 
 TIMEOUT = 30.0
+# How long a script that has finished may take to exit before it is killed.
+EXIT_WAIT = 2.0
 # How much of a script's stderr the report keeps.
 LOG_TAIL = 4000
 
@@ -64,9 +66,8 @@ class ScriptRunner:
                 raise ScriptError(f"grant {grant!r} names no tool{suggest(grant, known)}")
 
     async def run(self, trigger: Trigger, payload: dict[str, Any], dry: bool) -> dict[str, Any]:
-        """Runs the trigger's script once. In a dry run, reads (state_get,
-        data_sql) run for real, while actions and wakes are recorded and
-        skipped."""
+        """Runs the trigger's script once. In a dry run, reads (data_sql)
+        run for real, while actions and wakes are recorded and skipped."""
         path = self._dir / f"{trigger.id}.py"
         path.write_text(trigger.spec.script or "")
         caller = Caller(kind="script", trigger=trigger.id, user=trigger.user, group=trigger.group)
@@ -86,7 +87,13 @@ class ScriptRunner:
             proc.kill()
             report["error"] = f"timed out after {int(TIMEOUT)} s"
         finally:
-            await proc.wait()
+            # A run cut short (the kernel stopping) leaves the script waiting
+            # for an answer that never comes.
+            try:
+                await asyncio.wait_for(proc.wait(), EXIT_WAIT)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
             stderr = await proc.stderr.read() if proc.stderr else b""
             report["log"] = stderr.decode(errors="replace")[-LOG_TAIL:]
         if not dry:
@@ -135,7 +142,7 @@ class ScriptRunner:
         else:
             try:
                 result = await self._kernel.tools.call(tool, args, caller)
-                # state_get answers with Reading models, which plain JSON can't hold.
+                # Tool data can hold datetimes, which plain JSON can't.
                 reply = {"result": api_json(result.data)}
             except Exception as err:
                 record["error"] = str(err)

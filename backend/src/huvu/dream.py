@@ -1,8 +1,8 @@
 """The dream: each person's agent, woken every night to look back on the day.
 
-It is an ordinary trigger, one per user, that the kernel sets up itself:
-`clock.time` at config.dream_at, daily, on config.dream_tier, with a
-script that only wakes the model. Its note is the dream prompt, so the
+It is an ordinary trigger, one per user, that the kernel sets up itself: an
+edge on the local minute being config.dream_at, so once a day, on
+config.dream_tier, with a script that only wakes the model. Its note is the dream prompt, so the
 woken session reads it first. The dream ends with a brief to its person,
 a few short notes through huvu_notify.
 
@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from .prompts import DREAM_NOTE, DREAM_SCRIPT
 from .spec import Caller
+from .times import parse_clock
 from .triggers import TriggerSpec
 
 if TYPE_CHECKING:
@@ -31,11 +32,13 @@ class Dreams:
 
     def spec(self) -> TriggerSpec:
         config = self._kernel.config
+        at = parse_clock(config.dream_at)
         return TriggerSpec.model_validate(
             {
                 "note": DREAM_NOTE,
-                "when": [{"value": "clock.time", "op": "==", "arg": config.dream_at}],
-                "repeat": "daily",
+                "sql": f"SELECT 1 WHERE now_minute() = {at.hour * 60 + at.minute}",
+                "fire": "edge",
+                "once": False,
                 "script": DREAM_SCRIPT,
                 "tier": config.dream_tier,
             }

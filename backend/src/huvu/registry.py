@@ -1,8 +1,8 @@
-"""The registry: every loaded source, its spec, and name resolution.
+"""The registry: every loaded source, its spec, and action names.
 
-Every name a model or a trigger writes (a value key, an event type, an
-action) resolves here. An unknown name fails with the nearest real one in
-the message, so a small model can fix its call on the next try.
+An action name a model writes resolves here. An unknown one fails with the
+nearest real one in the message, so a small model can fix its call on the
+next try.
 """
 
 from __future__ import annotations
@@ -14,9 +14,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .names import UnknownName, ValueRef, make_ref, split_key
 from .source import Source, SourceContext, SourceError
-from .spec import ActionSpec, EventSpec, SourceSpec, ValueSpec
+from .spec import ActionSpec, SourceSpec
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -27,6 +26,11 @@ RESTART_FIRST = 5.0
 RESTART_MAX = 300.0
 # A run at least this long counts as healthy, and resets the backoff.
 HEALTHY_RUN = 60.0
+
+
+class UnknownName(ValueError):
+    """An unknown or malformed name. The message names the nearest real
+    one, so a small model can fix its call on the next try."""
 
 
 @dataclass
@@ -123,39 +127,6 @@ class Registry:
             raise SourceError(f"no source named {name!r}{suggest(name, self.names)}")
         return loaded
 
-    def resolve_value(self, key: str, params: dict[str, Any] | None = None) -> tuple[ValueRef, ValueSpec]:
-        """Resolves a key (`ha.entity_state[light.porch]`), or a qualified
-        name plus params, to a ref and the value's spec."""
-        raw = split_key(key)
-        spec = self._value_spec(raw.source, raw.name)
-        given: dict[str, Any] = {**raw.named, **(params or {})}
-        if raw.positional is not None:
-            if len(spec.params) != 1:
-                raise UnknownName(f"{key!r}: {raw.source}.{raw.name} takes params {_param_list(spec)}; name them as [param=value]")
-            given[next(iter(spec.params))] = raw.positional
-        missing = [p for p in spec.params if p not in given]
-        extra = [p for p in given if p not in spec.params]
-        if missing or extra:
-            raise UnknownName(f"{key!r}: {raw.source}.{raw.name} takes params {_param_list(spec)}")
-        return make_ref(raw.source, raw.name, given), spec
-
-    def _value_spec(self, source: str, name: str) -> ValueSpec:
-        loaded = self._sources.get(source)
-        spec = loaded.spec.value(name) if loaded else None
-        if spec is None:
-            known = [f"{s.name}.{v.name}" for s in self.specs() for v in s.values]
-            raise UnknownName(f"unknown value {source}.{name}{suggest(f'{source}.{name}', known)}")
-        return spec
-
-    def resolve_event(self, qualified: str) -> EventSpec:
-        source, _, type_ = qualified.partition(".")
-        loaded = self._sources.get(source)
-        spec = loaded.spec.event(type_) if loaded else None
-        if spec is None:
-            known = [f"{s.name}.{e.type}" for s in self.specs() for e in s.events]
-            raise UnknownName(f"unknown event {qualified}{suggest(qualified, known)}")
-        return spec
-
     def resolve_action(self, source: str, name: str) -> ActionSpec:
         spec = self.spec(source).action(name)
         if spec is None:
@@ -164,14 +135,13 @@ class Registry:
         return spec
 
     def index(self) -> str:
-        """Every kind of value, one per line, for the model. It changes only
-        when a source is added, so it stays in the prompt cache."""
+        """Every table, one per line, for the model. It changes only when a
+        source is added, so it stays in the prompt cache."""
         lines: list[str] = []
         for spec in self.specs():
-            for value in spec.values:
-                params = f"[{','.join(value.params)}]" if value.params else ""
-                unit = f", {value.unit}" if value.unit else ""
-                lines.append(f"{spec.name}.{value.name}{params}  {value.description} ({value.updates}{unit})")
+            for table in spec.tables:
+                kind = "now" if table.live else "history"
+                lines.append(f"{spec.name}_{table.name}  ({kind}) {table.description}")
         return "\n".join(lines)
 
 
@@ -184,7 +154,3 @@ def _described(name: str, source: Source) -> SourceSpec:
 def suggest(name: str, known: list[str]) -> str:
     close = difflib.get_close_matches(name, known, n=1, cutoff=0.5)
     return f". Did you mean {close[0]}?" if close else ""
-
-
-def _param_list(spec: ValueSpec) -> str:
-    return ", ".join(spec.params) or "none"

@@ -3,7 +3,7 @@
 Hermes, a trigger's script and a frontend button all run actions through
 here. Each action has an autonomy level (silent, notify, ask). Ask holds the
 action as a pending approval with a deadline. Every request, allowed or
-refused, goes into the event log with who asked and why.
+refused, goes into the kernel's log (`huvu_events`) with who asked and why.
 
 An approval belongs to the user it was asked for: the user of the chat, or
 the trigger's user. It goes to that user's phones, and only one of them can
@@ -32,8 +32,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from .accounts import AuthError, Device
-from .db import dumps, from_iso, iso, loads
-from .names import UnknownName
+from .db import changed, dumps, from_iso, iso, loads
+from .registry import UnknownName
 from .source import SourceError
 from .spec import ActionSpec, Autonomy, Caller, Result, Scope
 
@@ -205,11 +205,12 @@ class Policy:
             deadline=now + spec.approval_ttl,
         )
         key = hashlib.sha256(dumps([source, action, args, user, group], sort_keys=True).encode()).hexdigest()
-        inserted = self._kernel.db.execute(
+        inserted = changed(
+            self._kernel.db,
             "INSERT INTO approvals (id, source, action, args, reason, caller, user_id, group_id, status, pending_key, created_at, deadline) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?) ON CONFLICT (pending_key) DO NOTHING",
             (approval.id, source, action, dumps(args), reason, dumps(approval.caller), approval.user, approval.group, key, iso(now), iso(approval.deadline)),
-        ).rowcount
+        )
         if not inserted:
             return None
         await self._kernel.kernel_event(
@@ -253,7 +254,7 @@ class Policy:
             raise SourceError(f"approval {approval_id} expired at {approval.deadline:%H:%M}")
         # Two answers at once (two phones, a double tap): the first to flip
         # it out of pending carries it out; the other gets nothing.
-        won = self._kernel.db.execute("UPDATE approvals SET status = 'answering' WHERE id = ? AND status = 'pending'", (approval_id,)).rowcount
+        won = changed(self._kernel.db, "UPDATE approvals SET status = 'answering' WHERE id = ? AND status = 'pending'", (approval_id,))
         if not won:
             raise SourceError(f"approval {approval_id} was already answered")
         status: ApprovalStatus = "denied"

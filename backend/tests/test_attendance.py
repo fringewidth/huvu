@@ -76,7 +76,7 @@ async def test_the_session_acts_and_logs_as_the_person(kernel, family, home, her
     # Over MCP the household's profile now acts for her.
     caller = caller_from(kernel, {"_session": session}, None, "home")
     assert (caller.user, caller.group, caller.device) == ("mom", "home", family.tv.id)
-    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "script": WAKE, "when": [{"event": "home.doorbell"}]}), caller)
+    trigger = await kernel.triggers.register(TriggerSpec.model_validate({"note": "x", "script": WAKE, "sql": "SELECT id FROM home_doorbell", "fire": "rows", "once": False}), caller)
     assert trigger.status == "active" and trigger.user == "mom"
     held = await kernel.policy.request("home", "unlock", {}, caller)
     assert kernel.policy.get(held.data["approval"]).user == "mom"
@@ -88,18 +88,22 @@ async def test_the_session_acts_and_logs_as_the_person(kernel, family, home, her
     assert hermes.messages[-1][0] == session
     assert "Mom was recognized" in message and message.endswith("thanks")
 
-    # The log: the turn before the question stays the household's; what
-    # came after is hers, and only she sees it.
-    turns = kernel.events.search(type="conversation.turn")
-    assert [(t.entity, t.user) for t in reversed(turns)] == [(first.turn.id, None), (second.turn.id, "mom")]
-    assert "who's at the door?" in turns[-1].summary
-    announced = kernel.events.search(type="action.ran")[-1]
-    assert announced.user == "mom"
-    scope = kernel.accounts.scope
-    [seen_by_me] = kernel.events.search(type="conversation.turn", viewer=scope("me", None))
-    assert seen_by_me.entity == first.turn.id and seen_by_me.group == "home"
-    assert {e.user for e in kernel.events.search(viewer=scope("mom", None))} <= {None, "mom"}
-    assert all(e.user is None for e in kernel.events.search(viewer=scope(None, "home")))
+    # The history: the turn before the question stays the household's;
+    # what came after is hers, and only she sees it.
+    turns = kernel.data.rows("chat", "turns", "1 = 1", (), order="id")
+    assert [(t["turn_id"], t["user_id"], t["group_id"]) for t in turns] == [(first.turn.id, None, "home"), (second.turn.id, "mom", None)]
+    assert turns[0]["them"] == "who's at the door?"
+    announced = kernel.data.rows("huvu", "events", "type = 'action.ran'", (), order="id")[-1]
+    assert announced["user_id"] == "mom"
+
+    async def rows(user: str | None, group: str | None, sql: str) -> list[list]:
+        return (await kernel.data.sql(sql, kernel.accounts.scope(user, group))).rows
+
+    assert await rows("me", None, "SELECT turn_id FROM chat_turns") == [[first.turn.id]]
+    assert {r[0] for r in await rows("mom", None, "SELECT DISTINCT user_id FROM huvu_events")} <= {None, "mom"}
+    # The household's profile sees nothing that is one person's.
+    assert await rows(None, "home", "SELECT count(*) FROM huvu_events WHERE user_id IS NOT NULL") == [[0]]
+    assert await rows(None, "home", "SELECT turn_id FROM chat_turns") == [[first.turn.id]]
 
 
 async def test_a_tap_on_the_tv_still_needs_a_phone(kernel, family, home):

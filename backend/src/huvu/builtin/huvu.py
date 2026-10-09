@@ -1,9 +1,10 @@
-"""The `huvu` source: state no device owns, behind the same contract.
+"""The `huvu` source: what no device owns, as tables like any source's.
 
-The family mode, the aliases between what the owner says and what devices
-are called, pending approvals, and notifications to the owner. `huvu.mode`
-works in a trigger condition the same way `ha.entity_state` does, and the
-agent changes it through actions that go through the same policy.
+The kernel's own log (trigger runs, actions, approvals, wakes, attendance),
+the family mode, the aliases between what people call a thing and what it
+is, pending approvals, the triggers, and the notifications huvu sent. A
+trigger reads `huvu_mode` the same way it reads `ha_entities`, and the
+agent changes the mode through actions that go through the same policy.
 """
 
 from __future__ import annotations
@@ -11,20 +12,10 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from ..db import dumps, loads
-from ..names import UnknownName
+from ..db import Row, dumps, loads, open_db
 from ..prompts import TEXT
 from ..source import Source, SourceError
-from ..spec import (
-    ActionSpec,
-    Caller,
-    EventSpec,
-    Match,
-    Reading,
-    Result,
-    SourceSpec,
-    ValueSpec,
-)
+from ..spec import ActionSpec, Caller, ColumnSpec, Result, SourceSpec, TableSpec
 from ..triggers import TriggerError
 
 if TYPE_CHECKING:
@@ -32,6 +23,82 @@ if TYPE_CHECKING:
 
 MODES = ["normal", "away", "guests", "sleeping"]
 NAMESPACE = "huvu"
+
+
+def _columns(table: str, *names: tuple[str, str]) -> list[ColumnSpec]:
+    return [ColumnSpec(name=n, type=t, description=TEXT[f"huvu.table.{table}.column.{n}"]) for n, t in names]
+
+
+TABLES = [
+    TableSpec(
+        name="events",
+        description=TEXT["huvu.table.events"],
+        columns=_columns(
+            "events",
+            ("type", "text"),
+            ("entity", "text"),
+            ("summary", "text"),
+            ("refs", "json"),
+            ("data", "json"),
+            ("labels", "json"),
+            ("device_id", "text"),
+        ),
+        indexes=[["type", "ts"], ["entity", "ts"]],
+    ),
+    TableSpec(name="modes", description=TEXT["huvu.table.modes"], columns=_columns("modes", ("mode", "text")), labels=["owner"]),
+    TableSpec(
+        name="notifications",
+        description=TEXT["huvu.table.notifications"],
+        columns=_columns("notifications", ("text", "text"), ("image", "text"), ("urgency", "text")),
+        labels=["owner"],
+    ),
+    TableSpec(name="mode", description=TEXT["huvu.table.mode"], columns=_columns("mode", ("mode", "text")), live=True, labels=["owner"]),
+    TableSpec(
+        name="aliases",
+        description=TEXT["huvu.table.aliases"],
+        columns=_columns("aliases", ("alias", "text"), ("target", "text")),
+        live=True,
+        labels=["owner"],
+    ),
+    TableSpec(
+        name="approvals",
+        description=TEXT["huvu.table.approvals"],
+        columns=_columns(
+            "approvals",
+            ("approval_id", "text"),
+            ("action", "text"),
+            ("args", "json"),
+            ("reason", "text"),
+            ("created_at", "text"),
+            ("deadline", "text"),
+        ),
+        live=True,
+        labels=["owner"],
+    ),
+    TableSpec(
+        name="triggers",
+        description=TEXT["huvu.table.triggers"],
+        columns=_columns(
+            "triggers",
+            ("trigger_id", "text"),
+            ("note", "text"),
+            ("sql", "text"),
+            ("fire", "text"),
+            ("once", "boolean"),
+            ("tier", "text"),
+            ("status", "text"),
+            ("paused_by", "text"),
+            ("created_at", "text"),
+            ("expires_at", "text"),
+            ("last_fired_at", "text"),
+            ("fire_count", "integer"),
+            ("grants", "json"),
+            ("script", "text"),
+        ),
+        live=True,
+        labels=["owner"],
+    ),
+]
 
 
 class HuvuSource(Source):
@@ -43,34 +110,8 @@ class HuvuSource(Source):
         return SourceSpec(
             name="huvu",
             description=TEXT["huvu.description"],
-            guide=(
-                TEXT["huvu.guide"]
-            ),
-            values=[
-                ValueSpec(name="mode", description=TEXT["huvu.value.mode"].format(modes=", ".join(MODES)), type="string", labels=["owner"]),
-                ValueSpec(
-                    name="alias",
-                    description=TEXT["huvu.value.alias"],
-                    type="string",
-                    params={"alias": "string"},
-                    updates="on_demand",
-                    labels=["owner"],
-                ),
-                ValueSpec(name="aliases", description=TEXT["huvu.value.aliases"], type="object", updates="on_demand", labels=["owner"]),
-                ValueSpec(
-                    name="approvals",
-                    description=TEXT["huvu.value.approvals"],
-                    type="list",
-                    params={"user": "string"},
-                    updates="on_demand",
-                    labels=["owner"],
-                    personal=True,
-                ),
-            ],
-            events=[
-                EventSpec(type="mode_changed", description=TEXT["huvu.event.mode_changed"], data={"mode": "string"}),
-                EventSpec(type="notified", description=TEXT["huvu.event.notified"]),
-            ],
+            guide=TEXT["huvu.guide"],
+            tables=TABLES,
             actions=[
                 ActionSpec(
                     name="set_mode",
@@ -81,7 +122,7 @@ class HuvuSource(Source):
                 ActionSpec(
                     name="set_alias",
                     description=TEXT["huvu.action.set_alias"],
-                    input_schema=_object({"alias": {"type": "string"}, "value": {"type": "string"}}, ["alias", "value"]),
+                    input_schema=_object({"alias": {"type": "string"}, "target": {"type": "string"}}, ["alias", "target"]),
                     autonomy="silent",
                 ),
                 ActionSpec(
@@ -114,6 +155,9 @@ class HuvuSource(Source):
             ],
         )
 
+    def mode(self) -> str:
+        return self._get("mode") or "normal"
+
     def _get(self, key: str) -> Any:
         row = self._kernel.db.execute("SELECT value FROM kv WHERE namespace = ? AND key = ?", (NAMESPACE, key)).fetchone()
         return None if row is None else loads(row["value"])
@@ -127,27 +171,77 @@ class HuvuSource(Source):
     def _aliases(self) -> dict[str, str]:
         return self._get("aliases") or {}
 
-    async def run(self) -> None:
-        # Pushed once at start, so triggers on the mode have a reading.
-        await self.ctx.update("mode", self._get("mode") or "normal", labels=["owner"])
+    # Live tables. Each read opens its own connection to huvu.db, since it
+    # runs on a query's worker thread.
 
-    async def read(self, value: str, params: dict[str, Any]) -> Reading:
-        now = self.ctx.now()
-        if value == "mode":
-            reading = Reading(value=self._get("mode") or "normal", at=now, labels=["owner"])
-        elif value == "aliases":
-            reading = Reading(value=self._aliases(), at=now, labels=["owner"])
-        elif value == "approvals":
-            pending = self._kernel.policy.pending_for(self._kernel.accounts.scope(params["user"], None))
-            reading = Reading(value=[a.public() for a in pending], at=now, labels=["owner"])
-        else:
-            target = self._aliases().get(params["alias"].lower())
-            reading = Reading(value=target, at=now, labels=["owner"], reason=None if target else "no such alias")
-        return reading
+    def live(self, table: str) -> list[dict[str, Any]]:
+        readers = {
+            "mode": self._mode_rows,
+            "aliases": self._alias_rows,
+            "approvals": self._approval_rows,
+            "triggers": self._trigger_rows,
+        }
+        return readers[table]()
 
-    async def search(self, text: str) -> list[Match]:
-        needle = text.lower().strip()
-        return [Match(value=target, name=f"you call it {alias!r}") for alias, target in self._aliases().items() if needle in alias or alias in needle]
+    def _read(self, sql: str, args: tuple[Any, ...] = ()) -> list[Row]:
+        conn = open_db(self._kernel.config.data_dir / "huvu.db", readonly=True)
+        try:
+            return conn.execute(sql, args).fetchall()
+        finally:
+            conn.close()
+
+    def _kv(self, key: str) -> Any:
+        rows = self._read("SELECT value FROM kv WHERE namespace = ? AND key = ?", (NAMESPACE, key))
+        return loads(rows[0]["value"]) if rows else None
+
+    def _mode_rows(self) -> list[dict[str, Any]]:
+        return [{"mode": self._kv("mode") or "normal"}]
+
+    def _alias_rows(self) -> list[dict[str, Any]]:
+        return [{"alias": alias, "target": target} for alias, target in sorted((self._kv("aliases") or {}).items())]
+
+    def _approval_rows(self) -> list[dict[str, Any]]:
+        rows = self._read("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at")
+        return [
+            {
+                "approval_id": r["id"],
+                "action": f"{r['source']}_{r['action']}",
+                "args": loads(r["args"]),
+                "reason": r["reason"],
+                "created_at": r["created_at"],
+                "deadline": r["deadline"],
+                "user_id": r["user_id"],
+                "group_id": None if r["user_id"] else r["group_id"],
+            }
+            for r in rows
+        ]
+
+    def _trigger_rows(self) -> list[dict[str, Any]]:
+        rows = []
+        for t in self._kernel.triggers.snapshot():
+            rows.append(
+                {
+                    "trigger_id": t.id,
+                    "note": t.spec.note,
+                    "sql": t.spec.sql,
+                    "fire": t.spec.fire,
+                    "once": t.spec.once,
+                    "tier": t.spec.tier,
+                    "status": t.status,
+                    "paused_by": t.paused_by,
+                    "created_at": t.created_at.isoformat(),
+                    "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+                    "last_fired_at": t.last_fired_at.isoformat() if t.last_fired_at else None,
+                    "fire_count": t.fire_count,
+                    "grants": t.spec.grants,
+                    "script": t.spec.script,
+                    "user_id": t.user,
+                    "group_id": None if t.user else t.group,
+                }
+            )
+        return rows
+
+    # Actions
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         handlers = {
@@ -174,19 +268,17 @@ class HuvuSource(Source):
         if mode not in MODES:
             raise SourceError(f"mode must be one of {', '.join(MODES)}")
         self._put("mode", mode)
-        await self.ctx.update("mode", mode, labels=["owner"])
-        await self.ctx.emit("mode_changed", f"family mode set to {mode}", data={"mode": mode}, labels=["owner"])
+        await self.ctx.record("modes", {"mode": mode}, user=caller.user, group=None if caller.user else caller.group)
         return Result(data={"mode": mode}, labels=["owner"])
 
     async def _set_alias(self, args: dict[str, Any], caller: Caller) -> Result:
-        try:
-            ref, _ = self._kernel.registry.resolve_value(args["value"])
-        except UnknownName as err:
-            raise SourceError(str(err)) from err
+        alias, target = args["alias"].lower().strip(), args["target"].strip()
+        if not alias or not target:
+            raise SourceError("an alias needs both what people call the thing and what it is")
         aliases = self._aliases()
-        aliases[args["alias"].lower().strip()] = ref.key
+        aliases[alias] = target
         self._put("aliases", aliases)
-        return Result(data={"alias": args["alias"], "value": ref.key}, labels=["owner"])
+        return Result(data={"alias": alias, "target": target}, labels=["owner"])
 
     async def _remove_alias(self, args: dict[str, Any], caller: Caller) -> Result:
         aliases = self._aliases()
@@ -197,8 +289,8 @@ class HuvuSource(Source):
     async def _notify(self, args: dict[str, Any], caller: Caller) -> Result:
         image = self._kernel.media.url_for(args["image"]) if args.get("image") else None
         await self._kernel.notify(caller.user, caller.group, args["text"], image=image, urgency=args.get("urgency", "normal"))
-        whom = caller.user or f"the members of {caller.group or 'the default group'}"
-        await self.ctx.emit("notified", f"told {whom}: {args['text']}", refs={"image": args["image"]} if image else {}, labels=["owner"], user=caller.user, group=None if caller.user else caller.group)
+        row = {"text": args["text"], "image": args.get("image"), "urgency": args.get("urgency", "normal")}
+        await self.ctx.record("notifications", row, user=caller.user, group=None if caller.user else caller.group)
         return Result(data={"sent": True}, labels=["owner"])
 
 

@@ -1,16 +1,15 @@
 """Wakes: how a fired trigger reaches Hermes.
 
 Every wake starts a fresh Hermes session, in the Hermes profile of the
-trigger's user, with the trigger's note, what matched, and the values it
-asked to bring along. The session's reply text goes to the event log and
-nowhere else; if the agent wants to reach the user, it calls `huvu_notify`
+trigger's user, with the trigger's note and the rows that fired it. The
+session's reply text goes to the kernel's log and nowhere else; if the agent wants to reach the user, it calls `huvu_notify`
 or another action.
 
 A trigger may wake the model at most WAKE_LIMIT times in WAKE_WINDOW (since
 it was last resumed, if later). From the WAKE_WARN-th wake on, the wake
 tells the model and asks it to deal with the repeats; one more past the
 limit doesn't happen, and the trigger pauses itself and tells its user. The
-count is read from the event log, so a restart doesn't reset it.
+count is read from the kernel's log, so a restart doesn't reset it.
 """
 
 from __future__ import annotations
@@ -52,7 +51,8 @@ class Waker:
             await self._kernel.kernel_event(
                 "wake.refused", f"trigger {trigger_id} hit its limit of {WAKE_LIMIT} wakes", entity=trigger_id, user=user
             )
-            await self._kernel.triggers.pause_for_limit(trigger_id, wakes)
+            hours = int(WAKE_WINDOW.total_seconds() // 3600)
+            await self._kernel.triggers.pause_for_limit(trigger_id, f"it woke the model {wakes} times in {hours} hours")
             return ""
         await self._kernel.kernel_event("wake.started", f"waking the model for trigger {trigger_id}", entity=trigger_id, user=user)
         async with self._slots:
@@ -65,7 +65,7 @@ class Waker:
         since = self._kernel.now() - WAKE_WINDOW
         if trigger.resumed_at and trigger.resumed_at > since:
             since = trigger.resumed_at
-        return self._kernel.events.count(type="wake.started", entity=trigger_id, since=since)
+        return self._kernel.events_since("wake.started", since, entity=trigger_id)
 
     async def _wake(self, payload: dict[str, Any], user: str | None) -> str:
         now = self._kernel.now()

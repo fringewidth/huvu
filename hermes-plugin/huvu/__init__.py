@@ -5,8 +5,9 @@ can't tell which session a tool call came from. This plugin fills that in:
 
 1. Every huvu tool call gets `_session` (the Hermes session). The backend
    strips it.
-2. At the start of a session, the situation block (time, chosen values,
-   pending approvals) is added to the context, fetched from the backend.
+2. At the start of a session, the situation block (time, who huvu helps,
+   the family mode, pending approvals) is added to the context, fetched
+   from the backend.
 3. Every session's system prompt gets GUIDE (from backend/src/huvu/prompts.py): how huvu works, and what to do
    with it. Hermes never shows the model an MCP server's own instructions,
    so this is the one place huvu can say it.
@@ -18,7 +19,6 @@ Settings come from the environment Hermes runs in:
     HUVU_URL              the backend, default http://localhost:3001
     HUVU_MCP_TOKEN        the same token the backend checks on /mcp
     HUVU_MCP_SERVER       the server's name in Hermes's mcp_servers, default huvu
-    HUVU_SITUATION        comma-separated value keys for the situation block
 
 One gateway process serves every profile, so the process environment holds
 only the default profile's values. HUVU_URL and HUVU_MCP_TOKEN are read at
@@ -56,7 +56,6 @@ GUIDE = prompts.GUIDE
 
 SERVER = os.environ.get("HUVU_MCP_SERVER", "huvu")
 PREFIX = f"mcp__{SERVER}__"
-SITUATION = [v.strip() for v in os.environ.get("HUVU_SITUATION", "huvu.mode").split(",") if v.strip()]
 
 
 def _on_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "", **_: Any) -> dict[str, Any] | None:
@@ -108,7 +107,7 @@ def _secret(name: str, default: str = "") -> str:
 
 
 def _situation() -> str:
-    return _post("/api/situation", {"values": SITUATION})["text"]
+    return _post("/api/situation", {})["text"]
 
 
 def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:

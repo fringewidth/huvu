@@ -7,10 +7,12 @@
 #   add --yes to skip the question
 #
 # In huvu: triggers, conversations, Hermes session records, notifications,
-# approvals, attendance and the event log (backend/src/huvu/wipe.py). In
+# approvals, attendance, and their rows in every history table (their chat
+# turns, huvu's log about them, every source's history; backend/src/huvu/wipe.py). In
 # Hermes: every session, memory (MEMORY.md, USER.md) and every skill the
-# model wrote. What stays: the account, devices, trackers, the sources'
-# history tables, and the profile's settings and SOUL.md.
+# model wrote. What stays: the account, devices, trackers, and the profile's
+# settings and SOUL.md. Wiping the default group also takes the rows that
+# belong to nobody, such as doorbell presses.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")" && pwd)

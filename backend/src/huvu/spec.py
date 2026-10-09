@@ -1,20 +1,20 @@
 """The types every part of the kernel shares, and the contract's data shapes.
 
-A source describes itself with a SourceSpec. Everything it emits or returns
-is built from the types here, so the kernel, the MCP server, the trigger
-engine and the frontend all read the same shapes.
+A source describes itself with a SourceSpec: its tables and its actions.
+Everything else the kernel, the MCP server, the trigger engine and the
+frontend pass around is built from the types here.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .prompts import STANDARD_COLUMNS
+from .prompts import LIVE_COLUMNS, STANDARD_COLUMNS
 
 # Where a piece of data came from. The labels are facts about the data, so
 # the backend owns them. A tool result with `external` in it reaches the
@@ -24,12 +24,6 @@ from .prompts import STANDARD_COLUMNS
 #   external: content a stranger controls, like what a doorbell snapshot
 #             shows, a web page, or a message from someone else
 Label = Literal["owner", "house", "external"]
-
-# How a value reaches the kernel.
-#   pushed:    the source sends every change through its context
-#   on_wake:   pushed, but the device sleeps, so readings can be hours old
-#   on_demand: the kernel asks the source each time someone reads it
-Updates = Literal["pushed", "on_wake", "on_demand"]
 
 # What an action may do without the owner, before hard rules.
 #   silent: run it
@@ -94,54 +88,6 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ValueSpec(Strict):
-    """A kind of value a source has. `params` names what the value applies
-    to, such as `{"entity_id": "string"}` for an HA entity's state."""
-
-    name: str
-    description: str
-    type: Literal["string", "number", "boolean", "time", "object", "list"]
-    params: dict[str, str] = Field(default_factory=dict)
-    unit: str | None = None
-    updates: Updates = "pushed"
-    # Older than this counts as unknown to triggers. None means never stale.
-    max_age: timedelta | None = None
-    labels: list[Label] = Field(default_factory=lambda: ["house"])
-    # One person's value, such as where they are. Its `user` param names
-    # whose, and nobody else reads it or uses it in a trigger, members of
-    # their groups included.
-    personal: bool = False
-
-    @field_validator("name")
-    @classmethod
-    def _member_name(cls, v: str) -> str:
-        if not MEMBER_RE.match(v):
-            raise ValueError(f"value name {v!r} must match {MEMBER_RE.pattern}")
-        return v
-
-    @model_validator(mode="after")
-    def _personal_has_user(self) -> ValueSpec:
-        if self.personal and "user" not in self.params:
-            raise ValueError(f"personal value {self.name!r} needs a `user` param")
-        return self
-
-
-class EventSpec(Strict):
-    """A kind of event a source emits. `data` lists the fields a trigger can
-    filter on, with their types."""
-
-    type: str
-    description: str
-    data: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("type")
-    @classmethod
-    def _member_name(cls, v: str) -> str:
-        if not MEMBER_RE.match(v):
-            raise ValueError(f"event type {v!r} must match {MEMBER_RE.pattern}")
-        return v
-
-
 class ActionSpec(Strict):
     name: str
     description: str
@@ -176,24 +122,34 @@ class ColumnSpec(Strict):
     def _column_name(cls, v: str) -> str:
         if not MEMBER_RE.match(v):
             raise ValueError(f"column name {v!r} must match {MEMBER_RE.pattern}")
-        if v in STANDARD_COLUMNS:
+        if v in STANDARD_COLUMNS or v in LIVE_COLUMNS:
             raise ValueError(f"column {v!r} is a standard column; the kernel fills it in")
         return v
 
 
 class TableSpec(Strict):
-    """A history table a source keeps for analysis: one row per thing that
-    happened, with typed columns, so the dream can join and aggregate it
-    with SQL. The kernel keeps every source's tables in one SQLite
-    database, as `<source>_<name>`, with the standard columns added, and
-    keeps the rows for good. Raw content (images, audio) stays in the
-    source; a row holds the facts about it and a ref."""
+    """A table of a source, named `<source>_<name>` wherever SQL reads it.
+
+    A history table holds what happened: one row per thing, with typed
+    columns, recorded with `ctx.record` and kept for good in the kernel's
+    history database, with the standard columns added (see data.py). Raw
+    content (images, audio) stays in the source; a row holds the facts
+    about it and a ref.
+
+    A live table (`live`) holds what is true now. Nothing is stored: each
+    read asks the source (`Source.live`), which answers from what it
+    already holds. Its rows have `user_id` and `group_id`, so the same
+    rule decides who sees which row."""
 
     name: str
     description: str
     columns: list[ColumnSpec]
+    live: bool = False
+    # What the rows are, for the labels of a query that reads them.
+    labels: list[Label] = Field(default_factory=lambda: ["house"])
     # Each entry is the columns of one index, such as ["entity_id", "ts"].
-    # Every table also gets (ts) and (user_id, ts).
+    # Every history table also gets (id), (ts) and (user_id, ts). A live
+    # table has none.
     indexes: list[list[str]] = Field(default_factory=list)
 
     @field_validator("name")
@@ -214,12 +170,10 @@ class SourceSpec(Strict):
     description: str
     # The hand-written part of the source's skill (Markdown): when to use it
     # and the gotchas its schemas can't say. huvu adds the reference part
-    # (actions, values, events, tables) itself. See skills.py. There are no
-    # queries: what a source knows over time goes in its tables, which the
-    # model reads with data_sql, and what is true now in its values.
+    # (tables and actions) itself. See skills.py. Everything a source knows
+    # is a table the model reads with data_sql: what happened in its
+    # history tables, what is true now in its live tables.
     guide: str = ""
-    values: list[ValueSpec] = Field(default_factory=list)
-    events: list[EventSpec] = Field(default_factory=list)
     actions: list[ActionSpec] = Field(default_factory=list)
     tables: list[TableSpec] = Field(default_factory=list)
 
@@ -230,65 +184,11 @@ class SourceSpec(Strict):
             raise ValueError(f"source name {v!r} must match {NAME_RE.pattern}")
         return v
 
-    def value(self, name: str) -> ValueSpec | None:
-        return next((v for v in self.values if v.name == name), None)
-
-    def event(self, type_: str) -> EventSpec | None:
-        return next((e for e in self.events if e.type == type_), None)
-
     def action(self, name: str) -> ActionSpec | None:
         return next((a for a in self.actions if a.name == name), None)
 
     def table(self, name: str) -> TableSpec | None:
         return next((t for t in self.tables if t.name == name), None)
-
-
-class Event(Strict):
-    """The thin envelope the event log keeps for everything that happened.
-    The full detail stays in the source and is reached through `refs`."""
-
-    id: str = ""
-    at: datetime
-    source: str
-    # Qualified with the source: `tuya.doorbell`.
-    type: str
-    entity: str | None = None
-    # One line a model can read.
-    summary: str
-    # Source-scoped refs to the detail, such as {"snapshot": "tuya:album/8f2c"}.
-    refs: dict[str, str] = Field(default_factory=dict)
-    # Small, flat fields triggers can filter on. Big payloads stay in the source.
-    data: dict[str, Any] = Field(default_factory=dict)
-    labels: list[Label] = Field(default_factory=lambda: ["house"])
-    # Whose event it is. One with a user shows only to that user (and their
-    # dream). Without one, it shows to the members of `group`, or, with no
-    # group either, to every member of any group (see Scope).
-    user: str | None = None
-    group: str | None = None
-    # The device whose conversation it came from, if any.
-    device: str | None = None
-
-
-class Reading(Strict):
-    """One value as the kernel knows it: what it is, and how old."""
-
-    value: Any = None
-    at: datetime | None = None
-    labels: list[Label] = Field(default_factory=lambda: ["house"])
-    # Why there is no value, when `value` is None.
-    reason: str | None = None
-
-
-class Match(Strict):
-    """One result of a state search: a value key and what to call it, and
-    the actions that work the thing, so the model finds how to work a
-    device where it finds the device."""
-
-    value: str
-    name: str
-    area: str | None = None
-    now: Any = None
-    actions: list[str] = Field(default_factory=list)
 
 
 class Result(Strict):

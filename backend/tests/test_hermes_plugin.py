@@ -17,7 +17,7 @@ def load():
 
 def test_huvu_calls_carry_the_session():
     plugin = load()
-    out = plugin._on_pre_tool_call(tool_name="mcp__huvu__state_get", args={"values": []}, session_id="s1")
+    out = plugin._on_pre_tool_call(tool_name="mcp__huvu__data_sql", args={"sql": "SELECT 1"}, session_id="s1")
     assert out == {"action": "modify", "args": {"_session": "s1"}}
     assert plugin._on_pre_tool_call(tool_name="terminal", args={}, session_id="s1") is None
     assert plugin._on_pre_tool_call(tool_name="memory", args={}, session_id="s1") is None

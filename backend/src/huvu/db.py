@@ -1,53 +1,32 @@
-"""The kernel's own SQLite database: the event log, triggers, approvals,
-conversations and the built-in source's state. Sources keep their own data
-elsewhere.
+"""The kernel's own SQLite database: accounts and devices, triggers,
+approvals, conversations for the stage, and the built-in source's state.
+What happened, the kernel's own log included, is history (data.py), in
+another file the model reads; this one it never reads.
 
 One connection, used from the event loop. Every statement here is small,
 and one family on one machine never queues enough of them for blocking
 to matter. WAL lets a second process (a backup, sqlite3 in a shell) read
 while the kernel writes.
+
+Every SQLite file huvu opens, it opens through APSW, with `connect` here
+or data.py's own. APSW brings its own copy of SQLite, and two copies in one
+process don't see each other's locks on a file, which can corrupt it; so
+Python's sqlite3 isn't used anywhere in the backend. A connection from
+`connect` gives rows that read by column name (`row["id"]`) or position,
+the way sqlite3.Row did.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import apsw
+
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,
-    at TEXT NOT NULL,
-    -- Seconds since the epoch, for ordering and ranges. `at` keeps the
-    -- local time and offset the event happened in.
-    ts REAL NOT NULL,
-    source TEXT NOT NULL,
-    type TEXT NOT NULL,
-    entity TEXT,
-    summary TEXT NOT NULL,
-    refs TEXT NOT NULL,
-    data TEXT NOT NULL,
-    labels TEXT NOT NULL,
-    -- Whose event it is. With no user, the members of group_id see it;
-    -- with neither, every member of any group does.
-    user_id TEXT,
-    group_id TEXT,
-    -- The device whose conversation it came from, if any.
-    device_id TEXT
-);
-CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
-CREATE INDEX IF NOT EXISTS events_device_ts ON events (device_id, ts);
-CREATE INDEX IF NOT EXISTS events_type_ts ON events (type, ts);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5 (
-    summary, type, entity, content='events', content_rowid='rowid'
-);
-CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
-    INSERT INTO events_fts (rowid, summary, type, entity) VALUES (new.rowid, new.summary, new.type, new.entity);
-END;
-
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -112,7 +91,9 @@ CREATE TABLE IF NOT EXISTS triggers (
     -- When it was last resumed; the wake limit counts from here.
     resumed_at TEXT,
     last_fired_at TEXT,
-    fire_count INTEGER NOT NULL DEFAULT 0
+    fire_count INTEGER NOT NULL DEFAULT 0,
+    -- fire rows: the id of the last history row it has seen.
+    after_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS approvals (
@@ -134,18 +115,6 @@ CREATE TABLE IF NOT EXISTS approvals (
     deadline TEXT NOT NULL,
     resolved_at TEXT,
     result TEXT
-);
-
--- The last reading of every pushed value, so a restart doesn't forget a
--- value that only updates when its device wakes, and triggers don't see
--- every input go unknown at once. See state.py.
-CREATE TABLE IF NOT EXISTS readings (
-    source TEXT NOT NULL,
-    name TEXT NOT NULL,
-    -- The value's params as a JSON list of [name, value] pairs.
-    params TEXT NOT NULL,
-    reading TEXT NOT NULL,
-    PRIMARY KEY (source, name, params)
 );
 
 CREATE TABLE IF NOT EXISTS kv (
@@ -244,13 +213,62 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
 """
 
 
-def connect(path: Path | str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
-    conn.row_factory = sqlite3.Row
+# How long a statement waits for a lock another connection holds, in ms,
+# as Python's sqlite3 did by default.
+BUSY_WAIT_MS = 5000
+
+
+class Row(tuple):
+    """A row that reads by column name too."""
+
+    _index: dict[str, int]
+
+    def __new__(cls, values: Sequence[Any], index: dict[str, int]) -> Row:
+        row = super().__new__(cls, values)
+        row._index = index
+        return row
+
+    def __getitem__(self, key):  # type: ignore[override]
+        return tuple.__getitem__(self, self._index[key] if isinstance(key, str) else key)
+
+    def keys(self) -> list[str]:
+        return list(self._index)
+
+
+_indexes: dict[tuple[str, ...], dict[str, int]] = {}
+
+
+def _row(cursor: apsw.Cursor, values: Sequence[Any]) -> Row:
+    names = tuple(d[0] for d in cursor.get_description())
+    index = _indexes.get(names)
+    if index is None:
+        index = _indexes[names] = {name: i for i, name in enumerate(names)}
+    return Row(values, index)
+
+
+def open_db(path: Path | str, *, readonly: bool = False) -> apsw.Connection:
+    """An APSW connection whose rows read by name, waiting for locks the
+    way sqlite3 did. `readonly` is for a reader on another thread."""
+    flags = apsw.SQLITE_OPEN_READONLY | apsw.SQLITE_OPEN_URI if readonly else apsw.SQLITE_OPEN_READWRITE | apsw.SQLITE_OPEN_CREATE
+    conn = apsw.Connection(f"file:{path}?mode=ro" if readonly else str(path), flags=flags)
+    conn.set_busy_timeout(BUSY_WAIT_MS)
+    conn.row_trace = _row
+    return conn
+
+
+def connect(path: Path | str) -> apsw.Connection:
+    """The kernel's database, with its schema."""
+    conn = open_db(path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executescript(SCHEMA)
+    conn.execute(SCHEMA)
     return conn
+
+
+def changed(conn: apsw.Connection, sql: str, args: Sequence[Any] = ()) -> int:
+    """Runs one write, and returns how many rows it changed."""
+    conn.execute(sql, args)
+    return conn.changes()
 
 
 def dumps(value: Any, *, sort_keys: bool = False) -> str:

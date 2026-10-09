@@ -15,7 +15,7 @@ Users and devices are managed from here too:
     uv run huvu device list
     uv run huvu device revoke d_1a2b3c4d5e
     uv run huvu tracker add mom              prints a QR code and link that set up OwnTracks on her phone
-    uv run huvu wipe mom                     deletes her triggers, conversations and event log (see wipe.py)
+    uv run huvu wipe mom                     deletes her triggers, conversations and history (see wipe.py)
     uv run huvu wipe --group home            the same for a group's shared devices
     uv run huvu skills                       writes every source's Hermes skill and exits (setup.sh
                                              pins them, so a fresh install runs this first)
@@ -185,7 +185,9 @@ def _wipe(config, conn, accounts: Accounts, user: str | None, group: str | None)
         sys.exit(f"huvu: no user {user!r}")
     if group is not None and accounts.group(group) is None:
         sys.exit(f"huvu: no group {group!r}")
-    counts = wipe(conn, config.data_dir / "scripts", user=user, group=group, default_group=group == accounts.default_group())
+    from .data import FILE
+
+    counts = wipe(conn, config.data_dir / FILE, config.data_dir / "scripts", user=user, group=group, default_group=group == accounts.default_group())
     print(", ".join(f"{n} {table}" for table, n in counts.items()))
 
 

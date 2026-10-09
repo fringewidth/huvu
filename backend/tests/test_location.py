@@ -10,10 +10,8 @@ import httpx
 import pytest
 
 from huvu.config import Config
-from huvu.events import EVERYONE
 from huvu.http import create_app
 from huvu.kernel import Kernel
-from huvu.source import SourceError
 from huvu.spec import Caller
 from huvu.tools import ToolError
 from huvu.triggers import TriggerSpec
@@ -42,6 +40,7 @@ async def kernel(tmp_path, clock, home, hermes):
     yield k
     await k.triggers.stop()
     await k.conversations.close()
+    k.data.close()
     k.db.close()
 
 
@@ -56,6 +55,14 @@ def fix(clock, lat: float = HOME["lat"], lon: float = HOME["lon"], **extra) -> d
 
 def crossing(clock, event: str, desc: str = "home") -> dict:
     return {"_type": "transition", "event": event, "desc": desc, "tst": int(clock.now.timestamp()), "lat": HOME["lat"], "lon": HOME["lon"], "acc": 30}
+
+
+async def sql(kernel, caller: Caller, query: str) -> list[list]:
+    return (await kernel.tools.call("data_sql", {"sql": query}, caller)).data["rows"]
+
+
+async def place(kernel, caller: Caller = ME) -> list[list]:
+    return await sql(kernel, caller, "SELECT place FROM location_people")
 
 
 def waypoint_names(reply: list[dict]) -> list[str]:
@@ -73,23 +80,17 @@ async def test_a_phone_gets_its_waypoints_once(location, clock):
 
 async def test_an_arrival_is_only_its_persons(kernel, location, clock):
     await location.ingest(crossing(clock, "enter"), MY_TRACKER)
-    mine = kernel.events.search(type="location.arrived", viewer=kernel.accounts.scope("me", None))
-    assert [(e.summary, e.data["waypoint"], e.user) for e in mine] == [("Me arrived at home", "home", "me")]
-    assert kernel.events.search(type="location.arrived", viewer=kernel.accounts.scope("mom", None)) == []
-
-    read = await kernel.tools.call("state_get", {"values": ["location.place[me]"]}, ME)
-    assert read.data["location.place[me]"].value == "home"
-    peek = await kernel.tools.call("state_get", {"values": ["location.place[me]"]}, MOM)
-    assert peek.data["location.place[me]"].value is None
-    assert "only they" in peek.data["location.place[me]"].reason
+    query = "SELECT event, waypoint, user_id FROM location_transitions WHERE changed = 1"
+    assert await sql(kernel, ME, query) == [["enter", "home", "me"]]
+    assert await sql(kernel, MOM, query) == []
+    assert await place(kernel) == [["home"]]
+    # Mom sees no row of mine, even asking for it.
+    assert await sql(kernel, MOM, "SELECT place FROM location_people WHERE user_id = 'me'") == []
 
     clock.advance(hours=2)
     await location.ingest(crossing(clock, "leave"), MY_TRACKER)
-    left = kernel.events.search(type="location.left", viewer=EVERYONE)
-    assert left[0].data["stayed_min"] == 120
-    assert left[0].summary == "Me left home after 2 h"
-    read = await kernel.tools.call("state_get", {"values": ["location.place[me]"]}, ME)
-    assert read.data["location.place[me]"].value == "elsewhere"
+    assert await sql(kernel, ME, "SELECT stayed_min FROM location_transitions WHERE event = 'leave'") == [[120]]
+    assert await place(kernel) == [["elsewhere"]]
 
 
 async def test_repeated_and_late_crossings_change_nothing(kernel, location, clock):
@@ -103,52 +104,52 @@ async def test_repeated_and_late_crossings_change_nothing(kernel, location, cloc
     # A crossing older than the latest, from a queue the phone sent late.
     late = {**entered, "tst": entered["tst"] + 300}
     await location.ingest(late, MY_TRACKER)
-    events = kernel.events.search(source="location", viewer=EVERYONE)
-    assert [e.type for e in events] == ["location.left", "location.arrived"]
-    assert (await location.read("place", {"user": "me"})).value == "elsewhere"
+    rows = await sql(kernel, ME, "SELECT event, changed FROM location_transitions ORDER BY id")
+    assert rows == [["enter", 1], ["leave", 1], ["enter", 0]]
+    assert await place(kernel) == [["elsewhere"]]
 
 
 async def test_a_late_crossing_says_so(kernel, location, clock):
     sent = crossing(clock, "enter")
     clock.advance(minutes=25)
     await location.ingest(sent, MY_TRACKER)
-    event = kernel.events.search(type="location.arrived", viewer=EVERYONE)[0]
-    assert event.data["delay_min"] == 25
-    assert event.summary.endswith("(reported 25 min late)")
-    assert event.at.timestamp() == sent["tst"]
+    assert await sql(kernel, ME, "SELECT delay_min, ts FROM location_transitions") == [[25, sent["tst"]]]
 
 
 async def test_nobody_triggers_on_someone_elses_location(kernel, location, clock, hermes):
-    peek = {"note": "Tell mom where he is.", "script": WAKE, "when": [{"value": "location.place[me]", "op": "==", "arg": "home"}]}
-    with pytest.raises(SourceError, match="only they"):
-        await kernel.triggers.register(TriggerSpec.model_validate(peek), MOM)
-
-    near = {"event": "location.arrived", "where": {"waypoint": "near_home"}}
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Mom is nearly home.", "script": WAKE, "when": [near], "repeat": "yes"}), MOM)
-    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Porch light on.", "script": WAKE, "when": [near], "repeat": "yes"}), ME)
+    near = "SELECT id FROM location_transitions WHERE changed = 1 AND event = 'enter' AND waypoint = 'near_home'"
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Mom is nearly home.", "script": WAKE, "sql": near, "fire": "rows", "once": False}), MOM)
+    await kernel.triggers.register(TriggerSpec.model_validate({"note": "Porch light on.", "script": WAKE, "sql": near, "fire": "rows", "once": False}), ME)
     await location.ingest(crossing(clock, "enter", "near_home"), MY_TRACKER)
     await settle(kernel)
     assert len(wakes(hermes)) == 1
     assert "Porch light on." in wakes(hermes)[0]
+    # A query for my place, as mom, finds nothing to fire on.
+    peek = {"note": "Tell mom where he is.", "script": WAKE, "sql": "SELECT 1 FROM location_people WHERE user_id = 'me'", "fire": "edge", "once": False}
+    report = (await kernel.tools.call("triggers_register", {**peek, "dry_run": True}, MOM)).data
+    assert report["rows_now"] == 0
 
-    tested = await kernel.triggers.test(TriggerSpec.model_validate({"note": "Mom is nearly home.", "script": WAKE, "when": [near]}), "mom")
-    assert tested["recent_matching_events"] == []
 
-
-async def test_values_follow_the_latest_fix(kernel, location, clock):
+async def test_people_follow_the_latest_fix(kernel, location, clock):
     await location.ingest(fix(clock, *NEARBY, batt=55, SSID=None), MY_TRACKER)
     older = fix(clock, *NEARBY)
     older["tst"] -= 3600
     await location.ingest(older, MY_TRACKER)
-    values = await kernel.tools.call(
-        "state_get", {"values": ["location.distance_home_km[me]", "location.battery[me]", "location.wifi[me]", "location.place[me]"]}, ME
-    )
-    assert values.data["location.distance_home_km[me]"].value == pytest.approx(1.11, abs=0.01)
-    assert values.data["location.battery[me]"].value == 55
-    assert values.data["location.wifi[me]"].value == ""
-    assert values.data["location.place[me]"].value == "elsewhere"
-    nothing = await kernel.tools.call("state_get", {"values": ["location.fix[mom]"]}, MOM)
-    assert "no location yet" in nothing.data["location.fix[mom]"].reason
+    [[distance, battery, wifi, where, fix_at]] = await sql(kernel, ME, "SELECT distance_home_km, battery, wifi, place, fix_at FROM location_people")
+    assert distance == pytest.approx(1.11, abs=0.01)
+    assert (battery, wifi, where) == (55, None, "elsewhere") and fix_at == clock.now.isoformat()
+    assert await sql(kernel, MOM, "SELECT * FROM location_people") == []
+
+
+async def test_where_everyone_is_survives_a_restart(kernel, location, clock, tmp_path, hermes):
+    await location.ingest(crossing(clock, "enter"), MY_TRACKER)
+    again = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"location": LocationSource({"home": HOME})}, clock=clock)
+    try:
+        await again.registry.get("location").run()
+        assert again.registry.get("location").live("people")[0]["place"] == "home"
+    finally:
+        again.data.close()
+        again.db.close()
 
 
 async def test_a_waypoint_from_a_window_is_the_median_of_its_fixes(kernel, location, clock):
@@ -166,8 +167,10 @@ async def test_a_waypoint_from_a_window_is_the_median_of_its_fixes(kernel, locat
     assert waypoint_names(await location.ingest(fix(clock), MY_TRACKER)) == ["grandma's place", "home", "near_home"]
     # Mom's phone doesn't get it until it's shared.
     assert "grandma's place" not in waypoint_names(await location.ingest(fix(clock), MOMS_TRACKER))
+    assert await sql(kernel, MOM, "SELECT name FROM location_waypoints WHERE name = 'grandma''s place'") == []
     await kernel.tools.call("location_waypoint_share", {"name": "grandma's place", "share": True}, ME)
     assert "grandma's place" in waypoint_names(await location.ingest(fix(clock), MOMS_TRACKER))
+    assert await sql(kernel, MOM, "SELECT name, named_by FROM location_waypoints WHERE name = 'grandma''s place'") == [["grandma's place", "me"]]
 
     with pytest.raises(ToolError, match="exists already"):
         await kernel.tools.call("location_waypoint_add", {"name": "grandma's place", "lat": 1, "lon": 2}, ME)
@@ -181,17 +184,17 @@ async def test_removed_waypoints_are_cleared_on_phones(kernel, location, clock):
     assert added.data["lat"] == NEARBY[0]
     assert "office" in waypoint_names(await location.ingest(fix(clock), MY_TRACKER))
     await location.ingest(crossing(clock, "enter", "office"), MY_TRACKER)
-    assert (await location.read("place", {"user": "me"})).value == "office"
+    assert await place(kernel) == [["office"]]
 
     await kernel.tools.call("location_waypoint_remove", {"name": "office"}, ME)
-    assert (await location.read("place", {"user": "me"})).value == "elsewhere"
+    assert await place(kernel) == [["elsewhere"]]
     reply = await location.ingest(fix(clock), MY_TRACKER)
     assert reply[0] == {"_type": "cmd", "action": "clearWaypoints"}
     assert waypoint_names(reply) == ["home", "near_home"]
     # The region stays on an Android phone; its crossings are ignored.
     clock.advance(minutes=1)
     await location.ingest(crossing(clock, "leave", "office"), MY_TRACKER)
-    assert kernel.events.search(type="location.left", viewer=EVERYONE) == []
+    assert await sql(kernel, ME, "SELECT count(*) FROM location_transitions WHERE event = 'leave' AND changed = 1") == [[0]]
 
     with pytest.raises(ToolError, match="config"):
         await kernel.tools.call("location_waypoint_remove", {"name": "home"}, ME)
@@ -233,8 +236,9 @@ async def test_history_is_in_tables_only_its_person_reads(kernel, location, cloc
     moms = await kernel.tools.call("data_sql", {"sql": "SELECT count(*) FROM location_fixes WHERE user_id = 'me'"}, MOM)
     assert moms.data["rows"] == [[0]]
 
-    skill = (await kernel.tools.call("sources_list", {}, ME)).data
-    assert "location_fixes" in next(s for s in skill if s["name"] == "location")["tables"]
+    skill = (kernel.config.skills_folder / "huvu-location" / "SKILL.md")
+    kernel.write_skills()
+    assert "### `location_fixes`" in skill.read_text() and "### `location_people`" in skill.read_text()
 
 
 def test_the_setup_link_carries_the_tracker():

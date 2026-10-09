@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -25,8 +26,8 @@ async def test_a_turn_streams_answer_parts_and_end(kernel, hermes: FakeHermes):
         ("assistant.delta", {"delta": "Searching. "}),
         ("tool.started", {"tool_name": "web_search", "args": {"query": "dentist saturday"}}),
         ("tool.completed", {"tool_name": "web_search", "preview": "[...]"}),
-        ("tool.started", {"tool_name": "mcp__huvu__state_get", "args": {"values": ["clock.time"]}}),
-        ("tool.completed", {"tool_name": "mcp__huvu__state_get", "preview": "{}"}),
+        ("tool.started", {"tool_name": "mcp__huvu__data_sql", "args": {"sql": "SELECT state FROM home_lights"}}),
+        ("tool.completed", {"tool_name": "mcp__huvu__data_sql", "preview": "{}"}),
         ("tool.started", {"tool_name": "mcp__huvu__ui_choices", "args": {"options": ["yes", "no"]}}),
         show_choices,
         ("tool.completed", {"tool_name": "mcp__huvu__ui_choices", "preview": "{}"}),
@@ -58,8 +59,8 @@ async def test_words_beside_tool_calls_open_the_answer(kernel, hermes: FakeHerme
         # Hermes sent the preamble as deltas already, then marks it.
         ("assistant.delta", {"delta": "On it, setting that up."}),
         ("assistant.commentary", {"text": "On it, setting that up.", "already_streamed": True}),
-        ("tool.started", {"tool_name": "mcp__huvu__triggers_list", "args": {}}),
-        ("tool.completed", {"tool_name": "mcp__huvu__triggers_list", "preview": "[]"}),
+        ("tool.started", {"tool_name": "mcp__huvu__data_sql", "args": {"sql": "SELECT * FROM huvu_triggers"}}),
+        ("tool.completed", {"tool_name": "mcp__huvu__data_sql", "preview": "[]"}),
         # A preamble sent only as commentary.
         ("assistant.commentary", {"text": "Checking the clock too."}),
         # huvu's own break, after the one the commentary made.
@@ -285,37 +286,43 @@ async def test_a_fresh_session_reads_only_the_latest_turns_that_fit(kernel, herm
     clock.advance(minutes=6)
     await collect(kernel, await kernel.conversations.ask("c1", "four", user="me"))
     message = hermes.messages[-1][1]
-    assert "starts at turn 2, and the turns before it were left out" in message and "`turns` table" in message
+    assert "starts at turn 2, and the turns before it were left out" in message and "`chat_turns`" in message and "device_id = 'c1'" in message
     assert "Them: one" not in message and "<earlier>\nThem: two\nYou: ok\nThem: three\nYou: ok\n</earlier>" in message
     # Every turn stays in the app.
     assert [t.ask for t in kernel.conversations.turns("c1")] == ["one", "two", "three", "four"]
 
 
-async def test_data_sql_reads_the_turns_a_caller_may_see(kernel, hermes, family):
+async def test_chat_turns_hold_the_turns_a_caller_may_see(kernel, hermes, family):
     await collect(kernel, await kernel.conversations.ask(family.me_phone.id, "plant the tulips", user="me"))
     await collect(kernel, await kernel.conversations.ask(family.me_phone.id, "water them", user="me"))
     await collect(kernel, await kernel.conversations.ask(family.me_web.id, "tulips on the laptop", user="me"))
     await collect(kernel, await kernel.conversations.ask(family.mom_phone.id, "tulips for mom", user="mom"))
     await collect(kernel, await kernel.conversations.ask(family.tv.id, "tulips on tv", user=None, group="home"))
-    caller = Caller(kind="hermes", user="me", device=family.me_phone.id)
-    sql = "SELECT n, them, you, device, here FROM turns WHERE them LIKE '%tulips%' ORDER BY ts, n"
-    result = await kernel.tools.call("data_sql", {"sql": sql}, caller)
-    rows = result.data["rows"]
+    me = Caller(kind="hermes", user="me", device=family.me_phone.id)
+    sql = "SELECT n, them, you, device FROM chat_turns WHERE them LIKE '%tulips%' ORDER BY id"
+    rows = (await kernel.tools.call("data_sql", {"sql": sql}, me)).data["rows"]
     # Their own turns on every device and the group's TV; never mom's.
-    assert [r[1] for r in rows] == ["plant the tulips", "tulips on the laptop", "tulips on tv"]
-    assert [r[4] for r in rows] == [1, 0, 0] and rows[0][:3] == [1, "plant the tulips", "ok"]
-    here = await kernel.tools.call("data_sql", {"sql": "SELECT n, them FROM turns WHERE here ORDER BY n DESC LIMIT 1"}, caller)
-    assert here.data["rows"] == [[2, "water them"]]
-    # Outside a conversation, nothing is here.
-    wake = await kernel.tools.call("data_sql", {"sql": "SELECT count(*) FROM turns WHERE here"}, Caller(kind="hermes", user="me"))
-    assert wake.data["rows"] == [[0]]
+    assert rows == [[1, "plant the tulips", "ok", "my phone"], [1, "tulips on the laptop", "ok", "laptop"], [1, "tulips on tv", "ok", "living room"]]
+    here = f"SELECT n, them FROM chat_turns WHERE device_id = '{family.me_phone.id}' ORDER BY n DESC LIMIT 1"
+    assert (await kernel.tools.call("data_sql", {"sql": here}, me)).data["rows"] == [[2, "water them"]]
+
+
+async def test_an_edit_keeps_the_turn_it_replaced_as_history(kernel, hermes):
+    first = await kernel.conversations.ask("c1", "one", user="me")
+    await collect(kernel, first)
+    second = await kernel.conversations.ask("c1", "two", user="me")
+    await collect(kernel, second)
+    edited = await kernel.conversations.ask("c1", "two, but better", user="me", replaces=second.turn.id)
+    await collect(kernel, edited)
+    rows = kernel.data.rows("chat", "turns", "1 = 1", (), order="id")
+    assert [(r["n"], r["them"], r["replaces"]) for r in rows] == [(1, "one", None), (2, "two", None), (2, "two, but better", second.turn.id)]
 
 
 async def test_turns_log_their_usage(kernel, hermes):
     hermes.script = [("run.started", {"run_id": "r"}), ("assistant.delta", {"delta": "ok"}), ("run.completed", {"usage": {"input_tokens": 900, "cache_read_tokens": 800}})]
     await collect(kernel, await kernel.conversations.ask("c1", "hi", user="me"))
-    [logged] = kernel.events.search(type="conversation.turn")
-    assert logged.data["usage"] == {"input_tokens": 900, "cache_read_tokens": 800}
+    [logged] = kernel.data.rows("chat", "turns", "1 = 1", ())
+    assert json.loads(logged["usage"]) == {"input_tokens": 900, "cache_read_tokens": 800}
 
 
 async def test_the_sweep_deletes_old_sessions_and_the_next_ask_starts_over(kernel, hermes, clock):
@@ -326,7 +333,7 @@ async def test_the_sweep_deletes_old_sessions_and_the_next_ask_starts_over(kerne
     assert hermes.deleted == [first] and kernel.sessions.last_used(first) is None
     await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
     assert "Them: one" in hermes.messages[-1][1]
-    assert kernel.events.search(type="conversation.turn")
+    assert kernel.data.count("chat", "turns", "1 = 1", ()) == 2
 
 
 async def test_ui_tools_without_a_live_turn_say_what_to_do(kernel):

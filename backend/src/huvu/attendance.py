@@ -14,8 +14,9 @@ for the device ends without a yes, its waiting triggers are dropped.
 The Hermes session doesn't change profile, so its prompt cache holds. What
 changes is everything huvu controls:
 
-1. The event log. Events from the device are tagged with the attendee from
-   the moment they were asked, so their own profile's dream finds them.
+1. The history. Rows from the device (its chat turns, the kernel's events
+   about it) are the attendee's from the moment they were asked, so their
+   own profile's dream finds them.
 2. Tool calls from the device's session act as the attendee: their
    triggers, their approvals, their notifications.
 3. The model hears who it's talking to in a note on the next ask.
@@ -29,7 +30,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from .accounts import AuthError, Device
-from .db import from_iso, iso
+from .db import changed, from_iso, iso
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -96,11 +97,12 @@ class Attendance:
             asked_at=now,
             reason=reason,
         )
-        inserted = self._db.execute(
+        inserted = changed(
+            self._db,
             "INSERT INTO attendance (id, device_id, user_id, asked_by, reason, status, asked_at) VALUES (?, ?, ?, ?, ?, 'pending', ?) "
             "ON CONFLICT DO NOTHING",
             (check.id, device_id, user_id, asked_by, reason, iso(now)),
-        ).rowcount
+        )
         if not inserted:
             return None
         await self._kernel.kernel_event(
@@ -135,7 +137,7 @@ class Attendance:
             await self._close(check, "expired", now)
             raise AuthError("this question expired", 410)
         # A double tap: the first answer counts, the second gets nothing.
-        won = self._db.execute("UPDATE attendance SET status = 'answering' WHERE id = ? AND status = 'pending'", (check_id,)).rowcount
+        won = changed(self._db, "UPDATE attendance SET status = 'answering' WHERE id = ? AND status = 'pending'", (check_id,))
         if not won:
             raise AuthError("this question was already answered", 409)
         if yes:
@@ -175,7 +177,7 @@ class Attendance:
             self._set(other, "withdrawn", now)
             self._done(other)
         # What the device did since the question was asked is theirs too.
-        self._kernel.events.claim(check.device, check.user, check.asked_at)
+        self._kernel.data.claim(check.device, check.user, check.asked_at)
         await self._kernel.triggers.confirm(check.device, check.user)
         name = self._user_name(check.user)
         await self._kernel.kernel_event("attendance.confirmed", f"{name} is at {self._name(check.device)}", user=check.user, device=check.device)

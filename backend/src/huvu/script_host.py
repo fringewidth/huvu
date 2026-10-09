@@ -9,12 +9,12 @@ goes to stderr, which the kernel keeps as the script's log.
 A script looks like this:
 
     def run(ctx):
-        snap = ctx.event["refs"]["snapshot"]
-        face = ctx.call("immich_match_face", {"ref": snap})
-        if face.get("name"):
-            ctx.call("huvu_notify", {"text": f"{face['name']} is at the door", "image": snap})
-        else:
-            ctx.wake("Unknown person at the door", {"snapshot": snap})
+        for press in ctx.rows:
+            face = ctx.call("immich_match_face", {"ref": press["snapshot"]})
+            if face.get("name"):
+                ctx.call("huvu_notify", {"text": f"{face['name']} is at the door", "image": press["snapshot"]})
+            else:
+                ctx.wake("Unknown person at the door", {"snapshot": press["snapshot"]})
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ class Context:
     def __init__(self, payload: dict[str, Any], out) -> None:
         self.payload = payload
         self.note: str = payload.get("note", "")
-        self.event: dict[str, Any] | None = payload.get("event")
-        self.matched: dict[str, Any] = payload.get("matched", {})
-        self.include: dict[str, Any] = payload.get("include", {})
+        # The rows that fired the trigger, as dicts by column.
+        self.rows: list[dict[str, Any]] = payload.get("rows", [])
+        self.columns: list[str] = payload.get("columns", [])
         self._out = out
         self._next = 0
 

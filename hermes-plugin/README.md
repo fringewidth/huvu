@@ -50,7 +50,6 @@ The backend tells profiles apart by the MCP token, so never give two profiles th
    | `HUVU_URL` | The backend | `http://localhost:3001` |
    | `HUVU_MCP_TOKEN` | The profile's own token, which the backend checks on `/mcp` and `/api/situation` | none |
    | `HUVU_MCP_SERVER` | The server's name under `mcp_servers` | `huvu` |
-   | `HUVU_SITUATION` | Comma-separated value keys for the situation block | `huvu.mode` |
 
 1. Turn on the API server with the profile's `API_SERVER_KEY`, since the backend starts sessions there.
 

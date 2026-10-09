@@ -18,7 +18,7 @@ async def test_silent_actions_run_and_are_audited(kernel, home):
     result = await kernel.tools.call("home_turn_on", {"entity_id": "light.porch", "reason": "you asked"}, Caller(kind="hermes", session="s1"))
     assert result.data == {"done": "turn_on"}
     assert home.acted == [("turn_on", {"entity_id": "light.porch"})]
-    audit = [e.type for e in kernel.events.search(source="kernel")]
+    audit = [r["type"] for r in kernel.data.rows("huvu", "events", "1 = 1", ())]
     assert "action.requested" in audit and "action.ran" in audit
 
 
@@ -92,67 +92,62 @@ async def test_notifications_reach_the_users_phones(kernel, family):
     moms_task.cancel()
 
 
-async def test_external_results_keep_their_label(kernel):
-    result = await kernel.tools.call("state_get", {"values": ["home.snapshot", "clock.time"]}, Caller(kind="hermes", session="s9"))
+async def test_external_results_keep_their_label(kernel, home):
+    await home.press()
+    result = await kernel.tools.call("data_sql", {"sql": "SELECT note FROM home_doorbell"}, Caller(kind="hermes", session="s9"))
     assert "external" in result.labels
+    plain = await kernel.tools.call("data_sql", {"sql": "SELECT state FROM home_lights"}, Caller(kind="hermes", session="s9"))
+    assert plain.labels == ["house"]
 
 
 async def test_the_profile_names_the_user_and_the_session_the_device(kernel, family):
     kernel.sessions.record("s9", "chat", user="me", device=family.me_web.id)
-    args = {"_session": "s9", "values": ["clock.time"]}
+    args = {"_session": "s9", "sql": "SELECT 1"}
     caller = caller_from(kernel, args, "me", None)
     assert (caller.user, caller.session, caller.device) == ("me", "s9", family.me_web.id)
-    assert args == {"values": ["clock.time"]}
+    assert args == {"sql": "SELECT 1"}
     # Mom's profile can't borrow my session.
     borrowed = caller_from(kernel, {"_session": "s9"}, "mom", None)
     assert (borrowed.user, borrowed.session, borrowed.device) == ("mom", None, None)
 
 
 async def test_unknown_tools_and_missing_args_explain_themselves(kernel):
-    with pytest.raises(ToolError, match="Did you mean state_get"):
-        await kernel.tools.call("state_gte", {}, Caller(kind="hermes"))
-    with pytest.raises(ToolError, match="needs values"):
-        await kernel.tools.call("state_get", {}, Caller(kind="hermes"))
-
-
-async def test_events_tools_take_relative_times(kernel, clock):
-    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
-    clock.advance(hours=3)
-    recent = await kernel.tools.call("events_search", {"type": "home.doorbell", "since": "2h"}, Caller(kind="hermes"))
-    older = await kernel.tools.call("events_search", {"type": "home.doorbell", "since": "4h"}, Caller(kind="hermes"))
-    assert recent.data == [] and len(older.data) == 1
-    # The clock started at 23:50, so the doorbell rang yesterday.
-    digest = await kernel.tools.call("events_digest", {"day": "yesterday"}, Caller(kind="hermes"))
-    assert [t["type"] for t in digest.data["by_type"]] == ["home.doorbell"]
+    with pytest.raises(ToolError, match="Did you mean data_sql"):
+        await kernel.tools.call("data_sq", {}, Caller(kind="hermes"))
+    with pytest.raises(ToolError, match="needs sql"):
+        await kernel.tools.call("data_sql", {}, Caller(kind="hermes"))
+    # The read tools of before are gone.
+    with pytest.raises(ToolError, match="no tool named 'state_get'"):
+        await kernel.tools.call("state_get", {"values": ["home.light"]}, Caller(kind="hermes"))
 
 
 SCRIPT = """
 def run(ctx):
-    snap = ctx.call("state_get", {"values": ["home.snapshot"]})["home.snapshot"]["value"]
-    ctx.log("snapshot says", snap["text"])
-    ctx.call("home_turn_on", {"entity_id": "light.porch"})
-    if "note" in snap["text"]:
-        ctx.wake("someone held up a note", {"ref": snap["ref"]})
+    for press in ctx.rows:
+        ctx.log("snapshot says", press["note"])
+        porch = ctx.call("data_sql", {"sql": "SELECT state FROM home_lights WHERE entity_id = 'light.porch'"})
+        if porch["rows"] == [["off"]]:
+            ctx.call("home_turn_on", {"entity_id": "light.porch"})
+        if "note" in press["note"]:
+            ctx.wake("someone held up a note", {"ref": press["snapshot"]})
 """
+TRIAGE = {"note": "Triage the doorbell.", "sql": "SELECT id, note, snapshot FROM home_doorbell", "fire": "rows", "once": False, "script": SCRIPT, "grants": ["data_sql", "home_turn_on"]}
 
 
 async def test_scripts_call_granted_tools_and_wake(kernel, home, hermes, family):
-    spec = {"note": "Triage the doorbell.", "when": [{"event": "home.doorbell"}], "repeat": "yes", "script": SCRIPT, "grants": ["state_get", "home_turn_on"]}
-    await kernel.triggers.register(TriggerSpec.model_validate(spec), Caller(kind="hermes", session="s1", user="me"))
-    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
+    await kernel.triggers.register(TriggerSpec.model_validate(TRIAGE), Caller(kind="hermes", session="s1", user="me"))
+    await home.press()
     await settle(kernel)
     assert home.acted == [("turn_on", {"entity_id": "light.porch"})]
     assert len(wakes(hermes)) == 1
     assert "someone held up a note" in wakes(hermes)[0]
-    script_events = kernel.events.search(type="trigger.script")
-    assert script_events, [e.summary for e in kernel.events.search(source="kernel")]
+    assert kernel.data.rows("huvu", "events", "type = 'trigger.script'", ())
 
 
 async def test_dry_runs_skip_actions_and_wakes(kernel, home, hermes):
-    await kernel.registry.get("home").ctx.emit("doorbell", "ding")
-    spec = {"note": "Triage.", "when": [{"event": "home.doorbell"}], "script": SCRIPT, "grants": ["state_get", "home_turn_on"]}
-    report = await kernel.tools.call("triggers_test", spec, Caller(kind="hermes"))
-    [run] = report.data["script_runs"]
+    await home.press()
+    report = await kernel.tools.call("triggers_register", {**TRIAGE, "dry_run": True}, Caller(kind="hermes"))
+    run = report.data["script"]
     assert run["error"] is None, run["log"]
     assert [c.get("skipped") for c in run["calls"]] == [None, "dry run"]
     assert run["wakes"] and home.acted == [] and wakes(hermes) == []
@@ -160,24 +155,22 @@ async def test_dry_runs_skip_actions_and_wakes(kernel, home, hermes):
 
 
 async def test_scripts_outside_their_grants_are_refused(kernel, home):
-    spec = {"note": "x", "when": [{"event": "home.doorbell"}], "script": SCRIPT, "grants": ["state_get"]}
-    report = await kernel.tools.call("triggers_test", spec, Caller(kind="hermes"))
-    [run] = report.data["script_runs"]
-    assert "not in this trigger's grants" in run["error"]
+    await home.press()
+    report = await kernel.tools.call("triggers_register", {**TRIAGE, "grants": ["data_sql"], "dry_run": True}, Caller(kind="hermes"))
+    assert "not in this trigger's grants" in report.data["script"]["error"]
 
 
 async def test_bad_scripts_fail_at_registration(kernel):
     for script, message in [("def run(ctx)\n  pass", "script line"), ("x = 1", "must define run"), (SCRIPT, "names no tool")]:
-        spec = {"note": "x", "when": [{"event": "home.doorbell"}], "script": script, "grants": ["home_snapshots"] if message == "names no tool" else []}
+        spec = {**TRIAGE, "script": script, "grants": ["home_snapshots"] if message == "names no tool" else []}
         with pytest.raises(ToolError, match=message):
             await kernel.tools.call("triggers_register", spec, Caller(kind="hermes"))
 
 
-async def test_mcp_results_are_readable_and_marked(kernel):
+async def test_mcp_results_are_readable_and_marked(kernel, family):
     from huvu.times import for_model
 
-    await kernel.registry.get("home").ctx.update("eta_min", 12)
-    result = await kernel.tools.call("state_get", {"values": ["home.eta_min"]}, Caller(kind="hermes"))
+    result = await kernel.tools.call("triggers_register", TRIAGE, Caller(kind="hermes", user="me"))
     text = json.dumps(for_model(result.data, kernel.now()))
     assert "just now" in text
 

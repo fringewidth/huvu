@@ -1,10 +1,9 @@
 """The tool box: the one tool surface Hermes and trigger scripts share.
 
-Kernel tools come first (state, events, data, triggers, ui, people). Then
-every source action becomes a tool named `<source>_<name>`, built from the
-source's spec, which goes through the policy. Sources have no queries:
-what is true now is a value (state_get), and what happened over time is a
-history table (data_sql).
+Kernel tools come first (data, triggers, ui, people). Then every source
+action becomes a tool named `<source>_<name>`, built from the source's
+spec, which goes through the policy. There is one way to read: data_sql,
+over every source's tables, what happened and what is true now alike.
 
 Hermes sees the kernel tools, plus `act`, which runs any source action by
 name. The per-source tools stay off MCP, so a new driver
@@ -20,21 +19,17 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from .accounts import AuthError, Device
 from .data import DataError
-from .events import day_bounds
-from .names import UnknownName
-from .prompts import ACT_REASON, ACTION_REASON, EVENT_TYPE, NEEDS_TAP, TOOLS, signature
-from .registry import suggest
+from .prompts import ACT_REASON, ACTION_REASON, DRY_RUN, NEEDS_TAP, TOOLS, signature
+from .registry import UnknownName, suggest
 from .scripts import ScriptError
 from .source import SourceError
-from .spec import Caller, Label, Result, merge_labels
-from .times import RELATIVE_RE, UNITS, parse_when
+from .spec import Caller, Label, Result
 from .triggers import TriggerError, TriggerSpec
 
 if TYPE_CHECKING:
@@ -45,7 +40,7 @@ log = logging.getLogger("huvu.tools")
 Handler = Callable[[dict[str, Any], Caller], Awaitable[Result]]
 
 # Source names that would collide with kernel tool names.
-RESERVED = {"state", "events", "sources", "triggers", "ui", "kernel", "people", "act", "data"}
+RESERVED = {"triggers", "ui", "kernel", "people", "act", "data"}
 
 
 class ToolError(Exception):
@@ -71,6 +66,7 @@ def _schema(properties: dict[str, Any], required: list[str] | None = None) -> di
 
 
 TRIGGER_SCHEMA = TriggerSpec.model_json_schema()
+REGISTER_SCHEMA = {**TRIGGER_SCHEMA, "properties": {**TRIGGER_SCHEMA["properties"], "dry_run": {"type": "boolean", "description": DRY_RUN}}}
 
 
 class ToolBox:
@@ -138,55 +134,18 @@ class ToolBox:
                 writes=True,
             ),
             Tool(
-                "state_get",
-                TOOLS["state_get"],
-                _schema({"values": {"type": "array", "items": {"type": "string"}}}, ["values"]),
-                self._state_get,
-            ),
-            Tool(
-                "state_search",
-                TOOLS["state_search"],
-                _schema({"query": {"type": "string"}}, ["query"]),
-                self._state_search,
-            ),
-            Tool(
-                "events_search",
-                TOOLS["events_search"],
-                _schema(
-                    {
-                        "query": {"type": "string"},
-                        "source": {"type": "string"},
-                        "type": {"type": "string", "description": EVENT_TYPE},
-                        "since": {"type": "string"},
-                        "until": {"type": "string"},
-                        "limit": {"type": "integer"},
-                    }
-                ),
-                self._events_search,
-            ),
-            Tool("events_get", TOOLS["events_get"], _schema({"id": {"type": "string"}}, ["id"]), self._events_get),
-            Tool(
-                "events_digest",
-                TOOLS["events_digest"],
-                _schema({"day": {"type": "string"}, "hour": {"type": "integer"}}),
-                self._events_digest,
-            ),
-            Tool(
                 "data_sql",
                 TOOLS["data_sql"],
                 _schema({"sql": {"type": "string"}, "limit": {"type": "integer"}}, ["sql"]),
                 self._data_sql,
             ),
-            Tool("sources_list", TOOLS["sources_list"], _schema({}), self._sources_list),
             Tool(
                 "triggers_register",
                 TOOLS["triggers_register"],
-                TRIGGER_SCHEMA,
+                REGISTER_SCHEMA,
                 self._triggers_register,
                 writes=True,
             ),
-            Tool("triggers_test", TOOLS["triggers_test"], TRIGGER_SCHEMA, self._triggers_test),
-            Tool("triggers_list", TOOLS["triggers_list"], _schema({}), self._triggers_list),
             Tool("triggers_remove", TOOLS["triggers_remove"], _schema({"id": {"type": "string"}}, ["id"]), self._triggers_remove, writes=True),
             Tool(
                 "triggers_pause",
@@ -261,61 +220,17 @@ class ToolBox:
             problem = f"needs {', '.join(missing)}" if missing else f"takes no {', '.join(unknown)}"
             raise ToolError(f"{tool.name} {problem}; it is {signature(tool.name, tool.input_schema)}")
 
-    async def _state_get(self, args: dict[str, Any], caller: Caller) -> Result:
-        readings = await self._kernel.state.get(list(args["values"]), self._kernel.accounts.scope(caller.user, caller.group))
-        return Result(data=readings, labels=merge_labels(*(r.labels for r in readings.values())))
-
-    async def _state_search(self, args: dict[str, Any], caller: Caller) -> Result:
-        return Result(data=await self._kernel.state.search(args["query"]), labels=["house"])
-
-    async def _events_search(self, args: dict[str, Any], caller: Caller) -> Result:
-        now = self._kernel.now()
-        events = self._kernel.events.search(
-            args.get("query"),
-            source=args.get("source"),
-            type=args.get("type"),
-            since=_ago(args["since"], now) if args.get("since") else None,
-            until=_ago(args["until"], now) if args.get("until") else None,
-            limit=int(args.get("limit") or 20),
-            viewer=self._kernel.accounts.scope(caller.user, caller.group),
-        )
-        return Result(data=events, labels=merge_labels(["house"], *(e.labels for e in events)))
-
-    async def _events_get(self, args: dict[str, Any], caller: Caller) -> Result:
-        event = self._kernel.events.get(args["id"], viewer=self._kernel.accounts.scope(caller.user, caller.group))
-        if event is None:
-            raise ToolError(f"no event {args['id']!r}")
-        return Result(data=event, labels=event.labels)
-
-    async def _events_digest(self, args: dict[str, Any], caller: Caller) -> Result:
-        start, end = day_bounds(_day(args.get("day") or "today", self._kernel.now()))
-        if args.get("hour") is not None:
-            start = start + timedelta(hours=int(args["hour"]))
-            end = start + timedelta(hours=1)
-        return Result(data=self._kernel.events.digest(start, end, viewer=self._kernel.accounts.scope(caller.user, caller.group)), labels=["house"])
-
     async def _data_sql(self, args: dict[str, Any], caller: Caller) -> Result:
         viewer = self._kernel.accounts.scope(caller.user, caller.group)
-        data = await self._kernel.data.sql(str(args["sql"]), viewer, int(args.get("limit") or 200), here=caller.device)
-        return Result(data=data, labels=["house"])
-
-    async def _sources_list(self, args: dict[str, Any], caller: Caller) -> Result:
-        data = [
-            {
-                "name": s.name,
-                "description": s.description,
-                "values": [f"{s.name}.{v.name}" + (f"[{','.join(v.params)}]" if v.params else "") for v in s.values],
-                "events": [f"{s.name}.{e.type}" for e in s.events],
-                "actions": [f"{s.name}_{a.name}" for a in s.actions],
-                "tables": [f"{s.name}_{t.name}" for t in s.tables],
-                "skill": f"huvu-{s.name}",
-            }
-            for s in self._kernel.registry.specs()
-        ]
-        return Result(data=data, labels=["house"])
+        answer = await self._kernel.data.sql(str(args["sql"]), viewer, int(args.get("limit") or 200))
+        return Result(data=answer.public(), labels=answer.labels or ["house"])
 
     async def _triggers_register(self, args: dict[str, Any], caller: Caller) -> Result:
-        trigger = await self._kernel.triggers.register(TriggerSpec.model_validate(args), caller)
+        given = dict(args)
+        if given.pop("dry_run", False):
+            report = await self._kernel.triggers.dry_run(TriggerSpec.model_validate(given), caller)
+            return Result(data=report, labels=["house"])
+        trigger = await self._kernel.triggers.register(TriggerSpec.model_validate(given), caller)
         data = trigger.public()
         if trigger.status == "unconfirmed":
             data["note_for_you"] = (
@@ -323,12 +238,6 @@ class ToolBox:
                 "only once one of them taps yes, and is dropped if nobody does within 5 minutes. Tell the person to check their phone and tap yes."
             )
         return Result(data=data, labels=["house"])
-
-    async def _triggers_test(self, args: dict[str, Any], caller: Caller) -> Result:
-        return Result(data=await self._kernel.triggers.test(TriggerSpec.model_validate(args), caller.user), labels=["house"])
-
-    async def _triggers_list(self, args: dict[str, Any], caller: Caller) -> Result:
-        return Result(data=[t.public() for t in self._kernel.triggers.list(caller)], labels=["house"])
 
     async def _triggers_pause(self, args: dict[str, Any], caller: Caller) -> Result:
         trigger = await self._kernel.triggers.pause(args["id"], caller, args.get("reason"))
@@ -391,26 +300,3 @@ def _with_reason(schema: dict[str, Any]) -> dict[str, Any]:
     properties = dict(schema.get("properties") or {})
     properties["reason"] = {"type": "string", "description": ACTION_REASON}
     return {**schema, "properties": properties}
-
-
-def _ago(text: str, now):
-    """`2h` here means two hours ago."""
-    raw = text.strip().lower()
-    rel = RELATIVE_RE.match(raw)
-    if rel:
-        when = now - timedelta(seconds=int(rel.group(1)) * UNITS[rel.group(2)])
-    elif raw in ("today", "yesterday"):
-        when = _day(raw, now).replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        when = parse_when(text, now)
-    return when
-
-
-def _day(text: str, now):
-    raw = text.strip().lower()
-    days = {"today": 0, "yesterday": 1}
-    if raw in days:
-        day = now - timedelta(days=days[raw])
-    else:
-        day = parse_when(raw if "T" in raw else f"{raw}T00:00", now)
-    return day

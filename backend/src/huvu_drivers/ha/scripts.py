@@ -17,7 +17,7 @@ What the script says in HA becomes what the model sees:
    unasked action.
 
 Anything that doesn't fit is a setup problem: logged, listed in the
-`problems` value, and, where it can't work at all, left out.
+`ha_setup` table, and, where it can't work at all, left out.
 """
 
 from __future__ import annotations

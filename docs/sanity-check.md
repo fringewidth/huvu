@@ -37,6 +37,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask something, then tap "stop" while huvu answers. The button should say "stopping", and the answer should end a moment later. huvu may finish its sentence first. That is expected.
 1. Tap "edit" next to one of your earlier questions, change it, and send. That question and everything after it should go away, and huvu should answer the new question.
 1. Ask something that makes huvu offer choices, such as "help me pick a movie, give me three options". Tap one choice. It should be sent as your next question.
+1. In a conversation from a day or more ago, ask about something you said early on, such as "what was that recipe we talked about yesterday?". huvu should find it, even if a lot was said since.
 1. Turn the backend off and ask something. The answer should fail and show "try again". Turn the backend on and tap "try again". huvu should answer.
 
 ## Coming back to the app
@@ -85,13 +86,13 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 1. Ask huvu: "remind me in two minutes to check the oven". After two minutes, you should get the reminder.
 1. Ask huvu to set up something that repeats, such as "every day at 9pm, tell me to take my medicine".
-1. Open the menu. Under triggers, both should be listed, each with what it does and how often.
+1. Open the menu. Under triggers, both should be listed, each with what it does and how often: the oven reminder "once", the medicine "every time".
 1. Tap "pause" on one. It should say paused by you. Tap "resume". It should be live again.
 1. Ask huvu: "what triggers do I have?". It should name the same ones.
 1. Log in as the other person. Your triggers should not appear in their menu.
 1. Ask huvu to set up something that needs its strongest thinking, and say it should use the advanced model. On your phone, a card should ask you to allow it. In the menu it should say it waits for your yes. Tap "allow" (or yes on the phone). It should say watching, with "advanced" after how often.
 1. Ask for another advanced trigger, and tap no on the phone. It should leave the menu.
-1. In the menu, your dream should be listed: a daily trigger, "Your dream...", on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs.
+1. In the menu, your dream should be listed: "Your dream...", every time, on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs.
 
 ## The menu (phone and laptop)
 
@@ -137,5 +138,6 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Asking the TV through Alexa. The skill doesn't exist yet, so nothing appears on the TV unless a feed is picked. For the same reason, an approval for the whole household (asked at the TV with nobody recognized) can't be tested yet.
 1. Live camera feeds. The list may appear, but no feed can play yet.
 1. The doorbell. It waits for the Tuya driver.
+1. The house's devices, such as "turn on the bedroom light when I walk in". They wait for the Home Assistant setup (`home-assistant.md`). Once it is done: walk into the room, and the light should come on within a second or two.
 1. iPhones. No iOS build exists yet.
 1. Phone notifications, until the Firebase project is set up (see `v0.md`). Before that, notices, approvals and questions show only while the app is open.

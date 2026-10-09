@@ -1,7 +1,7 @@
 [project]
 name = "huvu"
 version = "0.0.0"
-description = "huvu's backend: sources, state, the event log, triggers, the action policy, and the link to Hermes and the frontend."
+description = "huvu's backend: sources and their tables, triggers, the action policy, and the link to Hermes and the frontend."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
@@ -13,6 +13,7 @@ dependencies = [
     "segno>=1.6.6",
     "websockets>=17.1",
     "edge-tts>=7.2.8",
+    "apsw>=3.53.4.0",
 ]
 
 [project.scripts]

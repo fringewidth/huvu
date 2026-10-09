@@ -131,7 +131,7 @@ Approvals are answered from phones only. An approval belongs to the user it was 
 
 ### Triggers
 
-`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `when`, `repeat`, `status` (`active`, `unconfirmed`, `awaiting`, `paused`), `tier` (`basic`, `pro` or `advanced`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one. A trigger the wake limit paused (`paused_by: "limit"`) resumes only this way, by a person's tap; the model can't. `POST /api/triggers/{id}/approve` says yes to an `awaiting` trigger: on the person's own device it goes live at once and the trigger comes back; elsewhere it opens an approval like any other.
+`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `sql`, `fire` (`edge` or `rows`), `once`, `status` (`active`, `unconfirmed`, `awaiting`, `paused`), `tier` (`basic`, `pro` or `advanced`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one. A trigger a limit paused (`paused_by: "limit"`: it fired or woke huvu too often) resumes only this way, by a person's tap; the model can't. `POST /api/triggers/{id}/approve` says yes to an `awaiting` trigger: on the person's own device it goes live at once and the trigger comes back; elsewhere it opens an approval like any other.
 
 ### Triggers on a shared device
 
@@ -143,7 +143,7 @@ A trigger belongs to a person. One set up on a shared device with nobody recogni
 
 ### Who is at a shared device
 
-A shared device can recognize the person in front of it, if they're in its group (member or guest). The Hermes session stays the group's, so nothing about the conversation changes, but from then on the backend treats it as that person's: their triggers, their approvals and notifications on their phone, and their entries in the event log, which their own dream reads.
+A shared device can recognize the person in front of it, if they're in its group (member or guest). The Hermes session stays the group's, so nothing about the conversation changes, but from then on the backend treats it as that person's: their triggers, their approvals and notifications on their phone, and their rows in the history (chat turns, huvu's log), which their own dream reads.
 
 1. `GET /api/people` lists the people in the device's group (`id`, `name`), for a "who's this?" picker.
 1. `POST /api/attendance` with `{"user"}`, from a shared device, asks that person on their phones. Asking again before they answer changes nothing and answers `409`. The model can ask the same way, and later voice recognition will.

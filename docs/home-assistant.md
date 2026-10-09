@@ -13,7 +13,7 @@ Know this before you design anything in HA. Every rule below follows from it.
 1. **huvu changes the house only by running HA scripts.** Each exposed script becomes one huvu action: `script.bedroom_ac_set` becomes `ha_bedroom_ac_set`. huvu has no other way to work a device: no `light.turn_on`, no raw service call. If a device can't be worked through a script, huvu can't work it.
 1. The model sees, for each script: its description, its area, and its fields as arguments with types taken from their selectors. That's all it knows about what the script does. The script's description is the documentation.
 1. **A label on each script decides whether huvu may run it alone.** See [Labels](#step-6-labels).
-1. The model reads any exposed entity's state and attributes, and searches entities by name, area, device and alias.
+1. The model reads every exposed entity's state and attributes from `ha_entities`, a live table, and finds entities by name, area, device and alias with SQL. Every change and script run lands in the history tables (`ha_changes`, `ha_script_runs`, `ha_sensor_5min`), and a trigger that reads one runs the moment a row lands.
 1. huvu records history for its nightly "dream", which learns what each person prefers: every change of an exposed entity with who caused it, every script run, and numeric sensors every 5 minutes. A setup that hides who did what, or that leaves devices without a state, gives the dream nothing to learn from.
 1. huvu reloads the scripts, labels, areas and the exposure list on every registry change in HA, and every 5 minutes. A script you add or edit appears in huvu within 5 minutes, with no restart.
 
@@ -23,9 +23,9 @@ Know this before you design anything in HA. Every rule below follows from it.
 1. Don't expose lock, alarm or garage door entities' own services through any script without `huvu_human`. Exposing them for reading is fine.
 1. huvu's token must belong to a separate HA user named `huvu`, never to a family member's user. huvu tells its own actions apart by that user.
 1. Every script huvu may run has a description written for a model (see [Descriptions](#descriptions)).
-1. Every script id is lower case letters, digits and underscores, starting with a letter. These ids are reserved and get left out: `history`, `areas`, `problems`.
+1. Every script id is lower case letters, digits and underscores, starting with a letter.
 1. Don't build behavior in HA automations, such as "turn the AC on at 22:30". huvu's triggers own behavior, and the dream learns from what people do. HA automations are for device glue only: syncing a state, a power sensor, a debounce. See [Automations](#step-9-automations).
-1. Never remove or rename an exposed script without checking the `ha.problems` value afterwards (ask huvu "what is wrong with the Home Assistant setup?"). A renamed script is a new action, and huvu triggers that used the old name fail.
+1. Never remove or rename an exposed script without checking the `ha_setup` table afterwards (ask huvu "what is wrong with the Home Assistant setup?"). A renamed script is a new action, and huvu triggers that used the old name fail.
 1. Quote `"on"`, `"off"`, `"yes"` and `"no"` in YAML. HA's YAML reads them unquoted as booleans, and a select option `off` would turn into `false`.
 
 ## Tools
@@ -371,7 +371,6 @@ options = { url = "http://homeassistant.local:8123", users = { "<HA user id of m
 ```
 
 1. `users` maps HA user ids to huvu usernames (`uv run huvu user list`). A change someone makes in the HA app then counts as theirs.
-1. `event_domains = ["light"]` adds a domain whose changes go into huvu's event log as well as its history. By default only locks, covers, alarms, people, and door, window, smoke and leak sensors do.
 1. `exposure = "all"` makes huvu read every entity, ignoring the exposure list. For development only.
 1. `[policy]` in the same file can override a script's level by its action name: `"ha.bedroom_ac_set" = "notify"`. It can't lower `huvu_human`.
 

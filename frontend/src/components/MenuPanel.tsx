@@ -123,14 +123,12 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
   );
 }
 
-const REPEAT: Record<string, string> = { no: "once", yes: "every time", daily: "daily" };
-
 function describe(t: Trigger): string {
-  let state = `watching / ${REPEAT[t.repeat] ?? t.repeat}`;
+  let state = `watching / ${t.once ? "once" : "every time"}`;
   if (t.tier !== "basic") state += ` / ${t.tier}`;
   if (t.status === "unconfirmed") state = "waiting for its person to say it's them";
   else if (t.status === "awaiting") state = "waiting for your yes: it uses the advanced model";
-  else if (t.paused_by === "limit") state = "paused: it woke huvu too often";
+  else if (t.paused_by === "limit") state = "paused: it ran too often";
   else if (t.status === "paused") state = `paused by ${t.paused_by === "user" ? "you" : "huvu"}`;
   return state;
 }

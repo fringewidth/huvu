@@ -5,11 +5,10 @@ the driver subscribes to state changes and registry changes, then loads
 the registries, the Assist exposure list, every state and the config of
 every exposed script. It keeps:
 
-1. **A mirror of every exposed entity's state**, in memory. Reads answer
-   from it, so the values are `on_demand` and nothing is written per state
-   change. Only values a trigger watches are pushed to the kernel, so
-   triggers still hear each change. HA sends every state again on
-   reconnect, so the mirror needs no persistence.
+1. **A mirror of every exposed entity's state**, in memory. The live
+   tables answer from it (`ha_entities`), so nothing is written per state
+   change but the history row. HA sends every state again on reconnect,
+   so the mirror needs no persistence.
 2. **The exposed scripts, as actions** (scripts.py). They are cached in
    the source's folder, so the actions exist before HA connects. When the
    scripts change in HA (a registry event, or the 5-minute refresh), the
@@ -21,11 +20,6 @@ every exposed script. It keeps:
 What HA exposes to Assist is what huvu sees. Nothing else can be read,
 searched or worked.
 
-Only changes a person would call events go into the event log: locks,
-covers, alarms, people, and door, window, smoke and leak sensors, plus the
-domains in the `event_domains` option. Script runs by anyone but huvu are
-events too; huvu's own runs are already `action.ran` events.
-
 Options (huvu.toml):
 
     [[sources]]
@@ -36,8 +30,7 @@ Options (huvu.toml):
 `token_env` names the environment variable with the long-lived access
 token (default HA_TOKEN; backend/.env works too). `exposure = "all"` reads
 every entity instead of the Assist list, for development. `assistant`
-picks another assistant's exposure list. `event_domains` adds domains whose
-state changes go into the event log, such as ["light"].
+picks another assistant's exposure list.
 """
 
 from __future__ import annotations
@@ -50,19 +43,8 @@ from typing import Any
 
 from huvu.config import secret
 from huvu.prompts import HA_GUIDE, TEXT
-from huvu.registry import suggest
 from huvu.source import Source, SourceError
-from huvu.spec import (
-    Caller,
-    ColumnSpec,
-    EventSpec,
-    Match,
-    Reading,
-    Result,
-    SourceSpec,
-    TableSpec,
-    ValueSpec,
-)
+from huvu.spec import Caller, ColumnSpec, Result, SourceSpec, TableSpec
 
 from .client import Connect, HAClient, HAError, connect_websocket
 from .history import Actor, Attribution, SensorBuckets
@@ -80,13 +62,6 @@ FLUSH_EVERY = 30.0
 ACT_TIMEOUT = 120.0
 
 REGISTRY_EVENTS = ("entity_registry_updated", "area_registry_updated", "device_registry_updated", "label_registry_updated")
-GONE = {"unavailable", "unknown"}
-EVENT_DOMAINS = {"lock", "cover", "alarm_control_panel", "person"}
-OPENING = {"door", "window", "garage_door", "opening"}
-DETECTION = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "tamper", "problem", "motion", "occupancy", "presence", "sound", "vibration"}
-# Binary sensor classes whose changes are events. Motion and occupancy
-# change too often; they are in the changes table.
-EVENT_CLASSES = OPENING | {"lock", "smoke", "gas", "carbon_monoxide", "moisture", "safety", "tamper"}
 # The attributes that say what a person chose, per domain. A change in one
 # of them is a change row even when the state stays the same.
 TRACKED = {
@@ -102,31 +77,6 @@ TRACKED = {
 }
 # Left out of entity_attributes: pictures, icons and bit masks.
 NOISE = {"entity_picture", "icon", "supported_features", "supported_color_modes", "attribution", "friendly_name"}
-
-ENTITY = {"entity_id": "string"}
-
-VALUES = [
-    ValueSpec(name="entity_state", description=TEXT["ha.value.entity_state"], type="string", params=ENTITY, updates="on_demand"),
-    ValueSpec(name="entity_number", description=TEXT["ha.value.entity_number"], type="number", params=ENTITY, updates="on_demand"),
-    ValueSpec(name="entity_attributes", description=TEXT["ha.value.entity_attributes"], type="object", params=ENTITY, updates="on_demand"),
-    ValueSpec(name="areas", description=TEXT["ha.value.areas"], type="list", updates="on_demand"),
-    ValueSpec(
-        name="problems",
-        description=TEXT["ha.value.problems"],
-        type="object",
-        updates="on_demand",
-    ),
-]
-
-EVENTS = [
-    EventSpec(
-        type="state_changed",
-        description=TEXT["ha.event.state_changed"],
-        data={"entity_id": "string", "domain": "string", "device_class": "string", "area": "string", "from": "string", "to": "string", "actor": "string"},
-    ),
-    EventSpec(type="script_run", description=TEXT["ha.event.script_run"], data={"script": "string", "area": "string", "actor": "string"}),
-]
-
 
 _ACTOR = ColumnSpec(name="actor", type="text", description=TEXT["ha.column.actor"])
 _HA_USER = ColumnSpec(name="ha_user", type="text", description=TEXT["ha.column.ha_user"])
@@ -183,6 +133,54 @@ TABLES = [
         ],
         indexes=[["entity_id", "ts"]],
     ),
+    TableSpec(
+        name="entities",
+        description=TEXT["ha.table.entities"],
+        columns=[
+            ColumnSpec(name=n, type=t, description=TEXT[f"ha.table.entities.column.{n}"])
+            for n, t in (
+                ("entity_id", "text"),
+                ("name", "text"),
+                ("domain", "text"),
+                ("device_class", "text"),
+                ("area", "text"),
+                ("device", "text"),
+                ("aliases", "json"),
+                ("state", "text"),
+                ("number", "real"),
+                ("attributes", "json"),
+                ("assumed", "boolean"),
+                ("last_changed", "text"),
+            )
+        ],
+        live=True,
+    ),
+    TableSpec(
+        name="scripts",
+        description=TEXT["ha.table.scripts"],
+        columns=[
+            ColumnSpec(name=n, type=t, description=TEXT[f"ha.table.scripts.column.{n}"])
+            for n, t in (
+                ("action", "text"),
+                ("name", "text"),
+                ("description", "text"),
+                ("area", "text"),
+                ("fields", "json"),
+                ("targets", "json"),
+                ("usable", "boolean"),
+            )
+        ],
+        live=True,
+    ),
+    TableSpec(
+        name="setup",
+        description=TEXT["ha.table.setup"],
+        columns=[
+            ColumnSpec(name=n, type=t, description=TEXT[f"ha.table.setup.column.{n}"])
+            for n, t in (("connected", "boolean"), ("ha_version", "text"), ("problems", "json"))
+        ],
+        live=True,
+    ),
 ]
 
 
@@ -195,7 +193,6 @@ class HomeAssistant(Source):
         self._assistant = str(opts.get("assistant", "conversation"))
         self._expose_all = opts.get("exposure", "assist") == "all"
         self._users: dict[str, str] = dict(opts.get("users", {}))
-        self._event_domains = EVENT_DOMAINS | set(opts.get("event_domains", []))
         self._connect = connect or connect_websocket
         self._client: HAClient | None = None
         self._connected = False
@@ -208,8 +205,6 @@ class HomeAssistant(Source):
         self._scripts: dict[str, Script] | None = None
         self._problems: list[str] = []
         self._logged: set[str] = set()
-        # Entity -> the value names triggers watch on it.
-        self._watched: dict[str, set[str]] = {}
         # Script entity -> (huvu user, args) of each call huvu has waiting
         # in HA, oldest first.
         self._inflight: dict[str, list[tuple[str | None, dict[str, Any]]]] = {}
@@ -225,8 +220,6 @@ class HomeAssistant(Source):
             name=name,
             description=TEXT["ha.description"],
             guide=HA_GUIDE.format(name=name),
-            values=VALUES,
-            events=EVENTS,
             actions=[action(s) for s in self._known_scripts().values() if usable(s)],
             tables=TABLES,
         )
@@ -391,7 +384,9 @@ class HomeAssistant(Source):
             else:
                 self._states[entity_id] = new
                 await self._changed(entity_id, old, new, context, at)
-            await self._push_watched(entity_id)
+            # ha_entities changed even when no row was recorded (a sensor
+            # reading goes only into its bucket).
+            self.ctx.nudge()
 
     async def _script_ran(self, script: Script, context: dict[str, Any], at: datetime) -> None:
         pending = self._inflight.get(script.entity_id) or []
@@ -408,15 +403,6 @@ class HomeAssistant(Source):
             "context_id": context.get("id"),
         }
         await self.ctx.record("script_runs", row, at=at, user=actor.user)
-        if actor.kind != "huvu":
-            await self.ctx.emit(
-                "script_run",
-                f"{actor.words()} ran {script.name}",
-                entity=script.entity_id,
-                data={"script": script.object_id, "area": script.area, "actor": actor.kind},
-                at=at,
-                user=actor.user,
-            )
 
     async def _changed(self, entity_id: str, old: dict[str, Any] | None, new: dict[str, Any], context: dict[str, Any], at: datetime) -> None:
         domain = entity_id.partition(".")[0]
@@ -453,16 +439,6 @@ class HomeAssistant(Source):
             "context_id": context.get("id"),
         }
         await self.ctx.record("changes", row, at=at, user=actor.user)
-        eventful = domain in self._event_domains or (domain == "binary_sensor" and device_class in EVENT_CLASSES)
-        if state_moved and eventful and before is not None and before not in GONE and new["state"] not in GONE:
-            await self.ctx.emit(
-                "state_changed",
-                f"{_name(new)}: {_say(domain, device_class, before)} to {_say(domain, device_class, new['state'])}, by {actor.words()}",
-                entity=entity_id,
-                data={"entity_id": entity_id, "domain": domain, "device_class": device_class, "area": self._area.get(entity_id), "from": before, "to": new["state"], "actor": actor.kind},
-                at=at,
-                user=actor.user,
-            )
 
     def _only_inflight_user(self) -> str | None:
         """The huvu user of the one call huvu has waiting in HA, if there
@@ -477,77 +453,62 @@ class HomeAssistant(Source):
             row = {"entity_id": entity_id, "area": self._area.get(entity_id), "device_class": attributes.get("device_class"), "unit": attributes.get("unit_of_measurement"), **values}
             await self.ctx.record("sensor_5min", row, at=start)
 
-    async def _push_watched(self, entity_id: str) -> None:
-        for value in sorted(self._watched.get(entity_id, ())):
-            reading = self._reading(value, entity_id)
-            await self.ctx.update(value, reading.value, params={"entity_id": entity_id}, at=reading.at)
-
     def _script_of(self, entity_id: str) -> Script | None:
         script = self._known_scripts().get(entity_id.partition(".")[2]) if entity_id.startswith("script.") else None
         return script if script is not None and script.entity_id == entity_id else None
 
     # The contract
 
-    async def watch(self, value: str, params: dict[str, Any]) -> None:
-        self._watched.setdefault(str(params.get("entity_id")), set()).add(value)
+    def live(self, table: str) -> list[dict[str, Any]]:
+        readers = {"entities": self._entity_rows, "scripts": self._script_rows, "setup": self._setup_rows}
+        return readers[table]()
 
-    async def read(self, value: str, params: dict[str, Any]) -> Reading:
-        entity_id = str(params.get("entity_id"))
-        if value == "problems":
-            reading = Reading(value=self._setup(), at=self.ctx.now())
-        elif not self._connected:
-            reading = Reading(reason="Home Assistant is not connected right now")
-        elif value == "areas":
-            reading = Reading(value=self._area_list(), at=self.ctx.now())
-        elif entity_id not in self._states:
-            raise SourceError(self._unknown(entity_id))
-        else:
-            reading = self._reading(value, entity_id)
-        return reading
-
-    def _reading(self, value: str, entity_id: str) -> Reading:
-        state = self._states.get(entity_id)
-        raw = state["state"] if state else None
-        at = _time(state.get("last_changed")) if state else None
-        if state is None or raw in GONE:
-            reading = Reading(at=at, reason=f"{entity_id} is {raw or 'gone'} in Home Assistant")
-        elif value == "entity_number":
-            number = _number(raw)
-            reading = Reading(value=number, at=at, reason=None if number is not None else f"{entity_id} is {raw!r}, not a number")
-        elif value == "entity_attributes":
-            reading = Reading(value={k: v for k, v in (state.get("attributes") or {}).items() if k not in NOISE}, at=at)
-        else:
-            reading = Reading(value=raw, at=at)
-        return reading
-
-    def _unknown(self, entity_id: str) -> str:
-        return f"{entity_id} is not an exposed Home Assistant entity{suggest(entity_id, sorted(self._exposed))}"
-
-    async def search(self, text: str) -> list[Match]:
-        words = text.lower().split()
-        found: list[Match] = []
-        for entity_id in sorted(self._exposed):
-            state = self._states.get(entity_id)
-            if state is None:
+    def _entity_rows(self) -> list[dict[str, Any]]:
+        if not self._connected:
+            raise SourceError("Home Assistant is not connected right now; ha_setup says why")
+        states = dict(self._states)
+        rows = []
+        for entity_id in sorted(states):
+            state = states[entity_id]
+            domain = entity_id.partition(".")[0]
+            if domain == "script":
                 continue
-            name = _name(state)
-            hay = " ".join([entity_id, name, self._area.get(entity_id) or "", self._device.get(entity_id) or "", *self._aliases.get(entity_id, [])]).lower()
-            if words and all(w in hay for w in words):
-                assumed = " (assumed state)" if (state.get("attributes") or {}).get("assumed_state") else ""
-                found.append(
-                    Match(
-                        value=f"{self.ctx.name}.entity_state[{entity_id}]",
-                        name=f"{name}{assumed}",
-                        area=self._area.get(entity_id),
-                        now=state["state"],
-                        actions=self._actions_for(entity_id),
-                    )
-                )
-        return found
+            attributes = state.get("attributes") or {}
+            rows.append(
+                {
+                    "entity_id": entity_id,
+                    "name": _name(state),
+                    "domain": domain,
+                    "device_class": attributes.get("device_class"),
+                    "area": self._area.get(entity_id),
+                    "device": self._device.get(entity_id),
+                    "aliases": self._aliases.get(entity_id) or None,
+                    "state": state["state"],
+                    "number": _number(state["state"]),
+                    "attributes": {k: v for k, v in attributes.items() if k not in NOISE} or None,
+                    "assumed": bool(attributes.get("assumed_state")),
+                    "last_changed": state.get("last_changed"),
+                }
+            )
+        return rows
 
-    def _actions_for(self, entity_id: str) -> list[str]:
-        scripts = [s for s in self._known_scripts().values() if usable(s) and (s.entity_id == entity_id or entity_id in s.targets)]
-        return [f"{self.ctx.name}_{s.object_id}" for s in scripts]
+    def _script_rows(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "action": f"{self.ctx.name}_{script.object_id}",
+                "name": script.name,
+                "description": script.description,
+                "area": script.area,
+                "fields": script.fields or None,
+                "targets": script.targets or None,
+                "usable": usable(script),
+            }
+            for script in list(self._known_scripts().values())
+        ]
+
+    def _setup_rows(self) -> list[dict[str, Any]]:
+        client = self._client
+        return [{"connected": self._connected, "ha_version": client.version if client else None, "problems": list(self._problems)}]
 
     async def act(self, name: str, args: dict[str, Any], caller: Caller) -> Result:
         script = self._known_scripts().get(name)
@@ -576,24 +537,6 @@ class HomeAssistant(Source):
             if result.get("response"):
                 data["response"] = result["response"]
         return Result(data=data, labels=["house"])
-
-    def _area_list(self) -> list[dict[str, Any]]:
-        areas: dict[str, dict[str, Any]] = {}
-        for entity_id in sorted(self._exposed):
-            state = self._states.get(entity_id)
-            if state is None or entity_id.startswith("script."):
-                continue
-            area = areas.setdefault(self._area.get(entity_id) or "no area", {"entities": [], "actions": []})
-            area["entities"].append({"entity_id": entity_id, "name": _name(state), "now": state["state"]})
-        for script in self._known_scripts().values():
-            if usable(script):
-                areas.setdefault(script.area or "no area", {"entities": [], "actions": []})["actions"].append(f"{self.ctx.name}_{script.object_id}")
-        return [{"area": name, **body} for name, body in sorted(areas.items())]
-
-    def _setup(self) -> dict[str, Any]:
-        client = self._client
-        return {"connected": self._connected, "ha_version": client.version if client else None, "problems": self._problems}
-
 
 def _name(state: dict[str, Any]) -> str:
     return str((state.get("attributes") or {}).get("friendly_name") or state.get("entity_id") or "")
@@ -626,15 +569,3 @@ def _ran(old: dict[str, Any] | None, new: dict[str, Any] | None) -> bool:
     before = ((old or {}).get("attributes") or {}).get("last_triggered")
     after = ((new or {}).get("attributes") or {}).get("last_triggered")
     return after is not None and after != before
-
-
-def _say(domain: str, device_class: str | None, state: str) -> str:
-    words = state.replace("_", " ")
-    if domain == "binary_sensor" and state in ("on", "off"):
-        if device_class in OPENING:
-            words = {"on": "open", "off": "closed"}[state]
-        elif device_class == "lock":
-            words = {"on": "unlocked", "off": "locked"}[state]
-        elif device_class in DETECTION:
-            words = {"on": "detected", "off": "clear"}[state]
-    return words

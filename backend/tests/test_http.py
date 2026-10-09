@@ -143,32 +143,33 @@ async def test_hermes_side_over_mcp(server):
         read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
             init = await session.initialize()
-            assert "state_search" in (init.instructions or "")
+            assert "home_lights  (now)" in (init.instructions or "") and "home_doorbell  (history)" in (init.instructions or "")
             tools = {t.name for t in (await session.list_tools()).tools}
-            assert {"act", "state_get", "data_sql", "triggers_register", "ui_choices"} <= tools
-            assert "query" not in tools
+            assert {"act", "data_sql", "triggers_register", "ui_choices"} <= tools
+            assert not {"state_get", "state_search", "events_search", "triggers_test"} & tools
             # Source actions are reached through act.
             assert not any(t.startswith("home_") for t in tools)
             done = await session.call_tool("act", {"name": "home_turn_on", "args": {"entity_id": "light.porch"}})
             assert json.loads(done.content[0].text) == {"done": "turn_on"}
-            result = await session.call_tool("state_get", {"values": ["clock.time"], "_session": "hs1"})
-            body = json.loads(result.content[0].text)
-            assert "just now" in body["clock.time"]["at"]
-            outside = await session.call_tool("state_get", {"values": ["home.snapshot"], "_session": "hs1"})
+            result = await session.call_tool("data_sql", {"sql": "SELECT state FROM home_lights WHERE entity_id = 'light.porch'", "_session": "hs1"})
+            assert json.loads(result.content[0].text)["rows"] == [["off"]]
+            await server.kernel.registry.get("home").press()
+            outside = await session.call_tool("data_sql", {"sql": "SELECT note FROM home_doorbell", "_session": "hs1"})
             assert json.loads(outside.content[0].text)["provenance"] == "external"
             # The profile's token says whose trigger this is.
-            registered = await session.call_tool("triggers_register", {"note": "Doorbell.", "script": WAKE, "when": [{"event": "home.doorbell"}]})
+            bell = {"note": "Doorbell.", "script": WAKE, "sql": "SELECT id FROM home_doorbell", "fire": "rows", "once": False}
+            registered = await session.call_tool("triggers_register", bell)
             assert json.loads(registered.content[0].text)["user"] == "me"
-            bad = await session.call_tool("state_gte", {})
-            assert bad.is_error and "Did you mean state_get" in bad.content[0].text
+            bad = await session.call_tool("data_sq", {})
+            assert bad.is_error and "Did you mean data_sql" in bad.content[0].text
 
 
 def test_the_situation_names_the_profiles_user(server):
-    mine = httpx.post(f"{server.base}/api/situation", json={"values": []}, headers={"Authorization": f"Bearer {server.me_mcp_token}"})
-    assert "You are helping: Me" in mine.json()["text"]
-    household = httpx.post(f"{server.base}/api/situation", json={"values": []}, headers={"Authorization": f"Bearer {HOUSEHOLD_MCP_TOKEN}"})
+    mine = httpx.post(f"{server.base}/api/situation", json={}, headers={"Authorization": f"Bearer {server.me_mcp_token}"})
+    assert "You are helping: Me" in mine.json()["text"] and "Family mode: normal" in mine.json()["text"]
+    household = httpx.post(f"{server.base}/api/situation", json={}, headers={"Authorization": f"Bearer {HOUSEHOLD_MCP_TOKEN}"})
     assert "Home from a shared device" in household.json()["text"]
-    assert httpx.post(f"{server.base}/api/situation", json={"values": []}).status_code == 401
+    assert httpx.post(f"{server.base}/api/situation", json={}).status_code == 401
 
 
 def test_a_shared_device_asks_who_is_there(server):

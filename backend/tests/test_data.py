@@ -9,7 +9,7 @@ from huvu import data as data_module
 from huvu import skills
 from huvu.config import Config
 from huvu.data import DataError
-from huvu.events import EVERYONE
+from huvu.scope import EVERYONE
 from huvu.kernel import Kernel
 from huvu.source import Source, SourceError
 from huvu.spec import Caller, ColumnSpec, SourceSpec, TableSpec
@@ -57,8 +57,18 @@ async def test_rows_get_the_standard_columns(house, clock):
     await diary.ctx.record("entries", {"text": "chai", "mood": 4, "tags": ["morning"], "shared": True}, user="me")
     found = await kernel.data.sql("SELECT at, ts, local_date, local_minute, weekday, user_id, text, mood, json_extract(tags, '$[0]'), shared FROM diary_entries", EVERYONE)
     now = clock.now
-    assert found["rows"] == [[now.isoformat(), now.timestamp(), "2026-10-03", 23 * 60 + 50, now.isoweekday(), "me", "chai", 4, "morning", 1]]
-    assert found["columns"][:3] == ["at", "ts", "local_date"] and found["truncated"] is False
+    assert found.rows == [[now.isoformat(), now.timestamp(), "2026-10-03", 23 * 60 + 50, now.isoweekday(), "me", "chai", 4, "morning", 1]]
+    assert found.columns[:3] == ["at", "ts", "local_date"] and found.truncated is False
+
+
+async def test_ids_number_rows_in_the_order_they_were_recorded(house):
+    kernel, diary = house
+    first = await diary.ctx.record("entries", {"text": "one"})
+    logged = await kernel.kernel_event("note", "between")
+    second = await diary.ctx.record("entries", {"text": "two"})
+    assert first < logged < second == kernel.data.last_id()
+    later = await kernel.data.sql("SELECT id, text FROM diary_entries", EVERYONE, after=first)
+    assert later.rows == [[second, "two"]]
 
 
 async def test_a_source_records_only_what_it_declared(house):
@@ -93,13 +103,13 @@ async def test_each_caller_sees_their_own_rows_and_the_house(house):
     [
         ("SELECT * FROM main.diary_entries", "prohibited"),
         ("SELECT count(*) FROM main.diary_entries", "not authorized"),
-        ("SELECT * FROM kernel.users", "prohibited"),
-        ("SELECT * FROM kernel.turns", "prohibited"),
-        ("SELECT * FROM kernel.devices", "prohibited"),
+        # huvu.db, with the accounts, is never attached.
+        ("SELECT * FROM kernel.users", "no such table"),
+        ("SELECT * FROM users", "no such table"),
         ("SELECT name FROM sqlite_master", "prohibited"),
         ("DELETE FROM diary_entries", "it is a view"),
-        ("DELETE FROM main.diary_entries", "not authorized"),
-        ("INSERT INTO diary_entries (text) VALUES ('x')", "not authorized"),
+        ("DELETE FROM main.diary_entries", "not authorized|is a view"),
+        ("INSERT INTO diary_entries (text) VALUES ('x')", "not authorized|is a view"),
         ("PRAGMA table_info(diary_entries)", "not authorized"),
         ("ATTACH DATABASE 'x.db' AS x", "not authorized"),
         ("SELECT 1; SELECT 2", "one statement"),
@@ -111,17 +121,17 @@ async def test_data_sql_only_reads_through_the_views(house, sql, error):
         await kernel.tools.call("data_sql", {"sql": sql}, Caller(kind="hermes", user="me"))
 
 
-async def test_the_event_log_joins_with_the_same_keys(house, clock):
+async def test_the_kernels_log_joins_with_the_same_keys(house, clock):
     kernel, diary = house
     await kernel.kernel_event("note", "me wrote something", user="me")
     await kernel.kernel_event("note", "mom wrote something", user="mom")
     await diary.ctx.record("entries", {"text": "chai"}, user="me")
     result = await kernel.data.sql(
-        "SELECT e.summary, d.text FROM events e JOIN diary_entries d ON d.local_date = e.local_date AND d.local_minute = e.local_minute "
+        "SELECT e.summary, d.text FROM huvu_events e JOIN diary_entries d ON d.local_date = e.local_date AND d.local_minute = e.local_minute "
         "AND d.weekday = e.weekday AND d.user_id = e.user_id",
         kernel.accounts.scope("me", None),
     )
-    assert result["rows"] == [["me wrote something", "chai"]]
+    assert result.rows == [["me wrote something", "chai"]]
 
 
 async def test_rows_are_capped_and_slow_queries_stop(house, monkeypatch):
@@ -129,7 +139,7 @@ async def test_rows_are_capped_and_slow_queries_stop(house, monkeypatch):
     for n in range(5):
         await diary.ctx.record("entries", {"mood": n})
     capped = await kernel.data.sql("SELECT mood FROM diary_entries", EVERYONE, limit=3)
-    assert capped["rows"] == [[0], [1], [2]] and capped["truncated"] is True
+    assert capped.rows == [[0], [1], [2]] and capped.truncated is True
     monkeypatch.setattr(data_module, "SQL_TIMEOUT", 0.05)
     with pytest.raises(DataError, match="ran longer"):
         await kernel.data.sql("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c", EVERYONE)
@@ -142,13 +152,14 @@ async def test_a_respec_adds_columns_and_keeps_rows(house):
     await diary.ctx.respec()
     await diary.ctx.record("entries", {"text": "after", "place": "balcony"})
     result = await kernel.data.sql("SELECT text, place FROM diary_entries", EVERYONE)
-    assert result["rows"] == [["before", None], ["after", "balcony"]]
-    assert kernel.events.search(type="source.respec")[0].summary == "diary changed what it offers: changed descriptions or arguments"
+    assert result.rows == [["before", None], ["after", "balcony"]]
+    [logged] = kernel.data.rows("huvu", "events", "type = 'source.respec'", ())
+    assert logged["summary"] == "diary changed what it offers: changed descriptions or arguments"
 
 
 def test_tables_are_in_the_skill(house):
     kernel, _ = house
     text = skills.render(kernel.registry.spec("diary"))
-    assert "## Tables" in text and "### `diary_entries`" in text
+    assert "## History tables" in text and "### `diary_entries`" in text and "## Live tables" not in text
     assert "- `mood` (integer): 1 to 5" in text
-    assert "Indexed on (ts), (user_id, ts), (mood, ts)." in text
+    assert "Indexed on (id), (ts), (user_id, ts), (mood, ts)." in text

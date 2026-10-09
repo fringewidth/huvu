@@ -14,9 +14,11 @@ after it starts a fresh session, primed with a transcript of the asks and
 answers so far: with the cache cold, a short transcript costs less than
 replaying the old session's thinking and tool output. The transcript holds
 only the latest turns that fit in TRANSCRIPT_CHARS, and the model reads
-older ones with data_sql, from the `turns` view. Each turn's cache
-reads land in the event log (`conversation.turn`, `usage`), so the window
-can be checked against the provider.
+older ones with data_sql, from `chat_turns`.
+
+Every turn that ends becomes a `chat_turns` row (builtin/chat.py), with
+its cache reads (`usage`), so the window can be checked against the
+provider.
 
 Edit and retry rewind: the turn and everything after it are replaced.
 Hermes's API can fork a session but can't cut one short, so a rewind always
@@ -45,7 +47,7 @@ from pydantic import BaseModel
 from . import prompts
 from .db import dumps, from_iso, iso, loads
 from .hermes import HermesError, HermesEvent, Profile
-from .spec import Caller, Event
+from .spec import Caller
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -60,13 +62,10 @@ CACHE_TTL = timedelta(minutes=5)
 # How much of the conversation a fresh session reads: the latest turns that
 # fit, about 12,000 tokens at four characters a token. Older turns are left
 # out, so a long conversation doesn't cost more on every cold start; the
-# model reads them from data_sql's `turns` view (data.py).
+# model reads them from `chat_turns`.
 TRANSCRIPT_CHARS = 50_000
 # How long a stopped turn may take to end before huvu cuts it off itself.
 STOP_GRACE = 15.0
-# How much of a turn the event log keeps in its summary.
-TURN_ASK_CHARS = 200
-TURN_ANSWER_CHARS = 300
 # Hermes's own tools that are the agent's housekeeping, not something to
 # show the owner. The tool search bridge's lookups are among them; its
 # `tool_call` reaches here under the name of the tool it ran.
@@ -106,6 +105,8 @@ class Turn:
     running: bool = True
     hermes_session: str | None = None
     actions: list[Action] = field(default_factory=list)
+    # The turn an edit replaced, for its history row. Not kept here.
+    replaces: str | None = None
 
     def public(self) -> dict[str, Any]:
         return {
@@ -125,7 +126,7 @@ class Turn:
 class LiveTurn:
     turn: Turn
     profile: Profile
-    # Whose turn it is in the event log: the device's user, or whoever is
+    # Whose turn it is in chat_turns: the device's user, or whoever is
     # recognized at a shared device.
     user: str | None = None
     # The shared device's group, if it is one.
@@ -222,7 +223,7 @@ class ConversationHub:
         if session is None:
             # A rewind, a cold cache, or a session the retention sweep
             # deleted: a fresh session carries the conversation so far.
-            message = _seeded(kept, message, tz)
+            message = _seeded(kept, message, tz, conversation_id)
             session = await self._new_session(conversation_id, user, group, profile)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
@@ -232,6 +233,7 @@ class ConversationHub:
             ask=text,
             hermes_session=session,
             actions=actions,
+            replaces=replaces,
         )
         self._save(turn, insert=True)
         live = LiveTurn(turn, profile, user=user or self._kernel.attendance.holder(conversation_id), group=group)
@@ -514,26 +516,24 @@ class ConversationHub:
         self._live.pop(live.turn.id, None)
 
     def _log(self, live: LiveTurn) -> None:
-        """The turn in the event log, as its user's, so their dream can read
-        what was said, even at a household device whose Hermes session
+        """The turn as a `chat_turns` row, its user's, so their dream can
+        read what was said, even at a household device whose Hermes session
         lives in the household's profile."""
         turn = live.turn
-        answer = turn.answer.strip().replace("\n", " ")
-        self._kernel.events.append(
-            Event(
-                at=self._kernel.now(),
-                source="kernel",
-                type="conversation.turn",
-                entity=turn.id,
-                summary=f"asked {turn.ask[:TURN_ASK_CHARS]!r}; huvu said {answer[:TURN_ANSWER_CHARS]!r}" + (f" ({turn.ending})" if turn.ending else ""),
-                refs={"turn": f"kernel:turn/{turn.id}"},
-                data={"device": turn.conversation_id, "session": turn.hermes_session, "usage": live.usage},
-                labels=["owner"],
-                user=live.user,
-                group=None if live.user else live.group,
-                device=turn.conversation_id,
-            )
-        )
+        device = self._kernel.accounts.device(turn.conversation_id)
+        row = {
+            "turn_id": turn.id,
+            "device_id": turn.conversation_id,
+            "device": device.name if device else None,
+            "n": turn.seq + 1,
+            "them": turn.ask,
+            "you": turn.answer,
+            "ending": turn.ending,
+            "actions": [{"text": a.text, "at": a.at.isoformat()} for a in turn.actions] or None,
+            "replaces": turn.replaces,
+            "usage": live.usage,
+        }
+        self._kernel.data.record("chat", "turns", row, at=turn.at, user=live.user, group=None if live.user else live.group)
 
     def _save(self, turn: Turn, insert: bool) -> None:
         if insert:
@@ -599,7 +599,7 @@ def _with_actions(text: str, actions: list[Action], tz: tzinfo | None) -> str:
     return "\n".join([*(_note(a, tz) for a in actions), "", text])
 
 
-def _seeded(kept: list[Turn], text: str, tz: tzinfo | None) -> str:
+def _seeded(kept: list[Turn], text: str, tz: tzinfo | None, device: str) -> str:
     """The first message of a fresh session that continues a conversation,
     the way a compacted session continues: what was asked and answered so
     far, then the new message. The model is told to carry on as if nothing
@@ -616,7 +616,7 @@ def _seeded(kept: list[Turn], text: str, tz: tzinfo | None) -> str:
             break
         earlier.append((notes, t.ask, t.answer))
     earlier.reverse()
-    return prompts.continued(earlier, text, left_out=len(kept) - len(earlier))
+    return prompts.continued(earlier, text, left_out=len(kept) - len(earlier), device=device)
 
 
 def _turn(row) -> Turn:
