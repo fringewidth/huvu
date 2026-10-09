@@ -12,8 +12,9 @@ import { pick, rand, randInt, TAU } from "./util";
 // opening along its thread, and the whole page slowly washing back toward
 // paper. The loop sleeps once there is nothing left to paint or fade.
 
-// Starts loading at boot, alongside React's first render.
-const brushModule = import("p5.brush/standalone") as unknown as Promise<Brush>;
+// Starts loading at boot, alongside React's first render, on a screen
+// that has a garden at all.
+const brushModule = ui.garden ? (import("p5.brush/standalone") as unknown as Promise<Brush>) : null;
 
 // A wash over the whole page every FADE_EVERY seconds, until SETTLE_S
 // after the last stroke, by when the washes no longer change anything.
@@ -26,8 +27,14 @@ const GATE = 0.1;
 const TAIL_FLOWERS = 8;
 const TAIL_FADE_ALPHA = 4;
 const TAIL_FADE_FRAMES = 130;
-const PETAL_RATE_MIN = 5;
-const PETAL_RATE_MAX = 26;
+// How fast the garden grows, as a share of its first tuning: the thread,
+// the bursts on syllables and the petals all at once, so spoken and
+// written replies slow alike. A third since 2026-10-09; it grew faster
+// than anyone could watch.
+const PACE = 1 / 3;
+const PETAL_RATE_MIN = 5 * PACE;
+const PETAL_RATE_MAX = 26 * PACE;
+const ONSET_PETALS = 2 * PACE;
 // Written replies grow the garland as if huvu said them at a steady,
 // moderate volume.
 const WRITE_LOUD = 0.45;
@@ -75,7 +82,7 @@ export function growForWords(words: number): void {
 export function startGarden(container: HTMLElement): () => void {
   let stop: (() => void) | null = null;
   let cancelled = false;
-  void brushModule.then((brush) => {
+  void brushModule?.then((brush) => {
     if (!cancelled) stop = run(brush, container);
   });
   return () => {
@@ -90,9 +97,9 @@ function run(brush: Brush, container: HTMLElement): () => void {
   const R0 = Math.min(W, H) * 0.055;
   // Thread growth per second while huvu talks, from just above the gate to
   // full loudness, plus a burst on each syllable onset.
-  const GROWTH_MIN = R0 * 0.85;
-  const GROWTH_MAX = R0 * 6.3;
-  const ONSET_BURST = R0 * 2.1;
+  const GROWTH_MIN = R0 * 0.85 * PACE;
+  const GROWTH_MAX = R0 * 6.3 * PACE;
+  const ONSET_BURST = R0 * 2.1 * PACE;
   // One flower slot is R0 * 1.55 of thread, so about one flower per 77
   // words. Stage caps how many words one reply may send.
   const WRITE_PER_WORD = R0 * 0.02;
@@ -193,7 +200,7 @@ function run(brush: Brush, container: HTMLElement): () => void {
     active ??= queue.shift() ?? null;
     if (!active) return false;
     if (loud > GATE) {
-      petalAcc += (PETAL_RATE_MIN + (PETAL_RATE_MAX - PETAL_RATE_MIN) * Math.pow(loud, 1.3)) * dt + (onset ? 2 : 0);
+      petalAcc += (PETAL_RATE_MIN + (PETAL_RATE_MAX - PETAL_RATE_MIN) * Math.pow(loud, 1.3)) * dt + (onset ? ONSET_PETALS : 0);
     } else {
       petalAcc = Math.min(petalAcc, 0.5);
     }

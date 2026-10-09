@@ -21,6 +21,16 @@ const LEAD = 0.05;
 let out: { analyser: AnalyserNode; buf: Uint8Array<ArrayBuffer> } | null = null;
 let current: { finish: () => void } | null = null;
 const startListeners = new Set<() => void>();
+// Whether a sentence is playing or waits its turn to play. Between
+// sentences, and while huvu runs its tools, it is false.
+let audible = false;
+const audibleListeners = new Set<(audible: boolean) => void>();
+
+function setAudible(next: boolean): void {
+  if (next === audible) return;
+  audible = next;
+  for (const listener of audibleListeners) listener(next);
+}
 
 // Nothing to fetch ahead of time any more; the audio context only has to
 // be running before the first sentence arrives.
@@ -43,6 +53,11 @@ function output(): { analyser: AnalyserNode; buf: Uint8Array<ArrayBuffer> } {
 export function onSpeakingStart(listener: () => void): () => void {
   startListeners.add(listener);
   return () => startListeners.delete(listener);
+}
+
+export function onAudible(listener: (audible: boolean) => void): () => void {
+  audibleListeners.add(listener);
+  return () => audibleListeners.delete(listener);
 }
 
 export function stopSpeaking(): void {
@@ -78,6 +93,7 @@ export async function speak(turnId: string, bargeIn: boolean): Promise<void> {
         source.disconnect();
       }
       sources.clear();
+      setAudible(false);
       if (current?.finish === finish) current = null;
       resolve();
     };
@@ -93,8 +109,10 @@ export async function speak(turnId: string, bargeIn: boolean): Promise<void> {
       source.start(nextAt);
       nextAt += buffer.duration;
       sources.add(source);
+      setAudible(true);
       source.onended = () => {
         sources.delete(source);
+        if (sources.size === 0) setAudible(false);
         if (streamed && sources.size === 0) finish();
       };
       if (!started) {
