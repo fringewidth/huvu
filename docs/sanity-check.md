@@ -39,6 +39,9 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask something, then tap "stop" while huvu answers. The button should say "stopping", and the answer should end a moment later. huvu may finish its sentence first. That is expected.
 1. Tap "edit" next to one of your earlier questions, change it, and send. That question and everything after it should go away, and huvu should answer the new question.
 1. Ask something that makes huvu offer choices, such as "help me pick a movie, give me three options". Tap one choice. It should be sent as your next question.
+1. Ask huvu to open a web page and show you a screenshot of it, such as "open wikipedia.org and show me what it looks like". The screenshot should show under the words huvu wrote before it, whole and not cut off. You should see no "MEDIA:" text and no file path. In history, the turn should show an "1 image" chip.
+1. Ask huvu to show you a picture from the web by its address, such as "show me this image: https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg". The picture should show in the answer.
+1. Ask huvu to show you a file that isn't a picture, such as "show me /opt/data/huvu/huvu.toml as an image". No picture should show. huvu should say it couldn't, or the path should stay as plain text.
 1. In a conversation from a day or more ago, ask about something you said early on, such as "what was that recipe we talked about yesterday?". huvu should find it, even if a lot was said since.
 1. Turn the backend off and ask something. The answer should fail and show "try again". Turn the backend on and tap "try again". huvu should answer.
 1. Open https://huvu.hrishik.me in a phone's browser (Chrome on Android, Safari on an iPhone). The text field should say "write, or tap the flower", not "hold space to speak". The keyboard should not pop up by itself. There should be a send button, and the keyboard's Enter should make a new line.

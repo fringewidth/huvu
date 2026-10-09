@@ -352,6 +352,73 @@ async def test_images_get_media_urls(kernel):
     assert blob.content_type == "image/jpeg"
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+
+
+async def test_images_come_from_files_and_urls(kernel, tmp_path):
+    from huvu.source import SourceError
+
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(PNG)
+    url = kernel.media.url_for(str(shot))
+    assert "/api/media/" in url and url == kernel.media.url_for(str(shot))
+    blob = await kernel.media.fetch(url.rsplit("/", 1)[1])
+    assert (blob.content, blob.content_type) == (PNG, "image/png")
+    assert kernel.media.url_for("https://example.com/a.jpg") == "https://example.com/a.jpg"
+    # Any file can be named, so only an image is ever served.
+    secret = tmp_path / "secrets.env"
+    secret.write_text("GROQ_API_KEY=x")
+    for src in (str(secret), str(tmp_path / "gone.png"), "http://example.com/a.jpg", "shot.png"):
+        with pytest.raises(SourceError):
+            kernel.media.url_for(src)
+    # A file that stops being an image after its URL went out isn't served.
+    shot.write_text("not an image any more")
+    with pytest.raises(SourceError):
+        await kernel.media.fetch(url.rsplit("/", 1)[1])
+
+
+async def test_media_tags_in_the_answer_become_images(kernel, hermes, tmp_path):
+    shot = tmp_path / "shot one.png"
+    shot.write_bytes(PNG)
+    plain = tmp_path / "plain.png"
+    plain.write_bytes(PNG)
+    hermes.script = [
+        ("run.started", {"run_id": "r"}),
+        # A tag split across deltas, even inside its own name.
+        ("assistant.delta", {"delta": "Here it is:\nME"}),
+        ("assistant.delta", {"delta": f"DIA:{plain}"[:12]}),
+        ("assistant.delta", {"delta": f"DIA:{plain}"[12:]}),
+        ("assistant.delta", {"delta": f"\nAnd `MEDIA:\"{shot}\"`, then MEDIA:/no/such.png and "}),
+        ("assistant.delta", {"delta": "MEDIA: nothing."}),
+        ("run.completed", {}),
+    ]
+    live = await kernel.conversations.ask("c1", "show me", user="me")
+    events = await collect(kernel, live)
+    parts = [d["part"] for n, d in events if n == "part"]
+    deltas = "".join(d["text"] for n, d in events if n == "answer.delta")
+    answer = live.turn.answer
+    assert answer == deltas.rstrip() == "Here it is:\n\nAnd , then MEDIA:/no/such.png and MEDIA: nothing."
+    assert [p["kind"] for p in parts] == ["image", "image"]
+    assert [p["after"] for p in parts] == [len("Here it is:\n"), len("Here it is:\n\nAnd ")]
+    assert (await kernel.media.fetch(parts[1]["src"].rsplit("/", 1)[1])).content == PNG
+    assert live.turn.parts == parts
+
+
+async def test_ui_show_image_takes_a_path_and_a_caption(kernel, hermes, tmp_path):
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(PNG)
+
+    async def show(session_id: str) -> None:
+        args = {"src": str(shot), "caption": "the login page"}
+        await kernel.tools.call("ui_show_image", args, Caller(kind="hermes", session=session_id, user="me"))
+
+    hermes.script = [("run.started", {"run_id": "r"}), ("assistant.delta", {"delta": "Look."}), show, ("run.completed", {})]
+    live = await kernel.conversations.ask("c1", "show me", user="me")
+    await collect(kernel, live)
+    [part] = live.turn.parts
+    assert part["kind"] == "image" and part["caption"] == "the login page" and part["after"] == len("Look.")
+
+
 async def test_a_running_turn_replays_what_came_before(kernel, hermes):
     go_on = asyncio.Event()
 

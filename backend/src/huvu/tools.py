@@ -190,7 +190,7 @@ class ToolBox:
             Tool(
                 "ui_show_image",
                 TOOLS["ui_show_image"],
-                _schema({"ref": {"type": "string"}, "caption": {"type": "string"}}, ["ref"]),
+                _schema({"src": {"type": "string"}, "caption": {"type": "string"}}, ["src"]),
                 self._ui_show_image,
             ),
         ]
@@ -284,7 +284,7 @@ class ToolBox:
         return await self._show(caller, "video_feed", {"src": feed.src, "label": feed.label, "caption": args.get("caption", "")}, ["house"])
 
     async def _ui_show_image(self, args: dict[str, Any], caller: Caller) -> Result:
-        url = self._kernel.media.url_for(args["ref"])
+        url = self._kernel.media.url_for(args["src"])
         return await self._show(caller, "image", {"src": url, "caption": args.get("caption", "")}, ["house"])
 
     async def _show(self, caller: Caller, kind: str, args: dict[str, Any], labels: list[Label]) -> Result:

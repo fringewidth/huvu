@@ -50,7 +50,8 @@ A comment line (`: keepalive`) comes every 15 s while nothing else does. Droppin
 The backend builds parts from Hermes's stream:
 
 1. **Hermes's own tools.** `web_search` gets `args.query`; its result stays empty, since Hermes sends only a 500-character preview and a source count from it would be wrong. Any other Hermes tool becomes a part with empty args, which the stage shows as a generic note. Hermes's housekeeping (memory, skills, session search) never shows.
-1. **The model's `ui_*` tools.** `ui_choices` becomes a `choices` part, `ui_show_feed` a `video_feed` part with the feed's `src`, `label` and a `caption`, and `ui_show_image` an image part.
+1. **The model's `ui_*` tools.** `ui_choices` becomes a `choices` part, `ui_show_feed` a `video_feed` part with the feed's `src`, `label` and a `caption`, and `ui_show_image` an image part with its `caption`.
+1. **`MEDIA:<path>` in the answer.** It is Hermes's own way to attach a file, and its tools tell the model to use it, such as the browser's screenshot. The relay takes each tag out of the answer text and puts an image part where it was. A tag split across deltas is held back until it is whole. A tag whose file is missing or isn't an image stays as text.
 1. **huvu's actions** show as notes, such as `home_turn_on`. huvu's reads don't show.
 
 
@@ -80,7 +81,7 @@ The frontend renders a turn as an `answer` string plus `parts` (`RichPart` in `c
 
 ```ts
 type RichPart =
-  | { kind: "image"; src: string; after?: number }
+  | { kind: "image"; src: string; caption?: string; after?: number }
   | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown; after?: number };
 ```
 
@@ -139,7 +140,7 @@ A trigger belongs to a person. One set up on a shared device with nobody recogni
 
 ### Feeds and media
 
-`GET /api/feeds` lists every source's feeds, in the shape above. Images get URLs as `/api/media/<token>`, such as a decrypted doorbell snapshot. `<img>` tags can't send a bearer header, so the unguessable token is the permission, and these URLs need no other auth.
+`GET /api/feeds` lists every source's feeds, in the shape above. Images get URLs as `/api/media/<token>`, such as a decrypted doorbell snapshot or an image file on the host's disk. `<img>` tags can't send a bearer header, so the unguessable token is the permission, and these URLs need no other auth. The model names an image by a source's ref, an absolute path or an https URL (`media.py`). Any path can be named, so a file is served only while its first bytes say it is a JPEG, PNG, GIF, WebP, AVIF or BMP, up to 20 MB; SVG is refused, since opened on its own it runs scripts on huvu's origin. An https URL goes into the part as it is, so the device loads it itself, and plain http is refused.
 
 ### Who is at a shared device
 

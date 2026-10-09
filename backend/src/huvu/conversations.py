@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -47,6 +48,7 @@ from pydantic import BaseModel
 from . import prompts
 from .db import dumps, from_iso, iso, loads
 from .hermes import HermesError, HermesEvent, Profile
+from .source import SourceError
 from .spec import Caller
 
 if TYPE_CHECKING:
@@ -81,6 +83,19 @@ HIDDEN_TOOLS = {
     "tool_search",
     "tool_describe",
 }
+# Hermes's way to attach a file: `MEDIA:<path>` in the answer, such as the
+# path of a screenshot its browser took. The path is bare, ending at a
+# space, or quoted when it has spaces. An https URL works too. Up to three
+# quote or emphasis marks may wrap the tag (`MEDIA:/a.png`).
+MEDIA_TAG = re.compile(
+    r"""[`"'*_]{0,3}MEDIA:[^\S\n]*(?:`(?P<tick>[^`\n]+)`|"(?P<double>[^"\n]+)"|'(?P<single>[^'\n]+)'|(?P<bare>(?:[/~]|https://)\S*))[`"'*_]{0,3}"""
+)
+# What follows `MEDIA:` while its path may still be coming in.
+MEDIA_PENDING = re.compile(r"""[^\S\n]*(?:[`"'][^\n]*|\S*)\Z""")
+# Marks and punctuation after a bare path that are not part of it.
+MEDIA_CLOSERS = "`\"'*_.,;:!?)]}"
+# A tag held back longer than this is text after all.
+MEDIA_HOLD = 4096
 
 
 class Action(BaseModel):
@@ -140,6 +155,8 @@ class LiveTurn:
     stop_requested: bool = False
     # Token counts from Hermes's last event, cache reads included.
     usage: dict[str, Any] | None = None
+    # Answer text held back while a MEDIA tag in it may not be complete.
+    heard: str = ""
     ended: bool = False
 
 
@@ -359,7 +376,8 @@ class ConversationHub:
         target = live[0] if len(live) == 1 else None
         if target is not None:
             if kind == "image":
-                part: dict[str, Any] = {"kind": "image", "src": args["src"], "after": _said(target.turn)}
+                self._flush(target)
+                part: dict[str, Any] = {"kind": "image", "src": args["src"], "caption": args.get("caption", ""), "after": _said(target.turn)}
             else:
                 part = {
                     "kind": "tool",
@@ -402,23 +420,27 @@ class ConversationHub:
             if live.stop_requested and live.run_id:
                 self._spawn(self._kernel.hermes.stop(live.profile, live.run_id))
         elif name == "assistant.delta" and data.get("delta"):
-            self._say(live, data["delta"])
+            self._hear(live, data["delta"])
         elif name == "assistant.commentary" and data.get("text"):
             # What huvu says beside its tool calls is part of its answer: the
             # first thing the person sees while the tools run. Hermes has
             # sometimes sent it as deltas already.
             if not data.get("already_streamed"):
-                self._say(live, data["text"])
+                self._hear(live, data["text"])
+            self._flush(live)
             # Those words are finished: the paragraph breaks now, not when
             # huvu writes again, so its voice says their last sentence while
             # the tools run instead of going quiet in the middle.
             if live.turn.answer.strip() and not live.turn.answer.endswith("\n\n"):
                 self._say(live, "\n\n")
         elif name == "tool.started":
+            self._flush(live)
             self._tool_started(live, data.get("tool_name") or "", data.get("args") or {})
         elif name in ("tool.completed", "tool.failed"):
             self._tool_completed(live, data.get("tool_name") or "", data.get("preview"), failed=name == "tool.failed")
-        elif name == "assistant.completed" and data.get("content") and not live.turn.answer and not data.get("interrupted"):
+        elif name == "assistant.completed":
+            self._flush(live)
+        if name == "assistant.completed" and data.get("content") and not live.turn.answer and not data.get("interrupted"):
             # A turn that streamed no deltas still has its final text here.
             # An interrupted one has Hermes's placeholder ("Operation
             # interrupted: waiting for model response"), which is no answer:
@@ -482,7 +504,48 @@ class ConversationHub:
         self._emit(live, "thinking.delta", {"text": text, "start": start})
         return True
 
+    def _hear(self, live: LiveTurn, text: str) -> None:
+        """Answer text from Hermes. A MEDIA tag in it becomes an image part
+        where the tag was, and text that may be the start of one waits for
+        the next delta."""
+        live.heard += text
+        self._release(live, final=False)
+
+    def _flush(self, live: LiveTurn) -> None:
+        """Ends the text Hermes is writing, so a held-back tag is finished."""
+        self._release(live, final=True)
+
+    def _release(self, live: LiveTurn, final: bool) -> None:
+        at = 0
+        text = live.heard
+        for tag in MEDIA_TAG.finditer(text):
+            if tag["bare"] is not None and tag.end() == len(text) and not final:
+                # The path may go on in the next delta.
+                break
+            path = tag["tick"] or tag["double"] or tag["single"] or tag["bare"].rstrip(MEDIA_CLOSERS)
+            self._say(live, text[at : tag.start()])
+            self._show_media(live, path, tag[0])
+            at = tag.end()
+        rest = text[at:]
+        held = len(rest) if final else _unfinished_tag(rest)
+        self._say(live, rest[:held])
+        live.heard = rest[held:]
+
+    def _show_media(self, live: LiveTurn, path: str, tag: str) -> None:
+        try:
+            src = self._kernel.media.url_for(path)
+        except SourceError as err:
+            # The tag stays as text, so the person sees what huvu tried.
+            log.warning("turn %s: no image for %s: %s", live.turn.id, path, err)
+            self._say(live, tag)
+            return
+        part = {"kind": "image", "src": src, "caption": "", "after": _said(live.turn)}
+        live.turn.parts.append(part)
+        self._emit(live, "part", {"part": part})
+
     def _say(self, live: LiveTurn, text: str) -> None:
+        if not text:
+            return
         # huvu's own break after a paragraph that already has one.
         if live.turn.answer.endswith("\n\n"):
             text = text.lstrip("\n")
@@ -501,6 +564,7 @@ class ConversationHub:
     def _end(self, live: LiveTurn, ending: Ending) -> None:
         if live.ended:
             return
+        self._flush(live)
         live.turn.ending = ending
         live.turn.running = False
         # A break after words beside a last tool call, with nothing after.
@@ -575,6 +639,22 @@ class Adapter:
 ADAPTERS: dict[str, Adapter] = {
     "web_search": Adapter(args=lambda a: {"query": str(a.get("query", ""))}, result=lambda preview: {}),
 }
+
+
+def _unfinished_tag(text: str) -> int:
+    """Where a MEDIA tag that may not be finished starts in `text`, or its
+    length if there is none. A tag cut anywhere counts, even inside the
+    word MEDIA itself."""
+    start = text.rfind("MEDIA:")
+    if start < 0 or MEDIA_PENDING.match(text, start + len("MEDIA:")) is None or len(text) - start >= MEDIA_HOLD:
+        start = next((len(text) - n for n in range(len("MEDIA"), 0, -1) if text.endswith("MEDIA"[:n])), len(text))
+    if start == len(text):
+        return start
+    # The marks that may wrap the tag wait with it.
+    opened = start
+    while opened > max(start - 3, 0) and text[opened - 1] in "`\"'*_":
+        opened -= 1
+    return opened
 
 
 def _said(turn: Turn) -> int:
