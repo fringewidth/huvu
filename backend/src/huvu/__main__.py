@@ -116,7 +116,9 @@ def _serve(config) -> None:
     from .http import create_app
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    uvicorn.run(create_app(config), host=config.host, port=config.port)
+    # A push stream never ends by itself, so without a limit a stop (s6-svc
+    # -d, as wipe.sh needs) waits for every app to close.
+    uvicorn.run(create_app(config), host=config.host, port=config.port, timeout_graceful_shutdown=5)
 
 
 def _manage(config, args) -> None:
