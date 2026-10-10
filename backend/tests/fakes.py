@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from typing import Any
 
-from huvu.hermes import HermesEvent, Profile
+from huvu.hermes import HermesError, HermesEvent, Profile
 from huvu.source import Source, SourceError
 from huvu.spec import ActionSpec, Blob, Caller, ColumnSpec, Feed, Result, SourceSpec, TableSpec
 
@@ -133,12 +133,18 @@ class FakeHermes:
         self.messages: list[tuple[str, str]] = []
         self.stopped: list[str] = []
         self.deleted: list[str] = []
+        self.titles: dict[str, set[str]] = {}
         # Set when a run is stopped, for scripts that wait on it.
         self.stop_requested = asyncio.Event()
         self.script: list[Any] = []
         self.hooks: list[Any] = []
 
     async def create_session(self, profile: Profile, session_id: str, *, title: str | None = None) -> str:
+        # Hermes refuses a title another session of the profile has.
+        if title is not None and title in self.titles.setdefault(profile.name, set()):
+            raise HermesError(f"creating session {session_id}: 400 title already in use")
+        if title is not None:
+            self.titles[profile.name].add(title)
         self.sessions.append(session_id)
         self.profiles[session_id] = profile.name
         return session_id
