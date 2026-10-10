@@ -3,11 +3,13 @@ import { Capacitor } from "@capacitor/core";
 import { SecureStorage } from "@aparajita/capacitor-secure-storage";
 import * as thread from "../chat/thread";
 import { PHONE, TV, ui } from "../config/interaction";
-import { call, getJson, HttpError, postJson, setToken, whenUnauthorized } from "../net/http";
+import { call, getJson, getReach, onReach, postJson, setToken, whenUnauthorized, type Reach } from "../net/http";
 import * as household from "./household";
 import { startNativePush, stopNativePush } from "./nativePush";
 import { startPush, stopPush } from "./push";
 import * as waiting from "./waiting";
+
+export { errorText } from "../net/http";
 
 // Who this device is to the backend. A personal device (phone, web) logs
 // in with its user's password. A shared one (the TV) pairs: it shows a
@@ -62,6 +64,11 @@ function set(change: Partial<SessionState>): void {
 
 export async function boot(): Promise<void> {
   whenUnauthorized(() => void signOut("this device was logged out"));
+  // Launched while the backend was down, the device isn't known yet. It
+  // is loaded once the backend answers again.
+  onReach((reach) => {
+    if (reach === "up" && state.status === "in" && !state.me) void refreshMe();
+  });
   const value = await SecureStorage.getItem(TOKEN_KEY);
   if (value) {
     setToken(value);
@@ -185,10 +192,9 @@ export function canPair(me: Me | null): boolean {
   return PHONE && me !== null && Object.values(me.groups).includes("member");
 }
 
-// What to say when a call failed: the backend's own words, or that it
-// didn't answer at all.
-export function errorText(err: unknown): string {
-  return err instanceof HttpError ? err.message : "huvu isn't answering. Is the backend running?";
+// Whether the backend answers, for the stage and the menu to say so.
+export function useReach(): Reach {
+  return useSyncExternalStore(onReach, getReach);
 }
 
 function subscribe(listener: () => void): () => void {

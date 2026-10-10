@@ -22,7 +22,7 @@ interface MenuProps {
 // way. It mirrors the live feeds list opposite it.
 export const Menu = memo(function Menu({ open, onToggle, onClose }: MenuProps) {
   const { triggers } = useHousehold();
-  const needsTap = triggers.some((t) => t.status === "paused" && t.paused_by === "limit");
+  const needsTap = !!triggers?.some((t) => t.status === "paused" && t.paused_by === "limit");
   return (
     <>
       {open && <div aria-hidden="true" onClick={onClose} className="absolute inset-0 z-20" />}

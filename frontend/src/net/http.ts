@@ -31,6 +31,46 @@ export function isBackend(url: string): boolean {
   return new URL(url, BACKEND).origin === new URL(BACKEND).origin;
 }
 
+// Whether the backend answered the last call. A network error, or a
+// gateway's own error page (the tunnel is up and the backend behind it
+// isn't), is "down". Any answer from the backend itself is "up", even an
+// error. "unknown" until the first call comes back.
+export type Reach = "unknown" | "up" | "down";
+
+let reach: Reach = "unknown";
+const reachListeners = new Set<(reach: Reach) => void>();
+
+function setReach(next: Reach): void {
+  if (next === reach) return;
+  reach = next;
+  for (const listener of reachListeners) listener(next);
+}
+
+export function getReach(): Reach {
+  return reach;
+}
+
+export function onReach(listener: (reach: Reach) => void): () => void {
+  reachListeners.add(listener);
+  return () => reachListeners.delete(listener);
+}
+
+export const UNREACHABLE = "huvu isn't answering. Is the backend running?";
+
+// The backend didn't answer: no connection, or a gateway answered for it.
+export class Unreachable extends Error {
+  constructor() {
+    super(UNREACHABLE);
+  }
+}
+
+// Cloudflare answers 502 or a 52x when the tunnel or the backend behind
+// it is down, with a page of its own. The backend's own errors are JSON.
+function fromGateway(res: Response): boolean {
+  const gatewayStatus = (res.status >= 502 && res.status <= 504) || (res.status >= 520 && res.status <= 530);
+  return gatewayStatus && !(res.headers.get("Content-Type") ?? "").includes("json");
+}
+
 // A status other than 2xx. `message` is the backend's own `detail` where
 // it sent one, which is safe to show.
 export class HttpError extends Error {
@@ -50,15 +90,28 @@ interface CallInit extends RequestInit {
 }
 
 export async function call(path: string, { json, anonymous, headers, ...init }: CallInit = {}): Promise<Response> {
-  const res = await fetch(`${BACKEND}${path}`, {
-    ...init,
-    headers: {
-      ...(anonymous ? {} : authHeaders()),
-      ...(json === undefined ? {} : { "Content-Type": "application/json" }),
-      ...headers,
-    },
-    body: json === undefined ? init.body : JSON.stringify(json),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BACKEND}${path}`, {
+      ...init,
+      headers: {
+        ...(anonymous ? {} : authHeaders()),
+        ...(json === undefined ? {} : { "Content-Type": "application/json" }),
+        ...headers,
+      },
+      body: json === undefined ? init.body : JSON.stringify(json),
+    });
+  } catch (err) {
+    // The caller let go of it. That says nothing about the backend.
+    if (init.signal?.aborted) throw err;
+    setReach("down");
+    throw new Unreachable();
+  }
+  if (fromGateway(res)) {
+    setReach("down");
+    throw new Unreachable();
+  }
+  setReach("up");
   if (res.status === 401 && !anonymous) onUnauthorized();
   if (!res.ok) throw new HttpError(res.status, await detail(res));
   return res;
@@ -70,6 +123,12 @@ export async function getJson<T>(path: string): Promise<T> {
 
 export async function postJson<T>(path: string, json: unknown = {}, init: CallInit = {}): Promise<T> {
   return (await call(path, { ...init, method: "POST", json })).json() as Promise<T>;
+}
+
+// What to say when a call failed: the backend's own words, or that it
+// didn't answer at all.
+export function errorText(err: unknown): string {
+  return err instanceof HttpError ? err.message : UNREACHABLE;
 }
 
 async function detail(res: Response): Promise<string> {
