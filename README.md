@@ -1,5 +1,7 @@
 # huvu
 
+![huvu](banner.png)
+
 huvu is a proactive agent harness that learns your behaviours and cares for you.
 
 features:
