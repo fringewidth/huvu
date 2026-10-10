@@ -162,6 +162,12 @@ class ToolBox:
                 writes=True,
             ),
             Tool(
+                "people_group",
+                TOOLS["people_group"],
+                _schema({"group": {"type": "string"}}),
+                self._people_group,
+            ),
+            Tool(
                 "people_identify",
                 TOOLS["people_identify"],
                 _schema({"user": {"type": "string"}}, ["user"]),
@@ -250,6 +256,35 @@ class ToolBox:
     async def _triggers_remove(self, args: dict[str, Any], caller: Caller) -> Result:
         trigger = await self._kernel.triggers.remove(args["id"], caller)
         return Result(data=trigger.public(), labels=["house"])
+
+    async def _people_group(self, args: dict[str, Any], caller: Caller) -> Result:
+        """The caller's groups, or one of them, and who is in each, by what
+        the caller calls them."""
+        accounts = self._kernel.accounts
+        mine = list(accounts.memberships(caller.user)) if caller.user else [caller.group or accounts.default_group()]
+        wanted = args.get("group")
+        if wanted is not None and wanted not in mine:
+            raise ToolError(f"you aren't in a group {wanted!r}; your groups: {', '.join(mine) or 'none'}")
+        groups = []
+        for group_id in [wanted] if wanted else mine:
+            group = accounts.group(group_id)
+            people = [
+                {
+                    "id": u.id,
+                    "alias": accounts.alias(caller.user, u.id),
+                    "role": accounts.role(group_id, u.id),
+                    "you": u.id == caller.user,
+                }
+                for u in accounts.people(group_id)
+            ]
+            groups.append(
+                {
+                    "id": group_id,
+                    "name": group.name if group else group_id,
+                    "people": people,
+                }
+            )
+        return Result(data={"groups": groups}, labels=["owner"])
 
     async def _people_identify(self, args: dict[str, Any], caller: Caller) -> Result:
         device = self._shared_device(caller)

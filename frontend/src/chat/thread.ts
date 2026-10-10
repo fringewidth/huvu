@@ -25,6 +25,9 @@ export interface Notice {
   urgency: "low" | "normal" | "high";
   // The app screen that deals with it, such as "triggers".
   opens: string | null;
+  // Who sent it through huvu, as this user calls them, such as "mom".
+  // Null when huvu sent it.
+  from: string | null;
   // Sent while the app was closed, and not shown since. It takes the
   // stage at launch the way a fresh turn does.
   unseen: boolean;
@@ -239,6 +242,7 @@ export interface NoticeData {
   image?: string | null;
   urgency?: string;
   opens?: string | null;
+  from?: string | null;
 }
 
 // Adds notifications as turns of their own, once each. Those from before
@@ -252,7 +256,7 @@ export function notices(sent: NoticeData[], seenUntil: number | null): void {
     .map((n): Turn => {
       const at = n.at ? Date.parse(n.at) : now;
       const urgency = n.urgency === "low" || n.urgency === "high" ? n.urgency : "normal";
-      const notice: Notice = { id: n.id, urgency, opens: n.opens ?? null, unseen: n.at !== undefined && seenUntil !== null && at > seenUntil };
+      const notice: Notice = { id: n.id, urgency, opens: n.opens ?? null, from: n.from ?? null, unseen: n.at !== undefined && seenUntil !== null && at > seenUntil };
       return { ...blank(n.id, n.at ? at : now), notice, answer: n.text, parts: n.image ? [{ kind: "image", src: n.image }] : [] };
     });
   if (more.length === 0) return;

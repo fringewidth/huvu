@@ -256,35 +256,64 @@ class Kernel:
         return self.data.count("huvu", "events", " AND ".join(where), args)
 
     async def notify(
-        self, user: str | None, group: str | None, text: str, *, image: str | None = None, urgency: str = "normal", opens: str | None = None
+        self,
+        user: str | None,
+        group: str | None,
+        text: str,
+        *,
+        image: str | None = None,
+        urgency: str = "normal",
+        opens: str | None = None,
+        sender: str | None = None,
     ) -> None:
         """A notification on a user's phones, or on a group's members'
         phones when there is no user. It is kept for NOTIFY_KEEP, so a phone
         that wasn't connected finds it later. `opens` names the app screen
-        that deals with it, such as "triggers"."""
+        that deals with it, such as "triggers". `sender` is the user who
+        sent it through huvu_message: each recipient sees them by their own
+        alias for them, and a group's message skips its sender."""
         now = self.now()
         # With no user, a group's members get it: the default group's when
-        # none is named, the way phones() picks them.
+        # none is named.
         group = None if user else (group or self.accounts.default_group())
         payload = {"id": f"n_{secrets.token_hex(5)}", "at": now, "text": text, "image": image, "urgency": urgency, "opens": opens, "user": user, "group": group}
         self.db.execute("DELETE FROM notifications WHERE ts < ?", ((now - NOTIFY_KEEP).timestamp(),))
         self.db.execute(
-            "INSERT INTO notifications (id, at, ts, text, image, urgency, opens, user_id, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (payload["id"], iso(now), now.timestamp(), text, image, urgency, opens, user, group),
+            "INSERT INTO notifications (id, at, ts, text, image, urgency, opens, user_id, group_id, sender_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (payload["id"], iso(now), now.timestamp(), text, image, urgency, opens, user, group, sender),
         )
-        self.push.send("notify", payload, self.accounts.phones(user, group))
+        # One send per person, since each sees the sender by their own alias.
+        recipients = [user] if user else [m for m in self.accounts.members(group) if m != sender]
+        for person in recipients:
+            self.push.send("notify", {**payload, "from": self._sender(person, sender)}, self.accounts.phones(person))
+
+    def _sender(self, recipient: str | None, sender: str | None) -> str | None:
+        """Who a notification is from, as its recipient calls them. None
+        when huvu sent it."""
+        return self.accounts.alias(recipient, sender) if sender else None
 
     def notifications(self, user: str | None) -> list[dict[str, Any]]:
         """What was sent to a user's phones: their own notifications and
-        their member groups', oldest first."""
+        their member groups', oldest first. A message the user sent to a
+        group is left out."""
         groups = self.accounts.member_groups(user)
         marks = ", ".join("?" * len(groups))
         rows = self.db.execute(
-            f"SELECT * FROM notifications WHERE user_id = ? OR (user_id IS NULL AND group_id IN ({marks})) ORDER BY ts",
-            (user, *groups),
+            f"SELECT * FROM notifications WHERE user_id = ? OR (user_id IS NULL AND group_id IN ({marks}) AND sender_id IS NOT ?) ORDER BY ts",
+            (user, *groups, user),
         ).fetchall()
         return [
-            {"id": r["id"], "at": from_iso(r["at"]), "text": r["text"], "image": r["image"], "urgency": r["urgency"], "opens": r["opens"], "user": r["user_id"], "group": r["group_id"]}
+            {
+                "id": r["id"],
+                "at": from_iso(r["at"]),
+                "text": r["text"],
+                "image": r["image"],
+                "urgency": r["urgency"],
+                "opens": r["opens"],
+                "user": r["user_id"],
+                "group": r["group_id"],
+                "from": self._sender(user, r["sender_id"]),
+            }
             for r in rows
         ]
 

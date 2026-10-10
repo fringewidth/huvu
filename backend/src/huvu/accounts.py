@@ -14,6 +14,11 @@ group's shared devices and be recognized at them, but trusts nothing
 implicitly: they don't see the group's events, and they never approve
 anything. Every approval a guest causes goes to the group's members.
 
+Each user can have an alias for each other user, such as "mom". The model
+names people by the caller's aliases (people_group, huvu_message), and a
+notification one user sends shows the sender by the recipient's alias for
+them. Without an alias, the person's name stands in.
+
 A tracker is a location app on a user's phone (OwnTracks), added from the
 command line. It has a token of its own, revoked apart from the phone's
 login, and it can only post to a source's ingest route.
@@ -203,11 +208,15 @@ class Accounts:
 
     def _check_new_name(self, name: str) -> None:
         """Users and groups share one namespace, since both name Hermes
-        profiles."""
+        profiles. A name someone already calls a person by is taken too,
+        so a name always means one person or one group."""
         if not NAME_RE.match(name) or name == "default":
             raise AuthError("a name is lowercase letters, digits, _ and -, starts with a letter or digit, and can't be 'default'")
         if self.user(name) is not None or self.group(name) is not None:
             raise AuthError(f"{name!r} is already a user or a group")
+        alias = self._conn.execute("SELECT owner_id, user_id FROM people_aliases WHERE lower(alias) = ?", (name,)).fetchone()
+        if alias is not None:
+            raise AuthError(f"{alias['owner_id']} calls {alias['user_id']} {name!r}; pick another name or change that alias first", 409)
 
     # Groups
 
@@ -266,6 +275,39 @@ class Accounts:
     def is_member(self, group_id: str | None, user_id: str | None) -> bool:
         return self.role(group_id, user_id) == "member"
 
+    def members(self, group_id: str) -> list[str]:
+        """A group's members, without its guests."""
+        rows = self._conn.execute("SELECT user_id FROM memberships WHERE group_id = ? AND role = 'member' ORDER BY user_id", (group_id,)).fetchall()
+        return [r["user_id"] for r in rows]
+
+    # What people call each other
+
+    def set_alias(self, owner_id: str, user_id: str, alias: str) -> None:
+        """Sets what one user calls another. An empty alias goes back to the
+        person's name. The alias can't be what the owner calls anyone else
+        (their alias or their name), anyone else's username, or a group's
+        id, so it names one person only."""
+        self._require_user(owner_id)
+        self._require_user(user_id)
+        alias = alias.strip()
+        taken: dict[str, str] = {g.id: f"the group {g.id}" for g in self.groups()}
+        for other in self.users():
+            if other.id != user_id:
+                taken[other.id] = f"{other.id}'s username"
+                taken[self.alias(owner_id, other.id).lower()] = f"what {owner_id} calls {other.id}"
+        if alias and alias.lower() in taken:
+            raise AuthError(f"{alias!r} is already {taken[alias.lower()]}", 409)
+        self._conn.execute("DELETE FROM people_aliases WHERE owner_id = ? AND user_id = ?", (owner_id, user_id))
+        if alias:
+            self._conn.execute("INSERT INTO people_aliases (owner_id, user_id, alias) VALUES (?, ?, ?)", (owner_id, user_id, alias))
+
+    def alias(self, owner_id: str | None, user_id: str) -> str:
+        """What `owner_id` calls a user: their alias, or the user's name.
+        With no owner (a shared device nobody is recognized at), the name."""
+        row = self._conn.execute("SELECT alias FROM people_aliases WHERE owner_id = ? AND user_id = ?", (owner_id, user_id)).fetchone()
+        user = self.user(user_id)
+        return row["alias"] if row else (user.name if user else user_id)
+
     # Trust
 
     def scope(self, user_id: str | None, group_id: str | None) -> Scope:
@@ -309,6 +351,16 @@ class Accounts:
         if not device.is_phone or device.user is None:
             return False
         return device.user == user_id if user_id is not None else self.is_member(group_id, device.user)
+
+    def reachable(self, user_id: str) -> list[str]:
+        """Who a user can send a message to: everyone in a group the user
+        is a member of, guests too, but not the user."""
+        groups = self.member_groups(user_id)
+        marks = ", ".join("?" * len(groups))
+        rows = self._conn.execute(
+            f"SELECT DISTINCT user_id FROM memberships WHERE group_id IN ({marks}) AND user_id != ? ORDER BY user_id", (*groups, user_id)
+        ).fetchall()
+        return [r["user_id"] for r in rows]
 
     def phones(self, user_id: str | None, group_id: str | None = None) -> list[str]:
         """The phones that reach a user, or a group's members when there is

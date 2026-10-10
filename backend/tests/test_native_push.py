@@ -52,6 +52,16 @@ async def test_a_notification_reaches_the_phones_token(kernel, family):
     assert message["android"]["notification"]["channel_id"] == "huvu"
 
 
+async def test_a_message_is_titled_with_its_sender(kernel, family):
+    fake = fcm(kernel)
+    kernel.native_push.register(family.mom_phone.id, "tok-mom", "android")
+    kernel.accounts.set_alias("mom", "me", "kanna")
+    await kernel.notify("mom", None, "running late", sender="me")
+    await settle()
+    [message] = fake.sent
+    assert message["notification"]["title"] == "kanna"
+
+
 async def test_an_approval_goes_out_once_while_it_waits(kernel, family):
     fake = fcm(kernel)
     kernel.native_push.register(family.me_phone.id, "tok-me", "android")

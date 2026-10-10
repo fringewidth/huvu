@@ -8,6 +8,9 @@ Users and devices are managed from here too:
     uv run huvu user hermes-key mom
     uv run huvu user list
     uv run huvu user remove mom
+    uv run huvu user alias me mom "mom"     what one user calls another, for the model and
+                                            on messages; "" goes back to their name
+    uv run huvu user aliases me             what one user calls everyone else
     uv run huvu group add beach --name "Beach house"   asks for the group profile's key
     uv run huvu group join home sitter --guest
     uv run huvu group leave home sitter
@@ -58,6 +61,11 @@ def main() -> None:
     user.add_parser("hermes-key", help="set the API key of a user's Hermes profile").add_argument("id")
     user.add_parser("list", help="list users")
     user.add_parser("remove", help="remove a user and log out their devices").add_argument("id")
+    alias = user.add_parser("alias", help="set what one user calls another")
+    alias.add_argument("owner")
+    alias.add_argument("person")
+    alias.add_argument("alias", help='what the owner calls them; "" goes back to their name')
+    user.add_parser("aliases", help="show what one user calls everyone else").add_argument("owner")
 
     group = commands.add_parser("group", help="manage groups").add_subparsers(dest="action", required=True)
     add_group = group.add_parser("add", help="add a group, with a Hermes profile of the same name")
@@ -148,6 +156,14 @@ def _manage(config, args) -> None:
                 print(f"{u.id}\t{u.name}\t{groups}\t{u.created_at:%Y-%m-%d}")
         case ("user", "remove"):
             accounts.remove_user(args.id)
+        case ("user", "alias"):
+            accounts.set_alias(args.owner, args.person, args.alias)
+        case ("user", "aliases"):
+            if accounts.user(args.owner) is None:
+                raise AuthError(f"no user {args.owner!r}")
+            for u in accounts.users():
+                if u.id != args.owner:
+                    print(f"{u.id}\t{accounts.alias(args.owner, u.id)}")
         case ("group", "add"):
             key = os.environ.get("HUVU_HERMES_KEY") or getpass.getpass(f"API key of Hermes profile {args.id!r} (its API_SERVER_KEY): ")
             token = accounts.add_group(args.id, args.name or args.id, key)
