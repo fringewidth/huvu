@@ -1,5 +1,11 @@
 apply plugin: 'com.android.application'
 
+// The native version, from frontend/native.json. Bump it whenever the APK
+// changes in a way the web code can see: a plugin added or updated, the
+// manifest, Java. A live update goes only to an APK of the native version
+// it was built for.
+def nativeVersion = new groovy.json.JsonSlurper().parse(file('../../native.json')).version
+
 android {
     namespace = "com.huvu.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +13,8 @@ android {
         applicationId "com.huvu.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode nativeVersion
+        versionName "${nativeVersion}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

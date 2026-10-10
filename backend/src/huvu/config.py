@@ -6,6 +6,7 @@
     port = 3001
     cors_origins = ["*"]
     web_dir = "../frontend/dist"   # the web client's build, served at /
+    bundles_dir = "bundles"        # each native app's build, for live updates (bundles.py)
 
     [auth]
     mode = "on"              # or "off", for development on localhost
@@ -123,6 +124,10 @@ class Config:
     # The web client's build (frontend/dist), served at /. None serves no
     # client, as in development, where Vite serves it.
     web_dir: Path | None = None
+    # Each native target's web build, one folder per target, for the apps'
+    # live updates (bundles.py). None serves none, and the apps keep the
+    # build their APK came with.
+    bundles_dir: Path | None = None
     auth_mode: Literal["on", "off"] = "on"
     # With auth off, the user behind every request. None makes them the
     # household's.
@@ -192,6 +197,7 @@ def load(path: Path | None = None) -> Config:
     fcm = secret("HUVU_FCM_CREDENTIALS")
     # HUVU_WEB_DIR wins, so the image names where it put the build.
     web = os.environ.get("HUVU_WEB_DIR") or raw.get("web_dir")
+    bundles = os.environ.get("HUVU_BUNDLES_DIR") or raw.get("bundles_dir")
     timezone = secret("HUVU_TIMEZONE") or raw.get("timezone") or DEFAULT_TIMEZONE
     try:
         ZoneInfo(timezone)
@@ -207,6 +213,7 @@ def load(path: Path | None = None) -> Config:
         port=int(raw.get("port", 3001)),
         cors_origins=list(raw.get("cors_origins", ["*"])),
         web_dir=(base / web).resolve() if web else None,
+        bundles_dir=(base / bundles).resolve() if bundles else None,
         auth_mode=auth.get("mode", "on"),
         dev_user=auth.get("dev_user"),
         mcp_token=secret("HUVU_MCP_TOKEN"),

@@ -23,6 +23,7 @@ from starlette.routing import Route
 
 from . import mcp_server, prompts
 from .accounts import AuthError, Device
+from .bundles import BundleError, Bundles
 from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
@@ -104,6 +105,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     phone = Depends(phone_auth(config, accounts))
     poster = Depends(ingest_auth(config, accounts))
     login_limit = LoginLimit()
+    bundles = Bundles(config.bundles_dir)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -326,6 +328,25 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         except SourceError as err:
             raise HTTPException(404, str(err)) from err
         return Response(blob.content, media_type=blob.content_type, headers={"Cache-Control": "private, max-age=86400"})
+
+    # Live updates for the native apps (bundles.py). Open to anyone, like
+    # the web client: an app checks before it has logged in.
+
+    @app.get("/api/app/{target}")
+    async def app_build(target: str) -> JSONResponse:
+        try:
+            latest = bundles.latest(target)
+        except BundleError as err:
+            raise HTTPException(404, str(err)) from err
+        return JSONResponse(latest, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/app/{target}/{version}.zip")
+    async def app_build_zip(target: str, version: str) -> Response:
+        try:
+            content = await bundles.zip(target, version)
+        except BundleError as err:
+            raise HTTPException(404, str(err)) from err
+        return Response(content, media_type="application/zip", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     # What waits on a phone
 

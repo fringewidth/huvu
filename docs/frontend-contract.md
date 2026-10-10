@@ -118,6 +118,10 @@ A device that isn't connected misses these, and the stream replays nothing. So a
 
 `POST /api/push/token` (phone) with `{"token", "platform"}` keeps this phone's FCM token. `platform` is `android` or `ios`. A device has one token, and logging the device out drops it. A `notify`, a pending `approval` and an `identify` also go to the token as an FCM notification, whether or not the app is open, since a backgrounded app can still hold the stream open for a while. The OS shows the app in front no notification, so it hears these on the stream only. The FCM message carries `data` with `kind` (the push event's name), `id`, and `opens` when the notice has one. On Android it uses the channel `huvu.urgent` for approvals, questions and urgent notices, and `huvu` for the rest; the app creates both. The backend sends these only when `HUVU_FCM_CREDENTIALS` names a Firebase service account key.
 
+### Live updates
+
+`GET /api/app/{target}` (no token) answers `{"version", "native"}` for a native target's latest web build (`phone` today), with `Cache-Control: no-store`, or 404 when the host has none. `GET /api/app/{target}/{version}.zip` is that build as a zip, `index.html` at its root, cached for good, since a version never changes. Only the current version is served. The app downloads it when `version` differs from its own `bundle.json` and `native` equals its APK's version, and switches to it the next time it goes to the background.
+
 ### Approvals and actions
 
 Approvals are answered from phones only. An approval belongs to the user it was asked for, or, with `user` `null`, to the members of its `group`: when a shared device nobody is recognized at asked, or when a guest caused it. A guest never approves anything.

@@ -20,6 +20,13 @@ const config: CapacitorConfig = {
     FirebaseMessaging: {
       presentationOptions: [],
     },
+    // Live updates (src/net/liveUpdate.ts) come from huvu's own host, and
+    // the app decides when. Capgo's cloud gets no update checks and no
+    // stats.
+    CapacitorUpdater: {
+      autoUpdate: false,
+      statsUrl: '',
+    },
   },
 };
 

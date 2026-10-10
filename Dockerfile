@@ -14,13 +14,16 @@
 # See compose.yaml for how to run it, and hrishik.md for the first start.
 #
 # The backend also serves the web client, built in the first stage, so
-# https://huvu.hrishik.me is both the app and its backend.
+# https://huvu.hrishik.me is both the app and its backend. The same stage
+# builds the phone app's web bundle, which the backend serves to the
+# installed apps as their live update (backend/src/huvu/bundles.py).
 FROM node:24-slim AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN VITE_TARGET=web npm run build:web
+RUN VITE_TARGET=phone npx vite build --mode phone --outDir dist-phone
 
 # Hermes is pinned to the image huvu was last checked with (2026-09-24's
 # latest). The one after it (2026-10-08) shipped without uv and without
@@ -32,7 +35,8 @@ USER root
 
 ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
     HUVU_ENV_FILE=/opt/data/huvu/.env \
-    HUVU_WEB_DIR=/opt/huvu/web
+    HUVU_WEB_DIR=/opt/huvu/web \
+    HUVU_BUNDLES_DIR=/opt/huvu/bundles
 
 # uv comes from Astral's own image, at the version the lock file was written
 # with, so the build doesn't hang on Hermes shipping one (2026-10-08's didn't).
@@ -50,6 +54,7 @@ COPY --chown=hermes:hermes hermes-plugin/ hermes-plugin/
 COPY --chown=hermes:hermes SOUL.md setup.sh wipe.sh ./
 COPY --chown=hermes:hermes docker/huvu.toml docker/huvu.toml
 COPY --from=web /web/dist web/
+COPY --from=web /web/dist-phone bundles/phone/
 COPY docker/s6/ /etc/s6-overlay/s6-rc.d/
 COPY docker/cont-init/ /etc/cont-init.d/
 RUN chmod +x setup.sh wipe.sh /etc/cont-init.d/50-huvu /etc/s6-overlay/s6-rc.d/huvu/run && \
