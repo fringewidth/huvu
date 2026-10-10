@@ -23,6 +23,7 @@ from starlette.routing import Route
 
 from . import mcp_server, prompts
 from .accounts import AuthError, Device
+from .alexa import Alexa, AlexaError
 from .bundles import BundleError, Bundles
 from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
@@ -106,6 +107,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     poster = Depends(ingest_auth(config, accounts))
     login_limit = LoginLimit()
     bundles = Bundles(config.bundles_dir)
+    alexa = Alexa(kernel, config.alexa_skill_id) if config.alexa_skill_id else None
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -328,6 +330,20 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         except SourceError as err:
             raise HTTPException(404, str(err)) from err
         return Response(blob.content, media_type=blob.content_type, headers={"Cache-Control": "private, max-age=86400"})
+
+    # Asks through Alexa, for the Fire TV (alexa.py). Amazon signs each
+    # request, so it needs no device token.
+
+    @app.post("/api/alexa")
+    async def alexa_ask(request: Request) -> JSONResponse:
+        if alexa is None:
+            raise HTTPException(404, "no Alexa skill is set up (HUVU_ALEXA_SKILL_ID)")
+        try:
+            answer = await alexa.handle(request.headers, await request.body())
+        except AlexaError as err:
+            log.warning("refused an Alexa request: %s", err)
+            raise HTTPException(400, str(err)) from err
+        return JSONResponse(answer)
 
     # Live updates for the native apps (bundles.py). Open to anyone, like
     # the web client: an app checks before it has logged in.

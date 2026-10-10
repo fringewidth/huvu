@@ -1,0 +1,25 @@
+apply plugin: 'com.android.application'
+
+// The Fire TV app: a WebView over the TV's page on the host. Not a
+// Capacitor app, since Capacitor 8 needs Android 7 (API 24) and the
+// family's Fire TV Stick (2nd gen, Fire OS 5) is Android 5.1 (API 22).
+// No libraries at all, so nothing here raises the floor.
+android {
+    namespace = "com.huvu.tv"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.huvu.tv"
+        minSdkVersion 22
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1"
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}

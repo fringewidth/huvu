@@ -412,12 +412,13 @@ backend/
     dream.py          each person's nightly dream: its trigger and its prompt
     speech.py         huvu's voice: Edge, a turn's answer spoken a sentence at a time
     hearing.py        speech to text through Groq's Whisper
+    alexa.py          asks through the Alexa skill, for the Fire TV: Amazon's signature checks, then the ask on the TV
     wipe.py           what `huvu wipe` deletes for a user or a group
     sessions.py       what the kernel knows about Hermes sessions
     push.py           the push channel
     native_push.py    FCM tokens and the sender, for phones whose app is closed
     media.py          media URLs for refs, image files and https URLs
-    bundles.py        each native app's web build, for its live updates
+    bundles.py        the phone app's web build, for its live updates
     http.py           the HTTP server
     auth.py, config.py, db.py, times.py, kernel.py, __main__.py
     builtin/          the huvu and chat sources

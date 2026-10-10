@@ -1,0 +1,46 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "huvu",
+      "intents": [
+        {
+          "name": "AskIntent",
+          "slots": [{ "name": "ask", "type": "ASK" }],
+          "samples": ["{ask}"]
+        },
+        { "name": "AMAZON.CancelIntent", "samples": [] },
+        { "name": "AMAZON.StopIntent", "samples": [] },
+        { "name": "AMAZON.HelpIntent", "samples": [] },
+        { "name": "AMAZON.FallbackIntent", "samples": [] },
+        { "name": "AMAZON.NavigateHomeIntent", "samples": [] }
+      ],
+      "types": [
+        {
+          "name": "ASK",
+          "values": [
+            { "name": { "value": "what's a good movie under two hours" } },
+            { "name": { "value": "for a film like blade runner" } },
+            { "name": { "value": "how long is the first season of invincible" } },
+            { "name": { "value": "what's worth watching tonight" } },
+            { "name": { "value": "turn off the living room lights" } },
+            { "name": { "value": "turn on the projector" } },
+            { "name": { "value": "set the bedroom ac to twenty four" } },
+            { "name": { "value": "what's the weather tomorrow" } },
+            { "name": { "value": "remind me to call mom at eight" } },
+            { "name": { "value": "who is at the door" } },
+            { "name": { "value": "show me the balcony camera" } },
+            { "name": { "value": "is anyone home" } },
+            { "name": { "value": "what time is it" } },
+            { "name": { "value": "play something light to start the day" } },
+            { "name": { "value": "plan a movie night for saturday" } },
+            { "name": { "value": "tell dad dinner is ready" } },
+            { "name": { "value": "what did i ask you yesterday" } },
+            { "name": { "value": "something to watch before bed" } },
+            { "name": { "value": "a series with episodes under thirty minutes" } },
+            { "name": { "value": "what's some cool tamil movies" } }
+          ]
+        }
+      ]
+    }
+  }
+}
