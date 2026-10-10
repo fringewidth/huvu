@@ -25,6 +25,7 @@ COLUMNS = [
     ("actions", "json"),
     ("replaces", "text"),
     ("usage", "json"),
+    ("route", "json"),
 ]
 
 

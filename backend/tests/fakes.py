@@ -129,6 +129,7 @@ class FakeHermes:
         # The model each session's last run asked for.
         self.models: dict[str, str | None] = {}
         self.providers: dict[str, str | None] = {}
+        self.efforts: dict[str, str | None] = {}
         self.messages: list[tuple[str, str]] = []
         self.stopped: list[str] = []
         self.deleted: list[str] = []
@@ -143,11 +144,19 @@ class FakeHermes:
         return session_id
 
     async def chat(
-        self, profile: Profile, session_id: str, message: str, *, model: str | None = None, provider: str | None = None
+        self,
+        profile: Profile,
+        session_id: str,
+        message: str,
+        *,
+        model: str | None = None,
+        provider: str | None = None,
+        effort: str | None = None,
     ) -> AsyncIterator[HermesEvent]:
         self.messages.append((session_id, message))
         self.models[session_id] = model
         self.providers[session_id] = provider
+        self.efforts[session_id] = effort
         steps = self.script or [("run.started", {"run_id": "run_1"}), ("assistant.delta", {"delta": "ok"}), ("run.completed", {})]
         for step in steps:
             if callable(step):

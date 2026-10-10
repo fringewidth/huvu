@@ -33,13 +33,26 @@ class SessionBook:
         self._now = now
 
     def record(
-        self, session_id: str, kind: Kind, *, user: str | None, group: str | None = None, device: str | None = None, trigger_id: str | None = None
+        self,
+        session_id: str,
+        kind: Kind,
+        *,
+        user: str | None,
+        group: str | None = None,
+        device: str | None = None,
+        trigger_id: str | None = None,
+        route: str | None = None,
     ) -> None:
         self._conn.execute(
-            "INSERT INTO hermes_sessions (id, kind, user_id, group_id, device_id, trigger_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO hermes_sessions (id, kind, user_id, group_id, device_id, trigger_id, created_at, route) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (id) DO NOTHING",
-            (session_id, kind, user, group, device, trigger_id, iso(self._now())),
+            (session_id, kind, user, group, device, trigger_id, iso(self._now()), route),
         )
+
+    def route(self, session_id: str) -> str | None:
+        """The route a chat session runs on (Route.key in routing.py)."""
+        row = self._conn.execute("SELECT route FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone()
+        return row["route"] if row else None
 
     def owner(self, session_id: str | None) -> SessionOwner | None:
         query = "SELECT user_id, group_id, device_id FROM hermes_sessions WHERE id = ?"

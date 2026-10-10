@@ -18,13 +18,17 @@
     "ha.turn_on" = "silent"  # source.action = silent | notify | ask
 
     [models]                 # the three tiers of model huvu runs on
-    basic = "gpt-6-luna"     # trigger wakes, unless the trigger asks for more
-    pro = "gpt-6-sol"        # conversations, and wakes that need more thought
+    basic = "gpt-6-luna"     # plain house control, and trigger wakes
+    pro = "gpt-6-sol"        # every other ask, and wakes that need more thought
     advanced = "gpt-6-astra" # wakes only, and only with the person's yes
     # A model alone runs on the profile's own login. To run a tier on another
     # Hermes provider, name it: anthropic is the Claude login, openai-codex
     # the ChatGPT one.
     # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
+
+    [router]                 # basic for plain house control, pro for the rest (routing.py)
+    enabled = true           # false runs every ask on pro
+    effort = "none"          # the reasoning effort of an ask sent to basic
 
     [dream]
     at = "04:00"             # each person's nightly dream, local time
@@ -137,8 +141,9 @@ class Config:
     # huvu's voice (speech.py): an Edge voice, and how fast it speaks.
     speech_voice: str = "en-US-AvaNeural"
     speech_speed: float = 1.0
-    # The model behind each tier (Tier in spec.py). Conversations run on
-    # pro; a trigger's wakes on its own tier, basic by default.
+    # The model behind each tier (Tier in spec.py). A conversation's asks
+    # run on the tier the router picks, pro when it can't; a trigger's
+    # wakes on its own tier, basic by default.
     models: dict[str, ModelChoice] = field(default_factory=lambda: {t: ModelChoice(m) for t, m in DEFAULT_MODELS.items()})
     # Each person's nightly dream (dream.py): when, and on which tier.
     dream_at: str = "04:00"
@@ -146,6 +151,12 @@ class Config:
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
+    # The router (routing.py): plain house control on basic, the rest on
+    # pro. Off runs every ask on pro.
+    router_enabled: bool = True
+    # The reasoning effort of an ask the router sends to basic, as Hermes
+    # names it: none, minimal, low, medium, high.
+    router_effort: str = "none"
 
     def model(self, tier: str) -> ModelChoice:
         return self.models.get(tier) or ModelChoice(DEFAULT_MODELS[tier])
@@ -162,6 +173,7 @@ def load(path: Path | None = None) -> Config:
     hermes = raw.get("hermes", {})
     speech = raw.get("speech", {})
     dream = raw.get("dream", {})
+    router = raw.get("router", {})
     base = path.parent if path.exists() else Path.cwd()
     fcm = secret("HUVU_FCM_CREDENTIALS")
     # HUVU_WEB_DIR wins, so the image names where it put the build.
@@ -197,6 +209,8 @@ def load(path: Path | None = None) -> Config:
         speech_speed=float(speech.get("speed", 1.0)),
         groq_api_key=secret("GROQ_API_KEY"),
         stt_model=speech.get("stt_model", "whisper-large-v3"),
+        router_enabled=bool(router.get("enabled", True)),
+        router_effort=str(router.get("effort", "none")),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
     for tier in config.models:
