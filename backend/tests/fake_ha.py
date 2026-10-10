@@ -19,6 +19,14 @@ class Dropped(ConnectionError):
     pass
 
 
+class Refused(Exception):
+    """A service call that failed inside its integration, with HA's code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 class FakeTransport:
     def __init__(self, ha: FakeHA) -> None:
         self._ha = ha
@@ -57,6 +65,8 @@ class FakeHA:
         self.effects: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
         self.responses: dict[str, Any] = {}
         self.calls: list[dict[str, Any]] = []
+        # Codes to fail the next service calls on entities with, one each.
+        self.refusals: list[str] = []
         self.commands: list[str] = []
         self.transport: FakeTransport | None = None
         self._subs: dict[str, list[int]] = {}
@@ -126,6 +136,9 @@ class FakeHA:
         except KeyError as err:
             transport.put({"id": message["id"], "type": "result", "success": False, "error": {"code": "not_found", "message": f"{err} not found"}})
             return
+        except Refused as err:
+            transport.put({"id": message["id"], "type": "result", "success": False, "error": {"code": err.code, "message": "network error:(-9999999) sign invalid"}})
+            return
         transport.put({"id": message["id"], "type": "result", "success": True, "result": result})
 
     def _subscribe_events(self, message: dict[str, Any]) -> None:
@@ -157,6 +170,8 @@ class FakeHA:
 
     def _call_service(self, message: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(message)
+        if self.refusals and message["domain"] != "script":
+            raise Refused(self.refusals.pop(0))
         context = {"id": _ctx(), "parent_id": None, "user_id": self.OWN_USER}
         run = self._run_script if message["domain"] == "script" else self._run_device_service
         return run(message, context)

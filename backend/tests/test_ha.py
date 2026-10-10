@@ -262,6 +262,39 @@ async def test_working_an_entity_calls_its_service_and_records_who(house, ha):
     assert (ha.calls[-1]["service"], ha.calls[-1]["service_data"]) == ("set_temperature", {"temperature": 24, "hvac_mode": "cool"})
 
 
+async def test_a_service_call_that_fails_in_its_integration_is_sent_once_more(house, ha, monkeypatch):
+    monkeypatch.setattr(ha_source, "RETRY_DELAY", 0)
+    ha.refusals = ["unknown_error"]
+    done = await house.source.act("light_hall", {"on": True}, MOM)
+    assert done.data["sent"] == ["light.turn_on"]
+    assert [c["service"] for c in ha.calls] == ["turn_on", "turn_on"]
+    assert ha.states["light.hall"]["state"] == "on"
+    # Twice is all, and a code that would fail again isn't retried.
+    ha.calls.clear()
+    ha.refusals = ["home_assistant_error", "home_assistant_error"]
+    with pytest.raises(SourceError, match="Home Assistant refused light.turn_off on light.hall"):
+        await house.source.act("light_hall", {"on": False}, MOM)
+    assert len(ha.calls) == 2
+    ha.calls.clear()
+    ha.refusals = ["service_validation_error"]
+    with pytest.raises(SourceError, match="Home Assistant refused light.turn_off on light.hall"):
+        await house.source.act("light_hall", {"on": False}, MOM)
+    assert len(ha.calls) == 1
+
+
+async def test_a_press_is_never_sent_twice(house, ha, monkeypatch):
+    monkeypatch.setattr(ha_source, "RETRY_DELAY", 0)
+    kernel = house.kernel
+    ha.entity("button.projector_power", "unknown", area="hall", friendly_name="Projector power")
+    ha.fire("entity_registry_updated", {"action": "create", "entity_id": "button.projector_power"})
+    await until(lambda: "ha_button_projector_power" in kernel.tools.names())
+    ha.calls.clear()
+    ha.refusals = ["unknown_error"]
+    with pytest.raises(SourceError, match="Home Assistant refused button.press on button.projector_power"):
+        await house.source.act("button_projector_power", {}, MOM)
+    assert len(ha.calls) == 1
+
+
 async def test_wrong_arguments_say_what_is_wrong(house, ha):
     with pytest.raises(SourceError, match="needs on"):
         await house.source.act("light_hall", {"brightness_pct": 40}, MOM)
