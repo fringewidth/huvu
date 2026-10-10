@@ -20,13 +20,17 @@ Every turn that ends becomes a `chat_turns` row (builtin/chat.py), with
 its cache reads (`usage`), so the window can be checked against the
 provider, and its route.
 
-The router (routing.py) picks each ask's tier before its turn starts.
-Plain house control runs on basic in a session of its own, with the ask
-alone, used once. Everything else runs on pro in the conversation's main
-session, so a quick turn never touches its cache. The main session's next
-ask carries a note for each quick turn since its last one: what was said
-and what was answered. A fresh main session reads them in its transcript
-instead.
+The router (routing.py) picks how each ask is answered before its turn
+starts. "Turn on <device>" and the like, huvu works itself, with no model
+and no Hermes session. A one-off ask runs on basic in a session of its own,
+with the ask alone, used once. Everything else runs on pro in the
+conversation's main session, so no other turn touches its cache.
+
+The main session must know every turn of the conversation. Its next ask
+carries a note for each turn after the last one it ran (`_unseen`): what
+was said and what was answered. The notes are appended to the new message,
+so the cached prompt before it holds. A fresh main session reads every turn
+in its transcript instead.
 """
 
 from __future__ import annotations
@@ -45,9 +49,10 @@ from pydantic import BaseModel
 from . import prompts
 from .db import dumps, from_iso, iso, loads
 from .hermes import HermesError, HermesEvent, Profile
-from .routing import Route
+from .routing import Command, Direct, OnModel, Route
 from .source import SourceError
 from .spec import Caller
+from .tools import ToolError
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -139,7 +144,7 @@ class Turn:
 class LiveTurn:
     turn: Turn
     profile: Profile
-    # The tier it runs on, and why (routing.py).
+    # How it is answered, and why (routing.py).
     route: Route
     # Whose turn it is in chat_turns: the device's user, or whoever is
     # recognized at a shared device.
@@ -236,8 +241,14 @@ class ConversationHub:
             # The main session holds turns the rewind dropped.
             self._db.execute("UPDATE conversations SET hermes_session = NULL WHERE id = ?", (conversation_id,))
             session = None
-        route = await self._kernel.router.route(text)
-        if route.tier == "basic":
+        who = user or self._kernel.attendance.holder(conversation_id)
+        caller = Caller(kind="kernel", user=who, device=conversation_id, group=group)
+        route = await self._kernel.router.route(text, caller)
+        message = ""
+        if isinstance(route, Direct):
+            # No model: the main session hears of it on its next ask.
+            session = None
+        elif route.tier == "basic":
             # Plain house control: a session of its own with the ask alone,
             # so the main session and its cache are never touched.
             message = asked
@@ -254,7 +265,7 @@ class ConversationHub:
                 message = _seeded(kept, message, tz, conversation_id)
                 session = await self._new_session(conversation_id, user, group, profile, route.key, main=True)
             else:
-                message = _with_quick_turns(message, _since(kept, session), tz)
+                message = _with_quick_turns(message, _unseen(kept, session), tz)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
             conversation_id=conversation_id,
@@ -266,10 +277,11 @@ class ConversationHub:
             replaces=replaces,
         )
         self._save(turn, insert=True)
-        live = LiveTurn(turn, profile, route, user=user or self._kernel.attendance.holder(conversation_id), group=group)
+        live = LiveTurn(turn, profile, route, user=who, group=group)
         self._live[turn.id] = live
         self._emit(live, "turn.started", {"ask": text, "at": turn.at})
-        live.task = asyncio.create_task(self._relay(live, message), name=f"turn:{turn.id}")
+        work = self._direct(live, route.command, caller) if isinstance(route, Direct) else self._relay(live, route, message)
+        live.task = asyncio.create_task(work, name=f"turn:{turn.id}")
         return live
 
     def _conversation(self, conversation_id: str, user: str | None):
@@ -411,10 +423,9 @@ class ConversationHub:
             self._emit(target, "part", {"part": part})
         return target is not None
 
-    async def _relay(self, live: LiveTurn, message: str) -> None:
+    async def _relay(self, live: LiveTurn, route: OnModel, message: str) -> None:
         ending: Ending = "failed"
         try:
-            route = live.route
             async for event in self._kernel.hermes.chat(
                 live.profile,
                 live.turn.hermes_session or "",
@@ -434,6 +445,36 @@ class ConversationHub:
             ending = "failed"
         finally:
             self._end(live, ending)
+
+    async def _direct(self, live: LiveTurn, command: Command, caller: Caller) -> None:
+        """Works an ask huvu understood without a model: one action, shown
+        the way a model's call of it is, and a fixed answer. Why it failed
+        is in the event log."""
+        turn = live.turn
+        ending: Ending = None
+        part = {"kind": "tool", "id": f"{turn.id}-p0", "toolName": command.tool, "args": {}, "result": None, "after": 0}
+        turn.parts.append(part)
+        self._emit(live, "part", {"part": part})
+        try:
+            result = await self._kernel.tools.call(command.tool, {**command.args, "reason": prompts.direct_reason(turn.ask)}, caller)
+            # The router left out what asks first, so a held action means
+            # its autonomy changed since: it didn't run.
+            held = result.data.get("status") in ("pending_approval", "already_pending")
+            part["result"] = {"error": True} if held else {}
+            answer = prompts.DIRECT_FAILED if held else prompts.direct_done(command.name, command.verb)
+        except asyncio.CancelledError:
+            part["result"] = {"error": True}
+            ending = "stopped"
+            answer = ""
+        except Exception as err:
+            if not isinstance(err, ToolError):
+                log.exception("turn %s failed", turn.id)
+            part["result"] = {"error": True}
+            answer = prompts.DIRECT_FAILED
+        finally:
+            self._emit(live, "part.update", {"id": part["id"], "result": part["result"]})
+        self._say(live, answer)
+        self._end(live, ending)
 
     def _translate(self, live: LiveTurn, event: HermesEvent, ending: Ending) -> Ending:
         """Turns one Hermes event into frontend events, and returns how the
@@ -705,17 +746,17 @@ def _with_actions(text: str, actions: list[Action], tz: tzinfo | None) -> str:
     return "\n".join([*(_note(a, tz) for a in actions), "", text])
 
 
-def _since(kept: list[Turn], session: str) -> list[Turn]:
-    """The turns after the main session's last one: the quick turns it
-    hasn't heard of."""
+def _unseen(kept: list[Turn], session: str) -> list[Turn]:
+    """Every turn after the last one the main session ran: what it must
+    hear before its next ask, so its last turn is the conversation's."""
     last = max((i for i, t in enumerate(kept) if t.hermes_session == session), default=None)
     return kept[last + 1 :] if last is not None else []
 
 
 def _with_quick_turns(text: str, turns: list[Turn], tz: tzinfo | None) -> str:
-    """The main session's next message, after the quick turns that ran in
-    sessions of their own: each one's action notes, what was said and what
-    was answered. Appended, so the session's prompt cache holds."""
+    """The main session's next message, after the turns it didn't run:
+    each one's action notes, what was said and what was answered. Appended,
+    so the session's prompt cache holds."""
     if not turns:
         return text
     lines: list[str] = []

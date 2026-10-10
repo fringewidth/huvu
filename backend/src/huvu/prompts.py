@@ -169,36 +169,51 @@ def mode_note(mode: str) -> str:
     return VOICE_NOTE if mode == "voice" else TEXT_NOTE
 
 
-# The router's one question to Clef-flash (routing.py), for asks its
-# whitelist of house commands doesn't take. Tuned on 2026-10-10 against 200
-# labelled asks.
+# The router's one question to Clef-flash (routing.py), for every ask that
+# isn't a direct "turn on <device>": does it need the conversation so far?
+# A one-off runs on basic with the ask alone; anything else on pro, in the
+# main session.
 ESCALATE_QUESTION = (
-    "A person asked their home assistant `ask`. A small, fast model will answer it, unless you escalate it to a larger "
-    "model. The small model sees this ask alone, with nothing said before it, and doesn't think before it acts. "
-    "It can work the home's devices, read how they are now, and look up quick facts. Should this ask be escalated?"
+    "A person said `ask` to their home assistant, partway through a conversation with it. A model that sees only "
+    "this message, and nothing said before it, will answer it, unless you escalate it to the model that has the "
+    "whole conversation. Does this message need anything said earlier in the conversation?"
 )
 ESCALATE_CRITERIA = {
     "true": (
-        "Escalate. It needs what was said before (yes, the second one, make it shorter, and the lights, more), sets a "
-        "reminder, a timer, a schedule or anything for later or on a change, takes steps that depend on what it finds, "
-        "asks about the past or about patterns, wants advice, a plan, writing, an explanation, troubleshooting or "
-        "research, hints at what it wants without saying it (it's stuffy, movie time), leaves the choice to you (play "
-        "something chill), depends on something it would have to check first (if it's above 28), or is unclear."
+        "Escalate. It points back at something said before (it, them, that, this, the same, again, the other one, "
+        "the second one, too, also, more, less, instead), answers or reacts to what the assistant said (yes, no, "
+        "sure, why, what do you mean, thanks that worked), changes or continues something already under way (make "
+        "it shorter, and the lights, never mind, go on), or makes no sense without what came before."
     ),
     "false": (
-        "The small model can do it. It works a device, scene or routine the ask names (increase the volume, turn on the "
-        "projector, AC to 24, play a show on Netflix), reads one thing that is true now (is the AC on, what's the "
-        "temperature today, the weather tomorrow, the time), is a greeting, thanks or small talk, or asks a fact with a "
-        "one-line answer."
+        "It stands on its own. Everything needed to act on it or answer it is in the message itself: a command "
+        "that names its device, a question about now or about the world, a request that says what it wants, a "
+        "reminder or timer with its time, a greeting, or small talk that opens a new topic."
     ),
 }
 
 
 def quick_turn(time: str, ask: str, answer: str) -> str:
-    """A plain house command answered quickly in a session of its own, told
-    to the main session on its next ask."""
+    """A turn the main session didn't run, told to it on its next ask:
+    one huvu worked itself, or a one-off on basic."""
     said = f'you answered "{answer}"' if answer else "your answer failed"
     return f'(huvu, {time}: between your turns, they said "{ask}", and {said}. Not a request, no reply needed.)'
+
+
+# huvu's own words for an ask it worked without a model (routing.py,
+# `direct`). The person reads or hears them, and the model reads them later
+# among the quick turns.
+DIRECT_DONE = {"on": "Turned on", "off": "Turned off", "start": "Started", "stop": "Stopped"}
+DIRECT_FAILED = "I couldn't do that."
+
+
+def direct_done(name: str, verb: str) -> str:
+    return f"{DIRECT_DONE[verb]}: {name}."
+
+
+def direct_reason(ask: str) -> str:
+    """Why huvu ran the action, in its event log."""
+    return f'they said "{ask}"'
 
 
 def huvu_note(time: str, text: str) -> str:
