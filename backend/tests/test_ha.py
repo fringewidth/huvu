@@ -223,29 +223,23 @@ async def test_an_exposed_light_is_an_action_of_its_own(house):
     actions = {a.name: a for a in house.kernel.registry.spec("ha").actions}
     light = actions["light_hall"]
     assert (light.autonomy, light.requires_human) == ("silent", False)
-    assert light.description == "Hall light (light.hall). Turns the light on or off, and sets its brightness and color when its arguments offer them. Area: Hall. Also called: corridor light."
+    assert light.description == "Hall light. Area: Hall. Also called: corridor light."
     # No color modes known: on and brightness only.
     assert light.input_schema["required"] == ["on"]
     assert set(light.input_schema["properties"]) == {"on", "brightness_pct"}
-    ac = actions["climate_bedroom_ac"]
-    assert ac.autonomy == "notify"
-    assert ac.description.endswith("Nothing reports its state back, so HA only assumes it: say what you sent, not what the device did.")
-    assert await rows(house.kernel, "SELECT entity_id, action, call FROM ha_entities WHERE domain IN ('light', 'sensor') ORDER BY entity_id") == [
-        ["light.hall", "ha_light_hall", "`ha_light_hall(on: boolean, brightness_pct?: integer)`"],
-        ["sensor.bedroom_temperature", None, None],
+    assert actions["climate_bedroom_ac"].autonomy == "notify"
+    assert await rows(house.kernel, "SELECT entity_id, action FROM ha_entities WHERE domain IN ('light', 'sensor') ORDER BY entity_id") == [
+        ["light.hall", "ha_light_hall"],
+        ["sensor.bedroom_temperature", None],
     ]
 
 
-async def test_the_skill_lists_scripts_and_counts_the_devices(house):
-    """One action per device would fill the skill, which is in every
-    request: the model finds them in ha_entities instead."""
+async def test_the_skill_lists_every_script_and_device(house):
+    """Each is one call away, with no search first."""
     spec = house.kernel.registry.spec("ha")
-    devices = [a for a in spec.actions if not a.listed]
     text = prompts.skill(spec)
-    assert "light_hall" in {a.name for a in devices}
-    assert "- `ha_light_hall(" not in text
-    assert all(f"ha_{a.name}" in text for a in spec.actions if a.listed)
-    assert f"And {len(devices)} more, one per device" in text
+    assert "- `ha_light_hall(on: boolean, brightness_pct?: integer)`: Hall light. Area: Hall. Also called: corridor light." in text
+    assert all(f"- `ha_{a.name}(" in text for a in spec.actions)
 
 
 async def test_working_an_entity_calls_its_service_and_records_who(house, ha):

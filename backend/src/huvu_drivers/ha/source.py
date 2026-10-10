@@ -43,7 +43,6 @@ from datetime import datetime
 from typing import Any
 
 from huvu.config import secret
-from huvu import prompts
 from huvu.prompts import HA_GUIDE, TEXT
 from huvu.source import Source, SourceError
 from huvu.spec import Caller, ColumnSpec, Result, SourceSpec, TableSpec
@@ -152,7 +151,6 @@ TABLES = [
                 ("device", "text"),
                 ("aliases", "json"),
                 ("action", "text"),
-                ("call", "text"),
                 ("state", "text"),
                 ("number", "real"),
                 ("attributes", "json"),
@@ -539,7 +537,6 @@ class HomeAssistant(Source):
             "device": self._device.get(entity_id),
             "aliases": self._aliases.get(entity_id) or None,
             "action": self._action_of(entity_id),
-            "call": self._call_of(entity_id),
             "state": state["state"],
             "number": _number(state["state"]),
             "attributes": {k: v for k, v in attributes.items() if k not in NOISE} or None,
@@ -554,10 +551,6 @@ class HomeAssistant(Source):
     def _action_of(self, entity_id: str) -> str | None:
         control = self._control_of(entity_id)
         return None if control is None else f"{self.ctx.name}_{control.action_name}"
-
-    def _call_of(self, entity_id: str) -> str | None:
-        control = self._control_of(entity_id)
-        return None if control is None else prompts.call(self.ctx.name, entities.action(control))
 
     def _publish_scripts(self) -> None:
         self.ctx.replace(
