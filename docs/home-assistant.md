@@ -414,12 +414,13 @@ The home theatre is primitives, all in `packages/home_theatre.yaml` (rebuilt 202
 | Lights | Home Theatre | Tuya Main Switchboard gangs 1 to 3, shown as lights (`switch_as_x`) | `light.home_theatre_strip_lights`, `_night_sky`, `_focus_lights`, and the group `light.home_theatre_focus_and_strip_lights` (alias "all lights"; the night sky is left out on purpose) | the three switches (hidden) |
 | AV unit: the projector (Optoma HD300) and the amplifier | Home Theatre | Tuya AV mains (Main Switchboard gang 4) and the Broadlink's learned codes | the scripts below, and one button per learned code (`button.projector_*`, 18; `button.amplifier_*`, 4) | `script.home_theatre_av_on_steps`, `script.home_theatre_av_off_steps`, `input_select.home_theatre_av` (cooling while the projector cools), `input_select.home_theatre_projector`, `switch.home_theatre_av_mains` (hidden) |
 | AC: a Blue Star, "AC667C" in Alexa | Home Theatre | not in HA's package: it only answers Alexa, which is to be replaced | no | `switch.home_theatre_ac_mains` (AC Switch gang 1, hidden) |
+| Fire TV Stick (Mohun's), with Alexa | Home Theatre | Alexa Devices, `alexa_devices.send_text_command` to its device (`a1a68fc0cd25ae52ee73428443881e53`); on the AV mains | `script.home_theatre_alexa` | |
 | AC Switch gang 2 | Home Theatre | a dummy | no | `switch.home_theatre_ac_board_switch_2` (hidden) |
 | Xiaomi Robot Vacuum-Mop 2 Pro | ground floor | cloud (Xiaomi Miot) | the vacuum | |
 
 ### Scripts exposed to huvu
 
-All in Home Theatre, labelled `huvu_silent`, with no fields.
+All in Home Theatre, labelled `huvu_silent`. Only `home_theatre_alexa` has a field.
 
 | Script | What it does | Checked on |
 |---|---|---|
@@ -430,6 +431,7 @@ All in Home Theatre, labelled `huvu_silent`, with no fields.
 | `home_theatre_projector_on` | The projector's power once. Fails when the AV unit is off, or the projector is on already | not yet run |
 | `home_theatre_projector_off` | The projector's power twice, 3 s apart. Fails when the AV unit is off, or the projector is off already | not yet run |
 | `home_theatre_mute` | Mute on the projector and on the amp, which toggles both. Fails when the AV unit is off | not yet run |
+| `home_theatre_alexa` | Sends `command`, any text the model writes, to the Fire TV's Alexa as if spoken ("open YouTube", "play Dune on Prime Video"). Fails when the AV mains is off. Alexa says nothing back, so a run that ends well only means the command was sent. Added 2026-10-10 in place of v2's `home_theatre_play` | `ha_setup` check passed 2026-10-10; not yet run |
 
 ### Sensors exposed for the dream
 

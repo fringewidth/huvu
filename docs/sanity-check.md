@@ -62,6 +62,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask something long, and close the app while huvu still answers. Open it again. The answer should still be coming in, or be complete.
 1. Close the app with everything finished, and open it again. You should see a greeting, not the old answer. Scroll up, and the earlier questions should be in the history.
 1. Restart the backend while the app is open. Within half a minute, the app should be connected again without you doing anything. Ask something to check.
+1. On the phone, after the host was rebuilt with a change you can see: open the app, switch to another app, then come back. Do it a second time. The change should now show, without installing anything.
 
 ## Talking to huvu by voice (laptop, in Chrome)
 

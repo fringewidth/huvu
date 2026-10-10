@@ -282,3 +282,38 @@ def test_the_web_client_is_served_beside_the_api(tmp_path):
     assert client.get("/").text == "<title>huvu</title>"
     assert client.get("/health").json()["ok"] is True
     assert client.get("/api/me").status_code == 401
+
+
+def test_native_apps_get_their_latest_build(tmp_path):
+    import io
+    import zipfile
+
+    from fastapi.testclient import TestClient
+
+    phone = tmp_path / "bundles" / "phone"
+    (phone / "assets").mkdir(parents=True)
+    (phone / "index.html").write_text("<title>huvu</title>")
+    (phone / "assets" / "app.js").write_text("boot()")
+    (phone / "bundle.json").write_text('{"version": "abc123", "native": 2}')
+    config = Config(data_dir=tmp_path / "data", public_url="http://test", bundles_dir=tmp_path / "bundles")
+    client = TestClient(create_app(config, Kernel(config, hermes=FakeHermes())))
+
+    latest = client.get("/api/app/phone")
+    assert latest.json() == {"version": "abc123", "native": 2}
+    assert latest.headers["cache-control"] == "no-store"
+    built = client.get("/api/app/phone/abc123.zip")
+    assert built.status_code == 200 and "immutable" in built.headers["cache-control"]
+    with zipfile.ZipFile(io.BytesIO(built.content)) as archive:
+        assert sorted(archive.namelist()) == ["assets/app.js", "bundle.json", "index.html"]
+        assert archive.read("index.html") == b"<title>huvu</title>"
+    assert client.get("/api/app/phone/old.zip").status_code == 404
+    assert client.get("/api/app/firetv").status_code == 404
+    assert client.get("/api/app/..").status_code == 404
+
+
+def test_no_builds_without_a_bundles_dir(tmp_path):
+    from fastapi.testclient import TestClient
+
+    config = Config(data_dir=tmp_path / "data", public_url="http://test")
+    client = TestClient(create_app(config, Kernel(config, hermes=FakeHermes())))
+    assert client.get("/api/app/phone").status_code == 404
