@@ -91,13 +91,13 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
   docs/frontend-changes.md       what the frontend still has to do to catch up with the backend
   docs/v0.md                     what is left before the family uses huvu daily: decisions, setup, builds, first tests
   docs/sanity-check.md           the hands-on check of every feature a person touches, written for humans, run before the family gets a build
-  home-assistant/           huvu's Home Assistant custom components, copied into HA's `custom_components/`: bluestar_ac (the Blue Star AC through Blue Star's cloud); tests with `uv run --group dev pytest`
   backend/                  the Python backend: the kernel and the drivers
     src/huvu/               the kernel: sources, tables, triggers, policy, MCP, Hermes, conversations, HTTP; file map in docs/backend-architecture.md
     src/huvu_drivers/       the drivers, one package or module per data source: ha/ (Home Assistant), location.py (OwnTracks)
     tests/                  pytest, with a fake house source, a fake Home Assistant and a scripted Hermes
     huvu.toml.example       config; secrets come from the environment
   hermes-plugin/huvu/       Hermes plugin: session ids on huvu tool calls, the situation block
+  home-assistant/           code that runs inside Home Assistant, copied to its /config/custom_components by hand: alexa_history (Alexa's voice history on demand), bluestar_ac (the Blue Star AC through Blue Star's cloud); tests with `uv run --group dev pytest`
   setup.sh                  sets up Hermes's default profile, or a user and their profile; safe to run again
   Dockerfile, compose.yaml  the host's container (huvu and Hermes), published on the host's port 27613; the image builds the web client from the frontend's sources; .dockerignore keeps docs, local data and the Android project out
   docker/                   the container's s6 service for the backend, its start-up script, and its default huvu.toml

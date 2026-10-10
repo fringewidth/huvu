@@ -1,0 +1,11 @@
+fetch:
+  name: Fetch
+  description: Reads Alexa's voice history now and returns the device's latest record (time, heard, intent, reply).
+  fields:
+    device_id:
+      name: Device
+      description: The Alexa device.
+      required: true
+      selector:
+        device:
+          integration: alexa_devices
