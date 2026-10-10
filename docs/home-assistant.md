@@ -407,7 +407,7 @@ Keep this up to date as you work. It is the record of what HA looks like for huv
 
 ### Devices
 
-The home theatre is primitives, all in `packages/home_theatre.yaml` (rebuilt 2026-10-10): each thing a person asks for is one exposed entity or script, so huvu does it in one call, with nothing to learn about how it works. huvu's skill lists every exposed action, one line each. The projector's and the amplifier's power buttons toggle, so two helpers track them (as last sent, unknown until then), and the scripts press power only when it changes something. The previous package is `/config/home_theatre.v2.yaml.bak` on HA, and the one before it `/config/home_theatre.v1.yaml.bak`.
+The home theatre is primitives, all in `packages/home_theatre.yaml` (rebuilt 2026-10-10): each thing a person asks for is one exposed entity or script, so huvu does it in one call, with nothing to learn about how it works. huvu's skill lists every exposed action, one line each. The projector's and the amplifier's power buttons toggle, so two helpers track them (as last sent, unknown until then), and the scripts press power only when it changes something. The package before `home_theatre_off` was added is `/config/home_theatre.v5.yaml.bak` on HA, the one before `home_theatre_on` was added `/config/home_theatre.v4.yaml.bak`, the one before `home_theatre_alexa` was added `/config/home_theatre.v3.yaml.bak`, the one before the rebuild `/config/home_theatre.v2.yaml.bak`, and the first `/config/home_theatre.v1.yaml.bak`.
 
 | Device | Area | How HA works it | Exposed | Internal |
 |---|---|---|---|---|
@@ -424,6 +424,8 @@ All in Home Theatre, labelled `huvu_silent`, with no fields.
 | Script | What it does | Checked on |
 |---|---|---|
 | `home_theatre_av_on` | Starts the steps and returns: waits out a running off, AV power on (and 10 s for the gear to listen), the amp's power, the projector's power, then 5 s and the amp's volume up 40 presses. Each press only when that part was off | not yet run |
+| `home_theatre_on` | `home_theatre_av_on`, then the strip lights and the focus lights. Returns once the lights are on; the AV unit's steps run on after it. Added 2026-10-10 | `ha_setup` check passed 2026-10-10; not yet run |
+| `home_theatre_off` | The strip lights and the focus lights off, then `home_theatre_av_off`, so the lights don't wait on the projector's 2 minutes of cooling. Returns once the lights are off; the AV unit's steps run on after it. Added 2026-10-10 | `ha_setup` check passed 2026-10-10; not yet run |
 | `home_theatre_av_off` | Starts the steps and returns: stops a running on, the projector's power twice 3 s apart, the amp's power, then the AV power 2 minutes after the projector went off | not yet run |
 | `home_theatre_projector_on` | The projector's power once. Fails when the AV unit is off, or the projector is on already | not yet run |
 | `home_theatre_projector_off` | The projector's power twice, 3 s apart. Fails when the AV unit is off, or the projector is off already | not yet run |
