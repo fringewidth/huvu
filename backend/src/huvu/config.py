@@ -26,7 +26,7 @@
     # the ChatGPT one.
     # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 
-    [router]                 # "turn on <device>" direct, one-offs on basic, the rest on pro (routing.py)
+    [router]                 # one-offs on basic, the rest on pro (routing.py)
     enabled = true           # false runs every ask on pro
     effort = "none"          # the reasoning effort of an ask sent to basic
     escalate_at = 0.30       # Clef-flash's probability that an ask needs context, at which it runs on pro
@@ -54,7 +54,7 @@ path of a Firebase service account's JSON key, turns on native push.
 GROQ_API_KEY turns on speech to text (hearing.py). CLOUDFLARE_ACCOUNT_ID
 and CLOUDFLARE_AI_TOKEN (a token with Workers AI read) let the router ask
 Clef-flash whether an ask needs the conversation so far (routing.py);
-without them every ask but a direct one runs on pro. HUVU_TIMEZONE, which
+without them every ask runs on pro. HUVU_TIMEZONE, which
 setup.sh writes, overrides `timezone`: an IANA name, Asia/Kolkata unless
 told otherwise. Never the server's own zone, which is UTC in the container. Users, devices and each user's
 profile secrets live in the database (see accounts.py), managed with
@@ -156,12 +156,11 @@ class Config:
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
-    # The router (routing.py): "turn on <device>" with no model, one-off
-    # asks on basic, the rest on pro. Off runs every ask on pro.
+    # The router (routing.py): one-off asks on basic, the rest on pro. Off
+    # runs every ask on pro.
     router_enabled: bool = True
     # Clef-flash on Cloudflare Workers AI, which says whether an ask needs
-    # the conversation so far. Without both, every ask but a direct one
-    # runs on pro.
+    # the conversation so far. Without both, every ask runs on pro.
     cloudflare_account_id: str | None = None
     cloudflare_ai_token: str | None = None
     # Clef-flash's probability that an ask needs the conversation so far, at

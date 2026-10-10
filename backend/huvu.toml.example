@@ -63,9 +63,7 @@ pro = "gpt-6-sol"
 advanced = "gpt-6-astra"
 # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 
-# The router: "turn on <device>", "switch off <device>", "start <device>" or
-# "stop <device>", when the device is certain, huvu works itself with no
-# model. Any other ask goes to Clef-flash on Cloudflare Workers AI
+# The router: every ask goes to Clef-flash on Cloudflare Workers AI
 # (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AI_TOKEN), which says whether it
 # needs the conversation so far. A one-off runs on basic without thinking,
 # in a session of its own; otherwise, and without those, it runs on pro.

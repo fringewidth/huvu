@@ -169,10 +169,10 @@ def mode_note(mode: str) -> str:
     return VOICE_NOTE if mode == "voice" else TEXT_NOTE
 
 
-# The router's one question to Clef-flash (routing.py), for every ask that
-# isn't a direct "turn on <device>": does it need the conversation so far?
-# A one-off runs on basic with the ask alone; anything else on pro, in the
-# main session.
+# The router's one question to Clef-flash (routing.py), for every ask: does
+# it need the conversation so far? A one-off runs on basic with the ask
+# alone; anything else on pro, in the main session. Checked on 2026-10-10
+# against 44 asks labelled by hand.
 ESCALATE_QUESTION = (
     "A person said `ask` to their home assistant, partway through a conversation with it. A model that sees only "
     "this message, and nothing said before it, will answer it, unless you escalate it to the model that has the "
@@ -194,26 +194,9 @@ ESCALATE_CRITERIA = {
 
 
 def quick_turn(time: str, ask: str, answer: str) -> str:
-    """A turn the main session didn't run, told to it on its next ask:
-    one huvu worked itself, or a one-off on basic."""
+    """A one-off the main session didn't run, told to it on its next ask."""
     said = f'you answered "{answer}"' if answer else "your answer failed"
     return f'(huvu, {time}: between your turns, they said "{ask}", and {said}. Not a request, no reply needed.)'
-
-
-# huvu's own words for an ask it worked without a model (routing.py,
-# `direct`). The person reads or hears them, and the model reads them later
-# among the quick turns.
-DIRECT_DONE = {"on": "Turned on", "off": "Turned off", "start": "Started", "stop": "Stopped"}
-DIRECT_FAILED = "I couldn't do that."
-
-
-def direct_done(name: str, verb: str) -> str:
-    return f"{DIRECT_DONE[verb]}: {name}."
-
-
-def direct_reason(ask: str) -> str:
-    """Why huvu ran the action, in its event log."""
-    return f'they said "{ask}"'
 
 
 def huvu_note(time: str, text: str) -> str:
