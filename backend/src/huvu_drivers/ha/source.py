@@ -601,9 +601,14 @@ class HomeAssistant(Source):
         if result is not None:
             context_id = (result.get("context") or {}).get("id")
             self._attribution.remember(context_id, Actor("huvu", caller.user, self._attribution.own_user))
+            response = result.get("response")
+            # HA reports no error for a script that stops with one, so a
+            # script fails by stopping with {"error": "..."} as its response.
+            if isinstance(response, dict) and response.get("error"):
+                raise SourceError(f"{script.entity_id}: {response['error']}")
             data = {"status": "done", "script": script.entity_id}
-            if result.get("response"):
-                data["response"] = result["response"]
+            if response:
+                data["response"] = response
         return Result(data=data, labels=["house"])
 
     async def _work(self, control: Control, args: dict[str, Any], caller: Caller) -> Result:

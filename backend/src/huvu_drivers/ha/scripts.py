@@ -11,7 +11,10 @@ What the script says in HA becomes what the model sees:
 1. Its `description` is the action's description, with its area.
 2. Its `fields` become the input schema: each field's selector becomes a
    JSON Schema type (SELECTORS below), its `required` the required list.
-3. Its labels set the policy's autonomy level (LEVELS). A script without a
+3. A response with `error` fails the action with that text: HA reports
+   no error to the caller of a script that stops with one, so a script
+   fails by stopping with {"error": "..."} as its response.
+4. Its labels set the policy's autonomy level (LEVELS). A script without a
    huvu label asks first, so a forgotten label costs a tap, never an
    unasked action.
 
