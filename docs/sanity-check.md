@@ -43,7 +43,8 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask huvu to show you a picture from the web by its address, such as "show me this image: https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg". The picture should show in the answer.
 1. Ask huvu to show you a file that isn't a picture, such as "show me /opt/data/huvu/huvu.toml as an image". No picture should show. huvu should say it couldn't, or the path should stay as plain text.
 1. In a conversation from a day or more ago, ask about something you said early on, such as "what was that recipe we talked about yesterday?". huvu should find it, even if a lot was said since.
-1. Turn the backend off and ask something. The answer should fail and show "try again". Turn the backend on and tap "try again". huvu should answer.
+1. Turn the backend off and ask something. The answer should fail and show "try again". At the top, between "huvu" and the live feeds, "can't reach huvu" should show in red. Turn the backend on and tap "try again". huvu should answer, and the red line should fade away.
+1. With the backend off, close the app and open it again. It should open as usual, with "can't reach huvu" at the top. It should not freeze or close by itself. Turn the backend on. Within half a minute the red line should go, without you doing anything.
 1. Open https://huvu.hrishik.me in a phone's browser (Chrome on Android, Safari on an iPhone). The text field should say "write, or tap the flower", not "hold space to speak". The keyboard should not pop up by itself. There should be a send button, and the keyboard's Enter should make a new line.
 1. Open it on a laptop. The text field should say "write, or hold space to speak", and typing should go straight into it without a click.
 
@@ -74,6 +75,9 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Click the flower, ask something, and talk while huvu speaks. huvu should stop speaking and listen to you again by itself.
 1. Scroll the answer. The flower should shrink and dock at the bottom. Tap it, and it should come back to the middle.
 1. Tap "write". The text field should come back, and the conversation should be the same as before.
+1. On the phone, tap the flower and ask something that makes huvu work for ten seconds or more, such as the weather. Listen to the start of huvu's answer. Its first words should be heard whole, with nothing cut off.
+1. On the phone, turn the backend off and tap the flower. Under it, it should say "huvu isn't answering", and it should stop listening. No question should appear on the stage. Turn the backend on and tap the flower again. It should listen.
+1. Turn the backend off while huvu thinks about a spoken question. The answer should fail and show "try again", and the flower should stop listening. It should not ask again by itself.
 
 ## Notifications
 
@@ -110,6 +114,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Tap "huvu" at the top left. The menu should open with your name, this device's name, your triggers and your devices.
 1. Tap anywhere outside the menu. It should close. On the phone, the back button should also close it.
 1. Under devices, log out the laptop from the phone. On the laptop, the next thing you do should send it back to the login screen.
+1. Turn the backend off, close the app and open it again, then open the menu. Where your name, triggers and devices go, it should say they are unknown until huvu answers. It should never say "None yet". Turn the backend on and open the menu again. Your name and lists should be there.
 
 ## The TV: pairing
 
@@ -145,7 +150,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## What doesn't work yet (don't test)
 
-1. Voice on the phone: it works only while Groq answers. When Groq's rate limit hits, an ask on the phone is lost.
+1. Voice on the phone: it works only while Groq answers. When Groq's rate limit hits, an ask on the phone is lost, and the flower says huvu couldn't hear it.
 1. Asking the TV through Alexa. The skill doesn't exist yet, so nothing appears on the TV unless a feed is picked. For the same reason, an approval for the whole household (asked at the TV with nobody recognized) can't be tested yet.
 1. Live camera feeds. The list may appear, but no feed can play yet.
 1. The doorbell. It waits for the Tuya driver.

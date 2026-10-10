@@ -1,13 +1,15 @@
-import { call, getJson } from "../net/http";
+import { call, getJson, HttpError } from "../net/http";
 import { acquireMic, micTrouble, type Mic } from "./mic";
 
 // Speech to text for voice mode. When the backend can hear (Groq's
 // Whisper behind POST /api/transcribe, see GET /api/speech), the ask is
 // recorded here and sent there once it ends. Otherwise it falls back to
-// the browser's Web Speech API where it exists (desktop Chrome), and to a
-// mock that "hears" one of a few fixed phrases where it doesn't (the
-// Android WebView). No words show while you speak: only the final text,
-// once the ask is over.
+// the browser's Web Speech API where it exists (desktop Chrome). Where it
+// doesn't (the Android WebView), a dev build has a mock that "hears" one
+// of a few fixed phrases, and any other build says it can't hear. While
+// the backend doesn't answer, nothing listens: an ask couldn't be sent
+// anyway. No words show while you speak: only the final text, once the
+// ask is over.
 export interface ListenOptions {
   // true: keep listening until stop() (push-to-talk). false: the
   // utterance ends by itself on a pause (hands-free).
@@ -16,8 +18,9 @@ export interface ListenOptions {
   onSpeech: () => void;
   // Fires once per utterance with what was heard, possibly empty.
   onEnd: (text: string) => void;
-  // Fires instead of onEnd when there is no listening at all (the mic
-  // can't be opened), with why, in words for the user.
+  // Fires instead of onEnd when the ask can't be heard at all (the mic
+  // can't be opened, huvu isn't answering), with why, in words for the
+  // user.
   onFail: (reason: string) => void;
 }
 
@@ -47,7 +50,7 @@ type RecognitionCtor = new () => RecognitionLike;
 export function createTranscriber(): Transcriber {
   const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
   const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-  const fallback = Ctor ? webSpeechTranscriber(Ctor) : mockTranscriber();
+  const fallback = Ctor ? webSpeechTranscriber(Ctor) : import.meta.env.DEV ? mockTranscriber() : null;
   // On the web, the browser listens alongside the recording, and its
   // words stand in if Groq can't hear the clip.
   const backend = backendTranscriber(Ctor ? webSpeechTranscriber(Ctor) : null);
@@ -64,7 +67,10 @@ export function createTranscriber(): Transcriber {
       stopEarly = false;
       void canHear().then((hears) => {
         if (n !== latest) return;
-        active = hears ? backend : fallback;
+        if (hears === "down") return opts.onFail(DOWN);
+        const picked = hears === "yes" ? backend : fallback;
+        if (!picked) return opts.onFail("huvu can't hear on this device");
+        active = picked;
         active.start(opts);
         if (stopEarly) active.stop();
       });
@@ -81,15 +87,19 @@ export function createTranscriber(): Transcriber {
   };
 }
 
-// Whether the backend can hear, asked once. A failed ask is asked again
+// The hint under the flower while the backend doesn't answer.
+const DOWN = "huvu isn't answering";
+
+// Whether the backend can hear: "no" when it answered without a Groq key,
+// "down" when it didn't answer. Asked once; a failed ask is asked again
 // next time.
-let hearing: Promise<boolean> | null = null;
-function canHear(): Promise<boolean> {
+let hearing: Promise<"yes" | "no" | "down"> | null = null;
+function canHear(): Promise<"yes" | "no" | "down"> {
   hearing ??= getJson<{ listen: boolean }>("/api/speech")
-    .then((s) => s.listen)
+    .then((s) => (s.listen ? ("yes" as const) : ("no" as const)))
     .catch(() => {
       hearing = null;
-      return false;
+      return "down" as const;
     });
   return hearing;
 }
@@ -123,7 +133,8 @@ function recordingType(): string {
 // its text is used when the backend can't hear the clip (Groq's rate
 // limit, a network error). Its words never show while you speak: Chrome
 // often gets them wrong, and Whisper's fix of them distracted. The phone has
-// no shadow, so there a failed clip is lost and the ask ends empty.
+// no shadow, so there a failed clip ends the listen, and the hint under
+// the flower says why.
 function backendTranscriber(shadow: Transcriber | null): Transcriber {
   interface Session {
     dropped: boolean;
@@ -132,6 +143,8 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
     recorder: MediaRecorder | null;
     raf: number;
     shadowHeard?: Promise<string>;
+    // Why the backend couldn't hear the clip.
+    trouble?: string;
   }
   let session: Session | null = null;
 
@@ -146,14 +159,14 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
     shadow?.start({ hold: true, onSpeech: () => {}, onEnd: shadowText, onFail: () => shadowText("") });
     if (!shadow) shadowText("");
     acquireMic()
-      .then((mic) => record(own, mic, hold, onSpeech, onEnd))
+      .then((mic) => record(own, mic, hold, onSpeech, onEnd, onFail))
       .catch((err) => {
         console.error("transcriber: no mic", err);
         if (!own.dropped) onFail(micTrouble(err));
       });
   }
 
-  function record(own: Session, mic: Mic, hold: boolean, onSpeech: () => void, onEnd: (text: string) => void): void {
+  function record(own: Session, mic: Mic, hold: boolean, onSpeech: () => void, onEnd: (text: string) => void, onFail: (reason: string) => void): void {
     if (own.dropped) return mic.release();
     const type = recordingType();
     const recorder = new MediaRecorder(mic.stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: BITRATE });
@@ -177,11 +190,15 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
       }
       shadow?.stop();
       const clip = new Blob(chunks, { type: recorder.mimeType });
-      const heardAll = early ? early.then((heard) => heard ?? send(clip)) : send(clip);
+      const heardAll = early ? early.then((heard) => heard ?? send(own, clip)) : send(own, clip);
       void heardAll.then(async (heard) => {
         if (own.dropped) return;
         const text = heard ?? (await own.shadowHeard) ?? "";
-        if (!own.dropped) onEnd(text);
+        if (own.dropped) return;
+        // Neither Whisper nor the browser heard it. That isn't silence,
+        // so hands-free shouldn't listen again as if it were.
+        if (heard === null && !text) return onFail(own.trouble ?? DOWN);
+        onEnd(text);
       });
     };
     recorder.start(250);
@@ -201,7 +218,7 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
         quietSince ||= now;
         // The recorder hands over a chunk every 250ms, so the clip so far
         // holds all the speech and a little of the quiet after it.
-        if (!early && now - quietSince > EARLY_MS) early = send(new Blob(chunks, { type: recorder.mimeType }));
+        if (!early && now - quietSince > EARLY_MS) early = send(own, new Blob(chunks, { type: recorder.mimeType }));
         if (now - quietSince > PAUSE_MS) return recorder.stop();
       }
       if (!own.heard && !hold && now - began > NOTHING_MS) return recorder.stop();
@@ -210,13 +227,15 @@ function backendTranscriber(shadow: Transcriber | null): Transcriber {
     watch();
   }
 
-  // Whisper's text, or null when the backend couldn't hear the clip.
-  async function send(clip: Blob): Promise<string | null> {
+  // Whisper's text, or null when the backend couldn't hear the clip; then
+  // the session keeps why.
+  async function send(own: Session, clip: Blob): Promise<string | null> {
     try {
       const res = await call("/api/transcribe", { method: "POST", body: clip, headers: { "Content-Type": clip.type || "audio/webm" } });
       return ((await res.json()) as { text: string }).text.trim();
     } catch (err) {
       console.warn("transcriber: the backend couldn't hear it", err);
+      own.trouble = err instanceof HttpError ? "huvu couldn't hear that" : DOWN;
       return null;
     }
   }

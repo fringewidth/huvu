@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { SHARED } from "../config/interaction";
-import { call, getJson, postJson } from "../net/http";
+import { call, errorText, getJson, postJson } from "../net/http";
 import type { DeviceInfo, Person } from "./session";
 
 // What the menu under the wordmark lists: the user's triggers, their
@@ -25,13 +25,18 @@ export interface Trigger {
   expires_at: string | null;
 }
 
+// A list is null until it first loads: huvu hasn't said, so nothing can
+// be said about it. A failed load keeps the last list, and says why.
 interface HouseholdState {
-  triggers: Trigger[];
-  devices: DeviceInfo[];
+  triggers: Trigger[] | null;
+  devices: DeviceInfo[] | null;
   people: Person[];
+  trouble: string | null;
 }
 
-let state: HouseholdState = { triggers: [], devices: [], people: [] };
+const EMPTY: HouseholdState = { triggers: null, devices: null, people: [], trouble: null };
+
+let state: HouseholdState = EMPTY;
 const listeners = new Set<() => void>();
 
 function set(change: Partial<HouseholdState>): void {
@@ -41,36 +46,38 @@ function set(change: Partial<HouseholdState>): void {
 
 export async function refreshTriggers(): Promise<void> {
   try {
-    set({ triggers: await getJson<Trigger[]>("/api/triggers") });
+    set({ triggers: await getJson<Trigger[]>("/api/triggers"), trouble: null });
   } catch (err) {
     console.error("household: could not load the triggers", err);
+    set({ trouble: errorText(err) });
   }
 }
 
 export async function setPaused(id: string, paused: boolean): Promise<void> {
   const trigger = await postJson<Trigger>(`/api/triggers/${id}/${paused ? "pause" : "resume"}`);
-  set({ triggers: state.triggers.map((t) => (t.id === id ? trigger : t)) });
+  set({ triggers: state.triggers?.map((t) => (t.id === id ? trigger : t)) ?? null });
 }
 
 // Says yes to an advanced trigger. On the person's own device the tap is
 // the yes, and the trigger comes back live.
 export async function allow(id: string): Promise<void> {
   const trigger = await postJson<Trigger>(`/api/triggers/${id}/approve`);
-  set({ triggers: state.triggers.map((t) => (t.id === id ? trigger : t)) });
+  set({ triggers: state.triggers?.map((t) => (t.id === id ? trigger : t)) ?? null });
 }
 
 export async function refreshDevices(): Promise<void> {
   try {
-    set({ devices: await getJson<DeviceInfo[]>("/api/devices") });
+    set({ devices: await getJson<DeviceInfo[]>("/api/devices"), trouble: null });
   } catch (err) {
     console.error("household: could not load the devices", err);
+    set({ trouble: errorText(err) });
   }
 }
 
 // Logs another device out. This device logs out through the session.
 export async function revoke(id: string): Promise<void> {
   await call(`/api/devices/${id}`, { method: "DELETE" });
-  set({ devices: state.devices.filter((d) => d.id !== id) });
+  set({ devices: state.devices?.filter((d) => d.id !== id) ?? null });
 }
 
 export async function refreshPeople(): Promise<void> {
@@ -96,7 +103,7 @@ export function refresh(): Promise<void> {
 }
 
 export function reset(): void {
-  set({ triggers: [], devices: [], people: [] });
+  set(EMPTY);
 }
 
 function subscribe(listener: () => void): () => void {

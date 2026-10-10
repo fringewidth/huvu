@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { allow, confirmPairing, refreshDevices, refreshTriggers, revoke, setPaused, useHousehold, type Trigger } from "../account/household";
-import { canPair, errorText, logOut, useSession } from "../account/session";
+import { canPair, errorText, logOut, useReach, useSession } from "../account/session";
+import { UNREACHABLE } from "../net/http";
 import { release, useWaiting } from "../account/waiting";
 import { capsClass } from "../stage/style";
 import type { MenuSection } from "./Menu";
@@ -40,8 +41,16 @@ function Section({ id, title, children }: { id?: string; title: string; children
   );
 }
 
+// Stands in for what huvu hasn't said yet: why, once loading failed. The
+// stage already says huvu can't be reached, so here that is short.
+function Unknown({ trouble }: { trouble: string | null }) {
+  const text = trouble === UNREACHABLE ? "Unknown until huvu answers." : (trouble ?? "A moment.");
+  return <p className="m-0 font-bodoni text-[19px] italic text-ivory/45">{text}</p>;
+}
+
 function You() {
   const { me } = useSession();
+  const reach = useReach();
   const { places } = useWaiting();
   const [error, setError] = useState<string | null>(null);
   const leave = async (deviceId: string) => {
@@ -55,7 +64,11 @@ function You() {
   return (
     <Section title="you">
       <div className="flex items-baseline gap-3">
-        <span className="font-bodoni text-[24px] italic leading-[1.1] text-ivory">{me?.user?.name ?? "you"}</span>
+        {me ? (
+          <span className="font-bodoni text-[24px] italic leading-[1.1] text-ivory">{me.user?.name ?? "you"}</span>
+        ) : (
+          <Unknown trouble={reach === "down" ? UNREACHABLE : null} />
+        )}
         {me && <span className={`${capsClass} text-ivory/45`}>on {me.device.name}</span>}
         <button type="button" onClick={() => void logOut()} className={`${buttonClass} ml-auto text-ivory/60 hover:text-ivory`}>
           log out
@@ -78,11 +91,12 @@ function You() {
 }
 
 function Triggers() {
-  const { triggers } = useHousehold();
+  const { triggers, trouble } = useHousehold();
   return (
-    <Section id="menu-triggers" title={`triggers / ${triggers.length}`}>
-      {triggers.length === 0 && <p className="m-0 font-bodoni text-[19px] italic text-ivory/45">None yet. Ask huvu to keep an eye on something.</p>}
-      {triggers.map((t) => (
+    <Section id="menu-triggers" title={triggers ? `triggers / ${triggers.length}` : "triggers"}>
+      {!triggers && <Unknown trouble={trouble} />}
+      {triggers?.length === 0 && <p className="m-0 font-bodoni text-[19px] italic text-ivory/45">None yet. Ask huvu to keep an eye on something.</p>}
+      {triggers?.map((t) => (
         <TriggerRow key={t.id} trigger={t} />
       ))}
     </Section>
@@ -135,7 +149,7 @@ function describe(t: Trigger): string {
 
 function Devices() {
   const { me } = useSession();
-  const { devices } = useHousehold();
+  const { devices, trouble } = useHousehold();
   const [error, setError] = useState<string | null>(null);
   const drop = async (id: string) => {
     setError(null);
@@ -147,7 +161,8 @@ function Devices() {
   };
   return (
     <Section title="devices">
-      {devices.map((d) => {
+      {!devices && <Unknown trouble={trouble} />}
+      {devices?.map((d) => {
         const mine = d.id === me?.device.id;
         return (
           <div key={d.id} className="flex items-baseline gap-3">

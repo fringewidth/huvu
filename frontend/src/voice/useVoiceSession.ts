@@ -34,10 +34,19 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   // means huvu is still working: its first sentence isn't ready, or it runs
   // its tools after saying it's on it.
   const [audible, setAudible] = useState(false);
-  // Why the last listen couldn't hear at all (no mic, or not allowed), for
-  // the hint under the flower. Cleared by the next listen.
-  const [micProblem, setMicProblem] = useState<string | null>(null);
+  // Why the last listen couldn't hear at all (no mic, not allowed, huvu
+  // isn't answering), for the hint under the flower. Cleared by the next
+  // listen.
+  const [trouble, setTrouble] = useState<string | null>(null);
   const handsFree = useRef(false);
+  // Hands-free holds the mic from the flower's tap until it stops
+  // listening for good. Android opens the mic in call mode, and going into
+  // it or out of it moves the speaker's output, which drops the first
+  // seconds of whatever plays. The mic used to close 8s after an ask and
+  // open again for barge-in as huvu's first sentence started, so that
+  // sentence lost its start. Held for the whole session, the mode never
+  // changes while huvu talks.
+  const held = useRef<Promise<Mic | null> | null>(null);
   const silentRounds = useRef(0);
   // Where the sent utterance's reply stands. "sent" until its turn shows
   // up running: before that, the last answer is still the previous turn's
@@ -57,7 +66,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     const n = ++listens.current;
     setTranscript("");
     setHeard(false);
-    setMicProblem(null);
+    setTrouble(null);
     setPhase("listening");
     transcriber.start({
       hold,
@@ -67,8 +76,8 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
         if (n !== listens.current) return;
         setHeard(false);
         setTranscript("");
-        setMicProblem(reason);
-        setPhase("idle");
+        setTrouble(reason);
+        rest();
       },
       onEnd: (text) => {
         setHeard(false);
@@ -91,9 +100,27 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
         setTranscript("");
         silentRounds.current++;
         if (handsFree.current && silentRounds.current < MAX_SILENT_ROUNDS) listen(false);
-        else setPhase("idle");
+        else rest();
       },
     });
+  }
+
+  function holdMic(): void {
+    held.current ??= acquireMic().catch(() => null);
+  }
+
+  function letGoMic(): void {
+    const holding = held.current;
+    held.current = null;
+    void holding?.then((mic) => mic?.release());
+  }
+
+  // Hands-free is over: the room stayed quiet, or a listen or a turn
+  // failed. The next tap starts it again.
+  function rest(): void {
+    handsFree.current = false;
+    letGoMic();
+    setPhase("idle");
   }
 
   function afterSpeech(): void {
@@ -122,6 +149,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   function begin(): void {
     warm();
     interrupt();
+    holdMic();
     handsFree.current = true;
     silentRounds.current = 0;
     listen(false);
@@ -134,6 +162,7 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     warm();
     if (cutOff) interrupt();
     handsFree.current = false;
+    letGoMic();
     listen(true);
   }
 
@@ -150,8 +179,9 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
   }
 
   function exit(): void {
-    setMicProblem(null);
+    setTrouble(null);
     handsFree.current = false;
+    letGoMic();
     awaiting.current = "none";
     listens.current++;
     transcriber.abort();
@@ -181,10 +211,13 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
         .finally(() => onSpoke(id));
       return;
     }
-    // The run ended with nothing said (backend down, cancelled).
+    // The run ended with nothing said. A failed one stops hands-free: the
+    // next ask would most likely fail the same way, and the stage says it
+    // failed. A cancelled one listens again.
     if (!running) {
       awaiting.current = "none";
-      afterSpeech();
+      if (turn?.ending === "failed") rest();
+      else afterSpeech();
     }
   });
 
@@ -240,9 +273,10 @@ export function useVoiceSession(onUtterance: (text: string) => void) {
     () => () => {
       transcriber.abort();
       stopSpeaking();
+      letGoMic();
     },
     [transcriber],
   );
 
-  return { phase, audible, micProblem, transcript, heard, level, begin, hold, interrupt, dropHold, release, exit };
+  return { phase, audible, trouble, transcript, heard, level, begin, hold, interrupt, dropHold, release, exit };
 }

@@ -5,6 +5,7 @@ import * as m from "motion/react-m";
 import { AnimatePresence, LayoutGroup } from "motion/react";
 import { growForWords } from "../canvas/host";
 import { onOpens } from "../account/nativePush";
+import { useReach } from "../account/session";
 import { useWaiting } from "../account/waiting";
 import { refreshFeeds, type Feed } from "../chat/feeds";
 import * as thread from "../chat/thread";
@@ -486,7 +487,7 @@ export function Stage() {
   // heard once a sentence plays. Until then, and in any quiet while it
   // runs its tools, it is still at work, and the flower says so.
   const phase: VoicePhase = voice.phase === "speaking" && !voice.audible ? "thinking" : voice.phase;
-  const hint = voice.micProblem ?? (phase === "idle" ? ui.idleHint : PHASE_HINT[phase]);
+  const hint = voice.trouble ?? (phase === "idle" ? ui.idleHint : PHASE_HINT[phase]);
   // Browsing history in voice mode puts the flower away: it shrinks and
   // fades where it is, and the list takes the whole height. Opening a turn
   // (or scrolling back down) brings it back.
@@ -570,6 +571,8 @@ export function Stage() {
       {ui.hasInput ? <Menu open={menu} onToggle={menuActions.toggle} onClose={menuActions.close} /> : <TvWordmark />}
 
       <Feeds open={feedsOpen} onToggle={feedsActions.toggle} onPick={feedsActions.pick} listRef={feedsRef} />
+
+      <OutOfReach />
 
       <m.div
         aria-live="polite"
@@ -659,6 +662,30 @@ export function Stage() {
         </m.div>
       )}
     </div>
+  );
+}
+
+// Says so while huvu can't be reached, between the wordmark and the
+// feeds. What was asked meanwhile says it failed in its own turn.
+function OutOfReach() {
+  const reach = useReach();
+  return (
+    <AnimatePresence initial={false}>
+      {reach === "down" && (
+        <m.span
+          role="status"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.6, ease: EASE }}
+          className={`${capsClass} halo pointer-events-none absolute inset-x-0 z-20 flex justify-center text-sindoor ${
+            TV ? "top-7 sm:top-10" : "top-3.5 min-h-11 items-center sm:top-[26px]"
+          }`}
+        >
+          can't reach huvu
+        </m.span>
+      )}
+    </AnimatePresence>
   );
 }
 

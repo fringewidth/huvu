@@ -1,6 +1,6 @@
 import * as thread from "../chat/thread";
 import { TURN_EVENTS, type TurnEventData } from "../chat/backend";
-import { call, HttpError, sse } from "../net/http";
+import { call, HttpError, onReach, sse } from "../net/http";
 import * as household from "./household";
 import * as waiting from "./waiting";
 
@@ -23,12 +23,18 @@ let attempt: AbortController | null = null;
 let wake: (() => void) | null = null;
 // The next try comes at once, with the backoff started over.
 let again = false;
+let offReach: (() => void) | null = null;
 
 export function startPush(): void {
   if (run) return;
   const abort = new AbortController();
   run = abort;
   document.addEventListener("visibilitychange", onVisible);
+  // Another call got through while the stream waits to try again: the
+  // backend is back, so the stream need not wait out its backoff.
+  offReach = onReach((reach) => {
+    if (reach === "up") wake?.();
+  });
   // What waits shows as soon as the app is up, not once the stream is.
   void catchUp();
   void loop(abort.signal);
@@ -38,6 +44,8 @@ export function stopPush(): void {
   run?.abort();
   run = null;
   wake?.();
+  offReach?.();
+  offReach = null;
   document.removeEventListener("visibilitychange", onVisible);
 }
 
