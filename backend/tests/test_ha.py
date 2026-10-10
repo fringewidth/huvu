@@ -242,6 +242,12 @@ async def test_the_skill_lists_every_script_and_device(house):
     assert all(f"- `ha_{a.name}(" in text for a in spec.actions)
 
 
+async def test_a_script_fails_with_the_error_in_its_response(house, ha):
+    ha.responses["bedroom_ac_set"] = {"error": "The AC is unplugged."}
+    with pytest.raises(SourceError, match="script.bedroom_ac_set: The AC is unplugged."):
+        await house.source.act("bedroom_ac_set", {"mode": "cool"}, MOM)
+
+
 async def test_working_an_entity_calls_its_service_and_records_who(house, ha):
     kernel = house.kernel
     done = await kernel.tools.call("act", {"name": "ha_light_hall", "args": {"on": True, "brightness_pct": 40}}, MOM)

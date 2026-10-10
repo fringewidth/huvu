@@ -180,6 +180,7 @@ Every way huvu may change the house is one script.
 1. **Mode `queued`** (`max: 5`). In the default `single` mode, a second call while the first runs is dropped, and huvu would report success for a call that did nothing.
 1. **Short.** huvu waits up to 120 s for a script to finish. A longer job (a mop run) should start the work and return.
 1. **Return what happened**, when it helps the model: end with `stop` and `response_variable`. huvu passes the response back to the model.
+1. **Fail with a reason** by stopping with a response that has `error`: set `failure: {error: "The AV unit is off."}` in `variables`, then `stop` with `response_variable: failure`. huvu fails the action with that text. `stop` with `error: true` doesn't work: HA marks the run aborted and still tells the caller it succeeded.
 1. **Fixed targets.** The script names its device itself. Don't give a field an `entity`, `area`, `device` or `target` selector; the model would be picking any entity in the house. Use a `select` of fixed options when a script covers a few devices.
 
 ### Descriptions
