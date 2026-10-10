@@ -18,7 +18,14 @@ older ones with data_sql, from `chat_turns`.
 
 Every turn that ends becomes a `chat_turns` row (builtin/chat.py), with
 its cache reads (`usage`), so the window can be checked against the
-provider.
+provider, and its route.
+
+The router (routing.py) picks each ask's tier before its turn starts. A
+model, a provider and an effort each have their own prompt cache, so an ask
+on another route than its session's starts a fresh session too, the same
+way a cold one does. Routes only escalate: a session on basic moves to pro
+when an ask needs it, and a session on pro stays there until it goes cold
+or is rewound, without asking the router.
 
 Edit and retry rewind: the turn and everything after it are replaced.
 Hermes's API can fork a session but can't cut one short, so a rewind always
@@ -48,6 +55,7 @@ from pydantic import BaseModel
 from . import prompts
 from .db import dumps, from_iso, iso, loads
 from .hermes import HermesError, HermesEvent, Profile
+from .routing import Route
 from .source import SourceError
 from .spec import Caller
 
@@ -141,6 +149,8 @@ class Turn:
 class LiveTurn:
     turn: Turn
     profile: Profile
+    # The tier it runs on, and why (routing.py).
+    route: Route
     # Whose turn it is in chat_turns: the device's user, or whoever is
     # recognized at a shared device.
     user: str | None = None
@@ -237,11 +247,22 @@ class ConversationHub:
             session = None
         elif session is not None and self._cold(session):
             session = None
+        on = self._kernel.sessions.route(session) if session else None
+        staying = self._kernel.router.stay_on_pro()
+        if on == staying.key:
+            # Only escalations: a session on pro stays there, so the router
+            # isn't asked.
+            route = staying
+        else:
+            route = self._kernel.router.route(text)
+        if session is not None and on != route.key:
+            session = None
         if session is None:
-            # A rewind, a cold cache, or a session the retention sweep
-            # deleted: a fresh session carries the conversation so far.
+            # A rewind, a cold cache, another route, or a session the
+            # retention sweep deleted: a fresh session carries the
+            # conversation so far.
             message = _seeded(kept, message, tz, conversation_id)
-            session = await self._new_session(conversation_id, user, group, profile)
+            session = await self._new_session(conversation_id, user, group, profile, route.key)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
             conversation_id=conversation_id,
@@ -253,7 +274,7 @@ class ConversationHub:
             replaces=replaces,
         )
         self._save(turn, insert=True)
-        live = LiveTurn(turn, profile, user=user or self._kernel.attendance.holder(conversation_id), group=group)
+        live = LiveTurn(turn, profile, route, user=user or self._kernel.attendance.holder(conversation_id), group=group)
         self._live[turn.id] = live
         self._emit(live, "turn.started", {"ask": text, "at": turn.at})
         live.task = asyncio.create_task(self._relay(live, message), name=f"turn:{turn.id}")
@@ -271,11 +292,11 @@ class ConversationHub:
             raise PermissionError(f"conversation {conversation_id} belongs to someone else")
         return row
 
-    async def _new_session(self, conversation_id: str, user: str | None, group: str | None, profile: Profile) -> str:
+    async def _new_session(self, conversation_id: str, user: str | None, group: str | None, profile: Profile, route: str) -> str:
         session = f"huvu-{conversation_id}-{secrets.token_hex(3)}"
         title = f"huvu chat on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}"
         await self._kernel.hermes.create_session(profile, session, title=title)
-        self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id)
+        self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id, route=route)
         self._db.execute("UPDATE conversations SET hermes_session = ? WHERE id = ?", (session, conversation_id))
         return session
 
@@ -394,9 +415,14 @@ class ConversationHub:
     async def _relay(self, live: LiveTurn, message: str) -> None:
         ending: Ending = "failed"
         try:
-            choice = self._kernel.config.model("pro")
+            route = live.route
             async for event in self._kernel.hermes.chat(
-                live.profile, live.turn.hermes_session or "", message, model=choice.model, provider=choice.provider
+                live.profile,
+                live.turn.hermes_session or "",
+                message,
+                model=route.choice.model,
+                provider=route.choice.provider,
+                effort=route.effort,
             ):
                 ending = self._translate(live, event, ending)
         except asyncio.CancelledError:
@@ -596,6 +622,7 @@ class ConversationHub:
             "actions": [{"text": a.text, "at": a.at.isoformat()} for a in turn.actions] or None,
             "replaces": turn.replaces,
             "usage": live.usage,
+            "route": live.route.row(),
         }
         self._kernel.data.record("chat", "turns", row, at=turn.at, user=live.user, group=None if live.user else live.group)
 

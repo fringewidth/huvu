@@ -52,8 +52,9 @@ url = "http://localhost:8642"
 # driver = "huvu_drivers.location:LocationSource"
 # options = { home = { lat = 17.385, lon = 78.4867, radius_m = 150 }, near_home_km = 3, group = "home" }
 
-# The model behind each tier. Conversations run on pro; a trigger's wakes on
-# its own tier, basic by default; advanced needs the person's yes.
+# The model behind each tier. An ask runs on the tier the router picks, pro
+# when it can't; a trigger's wakes on its own tier, basic by default;
+# advanced needs the person's yes.
 # A model alone runs on the profile's own login; a table names the Hermes
 # provider too (anthropic is the Claude login, openai-codex the ChatGPT one).
 [models]
@@ -61,6 +62,14 @@ basic = "gpt-6-luna"
 pro = "gpt-6-sol"
 advanced = "gpt-6-astra"
 # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
+
+# The router: an ask that is plain house control (every word one it knows:
+# the house's names, a few verbs, settings) runs on basic without thinking,
+# and every other ask on pro. Routes only escalate: a session on pro stays
+# there until it goes cold.
+[router]
+enabled = true     # false runs every ask on pro
+effort = "none"    # the reasoning effort of an ask sent to basic
 
 # Each person's nightly dream, ending with a brief of notes to them.
 [dream]

@@ -73,12 +73,22 @@ class HermesClient:
         return session_id
 
     async def chat(
-        self, profile: Profile, session_id: str, message: str, *, model: str | None = None, provider: str | None = None
+        self,
+        profile: Profile,
+        session_id: str,
+        message: str,
+        *,
+        model: str | None = None,
+        provider: str | None = None,
+        effort: str | None = None,
     ) -> AsyncIterator[HermesEvent]:
         """Runs one turn and yields its events as they arrive. `model`, and
-        `provider` with it, override the profile's for this run only."""
+        `provider` with it, override the profile's for this run only, and
+        so does `effort`, the reasoning effort ("none" turns it off)."""
         path = f"{profile.prefix}/api/sessions/{session_id}/chat/stream"
         body: dict[str, Any] = {"message": message, **({"model": model} if model else {}), **({"provider": provider} if provider else {})}
+        if effort:
+            body["model_options"] = {"reasoning_effort": effort}
         async with self._http.stream("POST", path, json=body, headers=profile.headers) as res:
             if res.status_code != 200:
                 body = (await res.aread()).decode(errors="replace")

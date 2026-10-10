@@ -29,6 +29,7 @@ from .db import connect, from_iso, iso
 from .dream import Dreams
 from .hearing import Hearing
 from .hermes import HermesClient
+from .routing import Router
 from .media import MediaStore
 from .native_push import FcmClient, NativePush
 from .policy import Policy
@@ -91,6 +92,7 @@ class Kernel:
         self.media = MediaStore(self)
         self.voice = Voice(config)
         self.hearing = Hearing(self)
+        self.router = Router(self)
         self.dreams = Dreams(self)
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None

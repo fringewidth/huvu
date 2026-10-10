@@ -14,6 +14,10 @@ basic = "gpt-6-luna"
 pro = "gpt-6-sol"
 advanced = "gpt-6-astra"
 
+[router]
+enabled = true
+effort = "none"
+
 [dream]
 at = "04:00"
 tier = "pro"

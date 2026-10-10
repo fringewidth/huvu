@@ -349,6 +349,7 @@ TEXT: dict[str, str] = {
     'chat.table.turns.column.ending': 'stopped or failed; NULL when it finished',
     'chat.table.turns.column.n': 'Its number in its conversation, from 1',
     'chat.table.turns.column.replaces': 'The turn an edit replaced, if this turn came from one',
+    'chat.table.turns.column.route': "Which tier answered and why: {tier, model, effort, why}. why is control (plain house control, on basic), other (on pro), kept (the session was on pro already) or off (the router is off)",
     'chat.table.turns.column.them': 'What the person asked',
     'chat.table.turns.column.turn_id': 'The turn',
     'chat.table.turns.column.usage': "The model's token counts for the turn, cache reads included",

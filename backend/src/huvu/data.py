@@ -283,6 +283,15 @@ class DataStore:
             self._own[source] = conn
         return conn
 
+    def live_rows(self, source: str, table: str) -> list[dict[str, Any]]:
+        """A live table's rows now, for the kernel's own code. None while
+        its source can't vouch for it."""
+        state = self._live.get(f"{source}_{table}")
+        if state is None:
+            return []
+        unavailable, snapshot = state.published
+        return [] if unavailable is not None else list(snapshot)
+
     def rows(self, source: str, table: str, where: str, args: Sequence[Any], *, order: str = "ts", limit: int | None = None) -> list[dict[str, Any]]:
         """History rows, for the kernel's own code and tests. `where` and
         `order` are SQL the kernel writes; a source reads through

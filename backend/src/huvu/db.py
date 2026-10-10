@@ -208,9 +208,16 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
     created_at TEXT NOT NULL,
     -- When a turn in it last ended: the prompt cache's clock, and the
     -- retention sweep's.
-    last_used_at TEXT
+    last_used_at TEXT,
+    -- A chat session's model, provider and effort (Route.key in
+    -- routing.py), which its prompt cache depends on.
+    route TEXT
 );
 """
+
+# Columns added to a table after it was first made, which CREATE TABLE IF
+# NOT EXISTS doesn't add to an older database.
+ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT")]
 
 
 # How long a statement waits for a lock another connection holds, in ms,
@@ -262,6 +269,9 @@ def connect(path: Path | str) -> apsw.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute(SCHEMA)
+    for table, column, kind in ADDED_COLUMNS:
+        if column not in {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')}:
+            conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {kind}')
     return conn
 
 
