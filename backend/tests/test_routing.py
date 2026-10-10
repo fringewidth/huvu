@@ -7,80 +7,10 @@ import time
 import httpx
 import pytest
 
-from huvu.config import Config
 from huvu.hermes import HermesClient, Profile
-from huvu.kernel import Kernel
-from huvu.routing import Switchable, direct, words
 from huvu.spec import Caller
-from huvu_drivers.ha import source as ha_source
-from huvu_drivers.ha.source import HomeAssistant
 
-from .fake_ha import FakeHA
 from .fakes import FakeHermes
-
-
-def switchable(tool: str, *phrases: str, verbs: str = "on off") -> Switchable:
-    return Switchable(tool, phrases[0], tuple(" ".join(words(p)) for p in phrases), frozenset(verbs.split()))
-
-
-# Shaped like the home theatre: the names, aliases, and the area or device
-# before or off each name, as the router reads them.
-HOUSE = [
-    switchable("ha_light_night_sky", "Night sky", "home theatre night sky", "main switchboard night sky"),
-    switchable("ha_light_strip_lights", "Strip lights", "home theatre strip lights", "main switchboard strip lights"),
-    switchable("ha_light_focus_lights", "Focus lights", "home theatre focus lights", "main switchboard focus lights"),
-    switchable("ha_light_focus_and_strip", "Focus and strip lights", "all lights", "home theatre focus and strip lights"),
-    switchable("ha_switch_hrishik_dnd", "Hrishik Room Do not disturb", "do not disturb"),
-    switchable("ha_switch_living_dnd", "Living Room Do not disturb", "do not disturb", "home theatre living room do not disturb"),
-    switchable("ha_vacuum_robot", "Robot Cleaner", "vacuum", verbs="start stop"),
-]
-DIRECT = [
-    ("turn on the night sky", "ha_light_night_sky", "on"),
-    ("Turn off the night sky.", "ha_light_night_sky", "off"),
-    ("turn on the night ksy", "ha_light_night_sky", "on"),
-    ("switch off the strip lights", "ha_light_strip_lights", "off"),
-    ("switch on home theatre night sky", "ha_light_night_sky", "on"),
-    ("turn off all lights", "ha_light_focus_and_strip", "off"),
-    ("turn on focus light", "ha_light_focus_lights", "on"),
-    ("turn off hrishik room do not disturb", "ha_switch_hrishik_dnd", "off"),
-    ("start the vacuum", "ha_vacuum_robot", "start"),
-    ("stop robot cleaner", "ha_vacuum_robot", "stop"),
-]
-NOT_DIRECT = [
-    # two things share the name
-    "turn off do not disturb",
-    # nothing is that close
-    "turn on the lights",
-    "turn on the nite sky",
-    "turn on the projector",
-    # more than the device
-    "turn on the night sky and the strip lights",
-    "turn on the night sky at 9",
-    "turn off the night sky when I leave",
-    "turn on the night sky please",
-    "can you turn on the night sky",
-    # another shape
-    "turn the night sky on",
-    "night sky on",
-    "is the night sky on",
-    "dim the night sky",
-    "turn it on",
-    "turn on",
-    # a verb the thing doesn't take
-    "stop the night sky",
-    "turn on the vacuum",
-]
-
-
-@pytest.mark.parametrize(("ask", "tool", "verb"), DIRECT)
-def test_turning_one_thing_on_or_off_needs_no_model(ask, tool, verb):
-    command = direct(ask, HOUSE)
-    assert command is not None and (command.tool, command.verb) == (tool, verb)
-
-
-@pytest.mark.parametrize("ask", NOT_DIRECT)
-def test_anything_less_certain_goes_to_a_model(ask):
-    assert direct(ask, HOUSE) is None
 
 
 async def collect(kernel, live) -> list[tuple[str, dict]]:
@@ -117,100 +47,6 @@ def clef(kernel, answers: dict[str, float] | None = None, *, status: int = 200, 
     return asked
 
 
-# On a fake Home Assistant: what huvu works itself.
-
-
-@pytest.fixture
-async def house(tmp_path, clock, hermes, monkeypatch):
-    """A kernel on a fake Home Assistant, and a user."""
-    monkeypatch.setenv("HA_TOKEN", "secret")
-    monkeypatch.setattr(ha_source, "REFRESH_DEBOUNCE", 0.0)
-    ha = FakeHA(clock)
-    ha.entity("light.theatre_night_sky", "off", area="living_room", friendly_name="Night Sky", aliases=["stars"])
-    ha.entity("light.theatre_strip", "off", area="living_room", friendly_name="Strip Lights", labels=["huvu_ask"])
-    ha.entity("vacuum.robot", "docked", area="hall", friendly_name="Robot Cleaner", aliases=["vacuum"])
-    ha.entity("sensor.theatre_humidity", "60", area="living_room", friendly_name="Humidity", device_class="humidity")
-    source = HomeAssistant({}, connect=ha.connect)
-    kernel = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"ha": source}, clock=clock)
-    kernel.accounts.add_user("me", "Me", "correct horse", "key-me")
-    task = asyncio.create_task(source.run())
-    for _ in range(200):
-        if source._connected and kernel.router.switchables(Caller(kind="kernel", user="me")):
-            break
-        await asyncio.sleep(0.01)
-    yield kernel, ha
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
-    await kernel.conversations.close()
-    kernel.data.close()
-    kernel.db.close()
-
-
-async def test_what_huvu_can_work_itself_is_what_takes_a_verb_and_doesnt_ask(house):
-    kernel, _ = house
-    found = {s.tool: s for s in kernel.router.switchables(Caller(kind="kernel", user="me"))}
-    # The strip lights ask first, and a sensor has no action.
-    assert set(found) == {"ha_light_theatre_night_sky", "ha_vacuum_robot"}
-    assert found["ha_light_theatre_night_sky"].phrases == ("living room night sky", "night sky", "stars")
-    assert found["ha_vacuum_robot"].verbs == {"start", "stop"}
-
-
-async def test_huvu_turns_a_thing_on_itself_and_logs_it(house, hermes: FakeHermes):
-    kernel, ha = house
-    live = await kernel.conversations.ask("c1", "turn on the night ksy", user="me")
-    events = await collect(kernel, live)
-    assert hermes.sessions == []
-    assert [(c["domain"], c["service"], c["target"]) for c in ha.calls] == [("light", "turn_on", {"entity_id": "light.theatre_night_sky"})]
-    assert live.turn.answer == "Turned on: Night Sky." and live.turn.ending is None
-    assert live.turn.parts[0]["toolName"] == "ha_light_theatre_night_sky" and live.turn.parts[0]["result"] == {}
-    assert ("turn.ended", {"turn": live.turn.id, "conversation": "c1", "ending": None, "answer": "Turned on: Night Sky."}) in events
-    assert await routes(kernel) == [{"tier": "direct", "model": None, "effort": None, "why": "direct", "p": None}]
-    sql = "SELECT summary FROM huvu_events WHERE type = 'action.requested'"
-    [row] = (await kernel.tools.call("data_sql", {"sql": sql}, Caller(kind="hermes", user="me"))).data["rows"]
-    assert row[0].startswith("kernel, user me, device c1 asked for ha.light_theatre_night_sky (silent)")
-
-
-async def test_huvu_starts_a_vacuum_itself_and_tells(house, hermes: FakeHermes):
-    kernel, ha = house
-    live = await kernel.conversations.ask("c1", "start the vacuum", user="me")
-    await collect(kernel, live)
-    assert hermes.sessions == [] and live.turn.answer == "Started: Robot Cleaner."
-    assert [(c["domain"], c["service"]) for c in ha.calls] == [("vacuum", "start")]
-
-
-async def test_a_failed_direct_turn_says_it_couldnt(house, monkeypatch):
-    kernel, ha = house
-
-    def refuse(message, context):
-        raise KeyError("light.theatre_night_sky")
-
-    monkeypatch.setattr(ha, "_run_device_service", refuse)
-    live = await kernel.conversations.ask("c1", "turn on the night sky", user="me")
-    await collect(kernel, live)
-    assert live.turn.answer == "I couldn't do that." and live.turn.ending is None
-    assert live.turn.parts[0]["result"] == {"error": True}
-
-
-async def test_a_thing_that_asks_first_goes_to_a_model(house, hermes: FakeHermes):
-    kernel, ha = house
-    await collect(kernel, await kernel.conversations.ask("c1", "turn on the strip lights", user="me"))
-    assert ha.calls == [] and len(hermes.sessions) == 1
-
-
-async def test_the_main_session_hears_of_what_huvu_did_itself(house, hermes: FakeHermes, clock):
-    kernel, _ = house
-    await collect(kernel, await kernel.conversations.ask("c1", "plan a movie night for saturday", user="me"))
-    main = hermes.sessions[0]
-    clock.advance(minutes=1)
-    await collect(kernel, await kernel.conversations.ask("c1", "turn off the stars", user="me"))
-    clock.advance(minutes=1)
-    await collect(kernel, await kernel.conversations.ask("c1", "and turn it back on in an hour", user="me"))
-    session, message = hermes.messages[-1]
-    assert session == main and hermes.sessions == [main]
-    assert 'they said "turn off the stars", and you answered "Turned off: Night Sky."' in message
-    assert message.endswith("and turn it back on in an hour")
-
-
 # Clef-flash, and the sessions each route runs in.
 
 
@@ -240,7 +76,7 @@ async def test_an_ask_that_needs_context_runs_on_pro(talk, hermes: FakeHermes):
 
 async def test_an_ask_at_the_line_runs_on_pro(talk):
     clef(talk, {"what's the weather": 0.30})
-    assert (await talk.router.route("what's the weather", Caller(kind="kernel", user="me"))).tier == "pro"
+    assert (await talk.router.route("what's the weather")).tier == "pro"
 
 
 async def test_without_clef_every_ask_runs_on_pro(talk, hermes: FakeHermes):
@@ -252,21 +88,21 @@ async def test_without_clef_every_ask_runs_on_pro(talk, hermes: FakeHermes):
 
 async def test_a_failed_clef_runs_on_pro(talk):
     clef(talk, status=503)
-    assert (await talk.router.route("what's the weather", Caller(kind="kernel", user="me"))).why == "failed"
+    assert (await talk.router.route("what's the weather")).why == "failed"
 
 
 async def test_a_slow_clef_is_cut_off_at_the_timeout(talk):
     clef(talk, slow=True)
     talk.config.router_timeout = 0.05
     started = time.monotonic()
-    assert (await talk.router.route("what's the weather", Caller(kind="kernel", user="me"))).why == "failed"
+    assert (await talk.router.route("what's the weather")).why == "failed"
     assert time.monotonic() - started < 0.5
 
 
 async def test_clef_answers_a_repeated_ask_once(talk):
     asked = clef(talk, {"what's the weather": 0.2})
     for ask in ["what's the weather", "What's the weather?", "what's  the weather"]:
-        assert (await talk.router.route(ask, Caller(kind="kernel", user="me"))).tier == "basic"
+        assert (await talk.router.route(ask)).tier == "basic"
     assert asked == ["what's the weather"]
 
 
