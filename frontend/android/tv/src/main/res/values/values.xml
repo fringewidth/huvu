@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">huvu</string>
+    <!-- PAPER in frontend/src/config/palette.ts, so nothing flashes white
+         before the page paints. -->
+    <color name="paper">#0D0E17</color>
+
+    <style name="Paper" parent="@android:style/Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@color/paper</item>
+    </style>
+</resources>

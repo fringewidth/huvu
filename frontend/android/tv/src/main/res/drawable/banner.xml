@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The TV launcher's 16:9 tile: the launcher icon's mark on paper. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <size android:width="320dp" android:height="180dp" />
+            <solid android:color="@color/paper" />
+        </shape>
+    </item>
+    <!-- Insets, not a size: Android 5.1 ignores an item's width and height. -->
+    <item android:left="70dp" android:right="70dp"
+        android:drawable="@mipmap/ic_launcher_foreground" />
+</layer-list>

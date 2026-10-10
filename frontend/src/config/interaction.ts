@@ -23,6 +23,10 @@ interface Profile {
   // conversation (asks reach it through Alexa) and the live feeds picked
   // on it, and still sends a choice picked with the remote.
   hasInput: boolean;
+  // Says every answer aloud, in any mode, and sends every ask as spoken,
+  // so the answer comes without markdown. Fire TV's asks are spoken to
+  // Alexa, and the person is across the room.
+  speaksAnswers: boolean;
   // "none" for a screen that asks nothing. initialMode() shows it as text.
   defaultMode: Mode;
   modeSwitchable: boolean;
@@ -63,6 +67,7 @@ const PROFILES: Record<Target, Profile> = {
   web: {
     deviceKind: "web",
     hasInput: true,
+    speaksAnswers: false,
     defaultMode: "text",
     modeSwitchable: true,
     enterSends: true,
@@ -86,6 +91,7 @@ const PROFILES: Record<Target, Profile> = {
   phone: {
     deviceKind: "phone",
     hasInput: true,
+    speaksAnswers: false,
     defaultMode: "text",
     modeSwitchable: true,
     enterSends: false,
@@ -106,10 +112,11 @@ const PROFILES: Record<Target, Profile> = {
     maxPixelDensity: 1.5,
   },
   // Display only. It asks nothing, so the voice and text fields are left
-  // out.
+  // out. Asks come through Alexa, and huvu says every answer.
   firetv: {
     deviceKind: "tv",
     hasInput: false,
+    speaksAnswers: true,
     defaultMode: "none",
     modeSwitchable: false,
     enterSends: false,

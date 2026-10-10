@@ -67,6 +67,12 @@ advanced = "gpt-6-astra"
 # (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AI_TOKEN), which says whether it
 # needs the conversation so far. A one-off runs on basic without thinking,
 # in a session of its own; otherwise, and without those, it runs on pro.
+# The Alexa skill that asks for the Fire TV (alexa.py), by its id, from
+# the Alexa developer console. HUVU_ALEXA_SKILL_ID wins. Without one,
+# POST /api/alexa answers 404.
+# [alexa]
+# skill_id = "amzn1.ask.skill...."
+
 [router]
 enabled = true       # false runs every ask on pro
 effort = "none"      # the reasoning effort of an ask sent to basic

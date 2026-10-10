@@ -36,8 +36,10 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask something quick that isn't about the house, such as "what's the temperature today?". It should answer in a few seconds, with no faint thinking line.
 1. Turn the home theatre's AV unit on and wait a minute. Tell huvu you're in the home theatre and about to watch something. Then say only "open YouTube". YouTube should open on the projector within a few seconds, and huvu should not ask which room or which device. Then say "play Interstellar on Netflix". It should start on the screen. huvu can't see the screen, but it hears what Alexa said back, so within about ten seconds it should tell you what Alexa answered, such as "Here's Interstellar".
 1. With the AV unit on, ask huvu for something on the TV that Alexa can't do, such as "open the app called Zorblat on the TV". huvu should tell you what Alexa said, such as that it couldn't find it. It should not say it's done.
-1. With the home theatre off, tell huvu "turn on the home theatre". The strip lights and the focus lights should come on within a few seconds. The AV unit should come on too: the projector lights up and the amp's volume climbs, about half a minute later. huvu should not ask what you meant.
-1. With the home theatre on, tell huvu "turn off the home theatre". The strip lights and the focus lights should go off within a few seconds, and the projector should go dark. The amp should go off too. The AV unit's power should stay on for about two minutes while the projector cools, and only then go off.
+1. With the home theatre off, tell huvu "turn on the home theatre". The strip lights and the focus lights should come on within a few seconds, and the AC should start. The AV unit should come on too: the projector lights up and the amp's volume climbs, about half a minute later. huvu should not ask what you meant.
+1. With the home theatre on, tell huvu "turn off the home theatre". The strip lights, the focus lights and the night sky should go off within a few seconds, the AC should stop, and the projector should go dark. The amp should go off too. The AV unit's power should stay on for about two minutes while the projector cools, and only then go off.
+1. With the AV unit on, note the volume on the amp's display, then tell huvu "turn the volume up by 10 points". The number on the amp should climb by 10 within about ten seconds, and huvu should answer in one go, without saying it worked in batches. Then say "turn it down by 2.5". It should drop by 2.5.
+1. With the home theatre's AC off, tell huvu "set the home theatre AC to 24". The AC should beep and start within a few seconds, and huvu should say it's on at 24. Ask "how warm is it in the home theatre?" and huvu should give the room's temperature. Then turn the AC off with its own remote and ask huvu whether it's on. It should say it's off. Ask for 23.5 and huvu should say the AC takes whole degrees only.
 1. With the AV unit off, ask huvu to open YouTube. huvu should say the AV unit is off. Nothing should turn on by itself.
 1. Hint at what you want without naming a device, such as "it's stuffy in here". huvu should still do it, a little slower.
 1. Ask something that makes huvu search the web more than once, such as "what did OpenAI announce yesterday, and what does it mean?". Each "searched the web" line should show where huvu searched: after the words it said before searching, and before the words it wrote after. The lines should not all gather at the top of the answer.
@@ -132,11 +134,18 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## The TV: pairing
 
+1. Install huvu on the TV (see `hrishik.md`). It should show in the TV's apps with its own tile, and open with the remote's select button.
 1. Open huvu on the TV for the first time. It should say "Pair this screen." and show a code such as ABCD-EF23.
 1. On your phone, open the menu, pick "pair a device", and type the code. Within a few seconds, the TV should show the greeting with an Alexa example under it.
 1. Leave a code on the TV for more than 10 minutes without typing it. The TV should change to a new code by itself.
 1. Type a wrong code on the phone. The phone should say no device shows that code.
 1. Log in as a guest, if you have one. "pair a device" should not be in their menu.
+
+## The TV: asking through Alexa
+
+1. With huvu open on the TV, hold the remote's mic button and say "Alexa, ask huvu what time is it". Alexa should say nothing, and huvu should show your ask on the TV and answer it out loud.
+1. While huvu is still talking, press back. It should go quiet.
+1. Close huvu on the TV and ask again. Alexa should say huvu isn't open on the TV.
 
 ## The TV: who's here
 
@@ -165,10 +174,9 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 ## What doesn't work yet (don't test)
 
 1. Voice on the phone: it works only while Groq answers. When Groq's rate limit hits, an ask on the phone is lost, and the flower says huvu couldn't hear it.
-1. Asking the TV through Alexa. The skill doesn't exist yet, so nothing appears on the TV unless a feed is picked. For the same reason, an approval for the whole household (asked at the TV with nobody recognized) can't be tested yet.
+1. Bringing huvu to the front when Alexa is asked while another app is open. The launch over ADB isn't built yet.
 1. Live camera feeds. The list may appear, but no feed can play yet.
 1. The doorbell. It waits for the Tuya driver.
 1. The house's devices, such as "turn on the bedroom light when I walk in". They wait for the Home Assistant setup (`home-assistant.md`). Once it is done: walk into the room, and the light should come on within a second or two.
-1. The home theatre's AC. It waits for the Blue Star integration to be installed in Home Assistant. Once it is: with the AC off, tell huvu "set the home theatre AC to 24". The AC should beep and start within a few seconds, and huvu should say it's on at 24. Ask "how warm is it in the home theatre?" and huvu should give the room's temperature. Then turn the AC off with its own remote and ask huvu whether it's on. It should say it's off. Ask for 23.5 and huvu should say the AC takes whole degrees only.
 1. iPhones. No iOS build exists yet.
 1. Phone notifications, until the Firebase project is set up (see `v0.md`). Before that, notices, approvals and questions show only while the app is open.

@@ -8,6 +8,7 @@
 .claude/
 frontend/dist/
 frontend/dist-phone/
+frontend/dist-firetv/
 frontend/android/
 frontend/.env*
 docs/

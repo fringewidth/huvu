@@ -24,6 +24,9 @@ services:
     restart: unless-stopped
     environment:
       - HUVU_PUBLIC_URL=${HUVU_PUBLIC_URL:-https://huvu.hrishik.me}
+      # The Alexa skill that asks for the Fire TV (backend/src/huvu/alexa.py).
+      # Not a secret: Amazon signs every request, and this only names the skill.
+      - HUVU_ALEXA_SKILL_ID=${HUVU_ALEXA_SKILL_ID:-amzn1.ask.skill.49627247-f5d1-4980-997f-5a8a9039ebe5}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}

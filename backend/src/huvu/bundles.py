@@ -1,4 +1,5 @@
-"""Live updates for the native apps (Capacitor's phone and Fire TV builds).
+"""Live updates for the native apps (Capacitor's phone build; the Fire TV
+app loads its page from the host, so it needs none).
 
 An APK carries its own copy of the web build, so without this a frontend
 change reaches a phone only through a new APK. The image builds each

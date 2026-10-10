@@ -176,6 +176,9 @@ class Config:
     # The reasoning effort of an ask the router sends to basic, as Hermes
     # names it: none, minimal, low, medium, high.
     router_effort: str = "none"
+    # The Alexa skill that asks for the Fire TV (alexa.py), by its id. None
+    # turns POST /api/alexa off.
+    alexa_skill_id: str | None = None
 
     def model(self, tier: str) -> ModelChoice:
         return self.models.get(tier) or ModelChoice(DEFAULT_MODELS[tier])
@@ -236,6 +239,9 @@ def load(path: Path | None = None) -> Config:
         router_escalate_at=float(router.get("escalate_at", 0.30)),
         router_timeout=float(router.get("timeout", 1.0)),
         router_effort=str(router.get("effort", "none")),
+        # HUVU_ALEXA_SKILL_ID wins, like HUVU_PUBLIC_URL: the volume's
+        # huvu.toml is copied once, on the first start.
+        alexa_skill_id=os.environ.get("HUVU_ALEXA_SKILL_ID") or raw.get("alexa", {}).get("skill_id"),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
     for tier in config.models:

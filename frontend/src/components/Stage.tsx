@@ -16,6 +16,8 @@ import { useScrollIntent } from "../stage/useScrollIntent";
 import { useSlotGeometry } from "../stage/useSlotGeometry";
 import { useStable } from "../stage/useStable";
 import { useWide } from "../stage/useWide";
+import { speaking, stopSpeaking } from "../voice/speaker";
+import { useSpokenAnswers } from "../voice/useSpokenAnswers";
 import { useVoiceSession, type VoicePhase } from "../voice/useVoiceSession";
 import { Composer } from "./Composer";
 import { Feeds } from "./Feeds";
@@ -23,6 +25,12 @@ import { Menu, type MenuSection } from "./Menu";
 import { TurnView } from "./TurnView";
 import { Waiting } from "./Waiting";
 import { VoiceFlower, type FlowerState } from "./VoiceFlower";
+
+declare global {
+  interface Window {
+    huvuBack?: () => boolean;
+  }
+}
 
 // The whole UI over the garden. Not a chat log: the stage holds one turn
 // at a time, big. Scrolling up folds it into a history of every turn at
@@ -114,9 +122,10 @@ export function Stage() {
   const heroId = view.kind === "stage" ? (turns.some((t) => t.id === view.focus) ? view.focus : latestStaged) : null;
   const shown = view.kind === "history" ? turns : turns.filter((t) => t.id === heroId);
 
-  // How an ask is made. Fire TV has no input of its own; a choice sent
-  // there is read on screen, so it counts as typed.
-  const inputMode: thread.InputMode = mode === "voice" ? "voice" : "text";
+  // How an ask is made. A screen that says every answer (Fire TV) sends
+  // every ask as spoken, a choice picked with the remote too, so the
+  // answer comes ready to be said.
+  const inputMode: thread.InputMode = mode === "voice" || ui.speaksAnswers ? "voice" : "text";
   const submit = (text: string, from?: Snapshot) => {
     const clean = text.trim();
     if (!clean) return;
@@ -131,6 +140,7 @@ export function Stage() {
   };
 
   const voice = useVoiceSession((text) => submit(text, transcriptRef.current ? snapshot(transcriptRef.current) : undefined));
+  useSpokenAnswers(ui.speaksAnswers, sessionStart);
   if (docked && (voice.heard || voice.transcript)) setDocked(false);
   const dock = () => {
     if (mode === "voice" && view.kind === "stage") setDocked(true);
@@ -179,7 +189,12 @@ export function Stage() {
   const goBack = (): boolean => {
     if (menu) setMenu(null);
     else if (feedsOpen) setFeedsOpen(false);
-    else if (running && !stopping && mode === "text") stop();
+    // A screen that says every answer: back quiets huvu, and stops the
+    // reply if it is still coming in.
+    else if (ui.speaksAnswers && (speaking() || (running && !stopping))) {
+      stop();
+      stopSpeaking();
+    } else if (running && !stopping && mode === "text") stop();
     else if (rewindId) cancelRewind();
     else if (view.kind === "history" || view.focus) toStage(null);
     else if (mode === "voice" && ui.modeSwitchable) leaveVoice();
@@ -435,15 +450,28 @@ export function Stage() {
     };
   }, []);
 
+  // The Fire TV app (frontend/android/tv) is a plain WebView, not
+  // Capacitor. It asks the page what back does, and closes once there is
+  // nothing left to undo.
+  const onShellBack = useEffectEvent(() => goBack());
+  useEffect(() => {
+    if (!TV) return;
+    window.huvuBack = () => onShellBack();
+    return () => {
+      delete window.huvuBack;
+    };
+  }, []);
+
   // A tapped notification that names a screen opens the menu there.
   useEffect(() => onOpens((section) => setMenu(section)), []);
 
-  // A written reply grows the garland a little per new word. In voice mode
-  // huvu's voice grows it instead. A watched feed or a notice is no reply,
+  // A written reply grows the garland a little per new word. In voice mode,
+  // and on a screen that says every answer, huvu's voice grows it instead.
+  // A watched feed or a notice is no reply,
   // so the reply under it keeps growing it.
   useEffect(() => {
     const turn = allTurns.findLast(thread.asked);
-    if (!turn || turn.at < sessionStart || mode !== "text") return;
+    if (!turn || turn.at < sessionStart || mode !== "text" || ui.speaksAnswers) return;
     const w = wrote.current.id === turn.id ? wrote.current : { id: turn.id, words: 0, sent: 0 };
     const words = turn.answer.split(/\s+/).filter(Boolean).length;
     const grow = Math.max(0, Math.min(words - w.words, WRITE_WORDS_MAX - w.sent));

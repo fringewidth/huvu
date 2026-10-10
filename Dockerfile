@@ -16,7 +16,8 @@
 # The backend also serves the web client, built in the first stage, so
 # https://huvu.hrishik.me is both the app and its backend. The same stage
 # builds the phone app's web bundle, which the backend serves to the
-# installed apps as their live update (backend/src/huvu/bundles.py).
+# installed apps as their live update (backend/src/huvu/bundles.py), and
+# the TV's page at /tv/, which the Fire TV app (frontend/android/tv) loads.
 FROM node:24-slim AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
@@ -24,6 +25,7 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN VITE_TARGET=web npm run build:web
 RUN VITE_TARGET=phone npx vite build --mode phone --outDir dist-phone
+RUN VITE_TARGET=firetv npx vite build --mode firetv --base /tv/ --outDir dist-firetv
 
 # Hermes is pinned to the image huvu was last checked with (2026-09-24's
 # latest). The one after it (2026-10-08) shipped without uv and without
@@ -55,6 +57,7 @@ COPY --chown=hermes:hermes SOUL.md setup.sh wipe.sh ./
 COPY --chown=hermes:hermes docker/huvu.toml docker/huvu.toml
 COPY --from=web /web/dist web/
 COPY --from=web /web/dist-phone bundles/phone/
+COPY --from=web /web/dist-firetv web/tv/
 COPY docker/s6/ /etc/s6-overlay/s6-rc.d/
 COPY docker/cont-init/ /etc/cont-init.d/
 RUN chmod +x setup.sh wipe.sh /etc/cont-init.d/50-huvu /etc/s6-overlay/s6-rc.d/huvu/run && \

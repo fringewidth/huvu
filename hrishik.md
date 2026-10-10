@@ -42,12 +42,31 @@ echo 'CLOUDFLARE_AI_TOKEN=...' >> backend/.env
 Android, on a phone plugged in over USB with USB debugging on:
 
 ```sh
-cd frontend && npm run build:phone && npx cap sync android
-cd android && JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug
-~/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
+cd frontend && scripts/apk.sh phone
+~/Library/Android/sdk/platform-tools/adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The build talks to https://huvu.hrishik.me.
+
+Fire TV, with ADB debugging on (Settings, My Fire TV, About: press select
+on the device name 7 times, then Developer options, ADB debugging) and the
+TV's address from Settings, My Fire TV, About, Network. The TV asks once
+to allow the Mac's key. Both must be on the same Wi-Fi.
+
+```sh
+cd frontend && scripts/apk.sh firetv
+~/Library/Android/sdk/platform-tools/adb connect <tv-ip>:5555
+~/Library/Android/sdk/platform-tools/adb install -r android/tv/build/outputs/apk/debug/tv-debug.apk
+```
+
+The TV app loads its page from https://huvu.hrishik.me/tv/, so a frontend
+change reaches it with the next image, not a new APK. To try a change
+before that, serve the TV build from this Mac and point the app at it:
+
+```sh
+cd frontend && VITE_BACKEND_URL=https://huvu.hrishik.me npx vite --mode firetv --port 5174 --host
+~/Library/Android/sdk/platform-tools/adb shell am start -S -n com.huvu.tv/.MainActivity -e url http://<mac-ip>:5174/
+```
 
 The host (Windows laptop, `ssh laptop`, the repo at `D:\huvu`, Docker
 Desktop): huvu and Hermes in one container, on http://localhost:27613,

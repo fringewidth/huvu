@@ -64,6 +64,12 @@ export function stopSpeaking(): void {
   current?.finish();
 }
 
+// Whether huvu is saying an answer, or about to: from speak() until it
+// resolves.
+export function speaking(): boolean {
+  return current !== null;
+}
+
 // Says turn `turnId`'s answer. Resolves once huvu is done: the last
 // sentence ended, the user talked over it (with `bargeIn`), or there is no
 // voice.
