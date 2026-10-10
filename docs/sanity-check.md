@@ -168,5 +168,6 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Live camera feeds. The list may appear, but no feed can play yet.
 1. The doorbell. It waits for the Tuya driver.
 1. The house's devices, such as "turn on the bedroom light when I walk in". They wait for the Home Assistant setup (`home-assistant.md`). Once it is done: walk into the room, and the light should come on within a second or two.
+1. The home theatre's AC. It waits for the Blue Star integration to be installed in Home Assistant. Once it is: with the AC off, tell huvu "set the home theatre AC to 24". The AC should beep and start within a few seconds, and huvu should say it's on at 24. Ask "how warm is it in the home theatre?" and huvu should give the room's temperature. Then turn the AC off with its own remote and ask huvu whether it's on. It should say it's off. Ask for 23.5 and huvu should say the AC takes whole degrees only.
 1. iPhones. No iOS build exists yet.
 1. Phone notifications, until the Firebase project is set up (see `v0.md`). Before that, notices, approvals and questions show only while the app is open.

@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Blue Star account",
+        "description": "Log in with the phone number (or email) and password of the Blue Star Smart AC app.",
+        "data": {
+          "phone": "Phone number or email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Blue Star account",
+        "description": "Blue Star refused the saved password. Enter the Blue Star Smart AC app's password again.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Blue Star refused the phone number or password.",
+      "cannot_connect": "Blue Star's cloud didn't answer. Try again."
+    },
+    "abort": {
+      "already_configured": "This Blue Star account is already set up.",
+      "reauth_successful": "The password is updated."
+    }
+  }
+}

@@ -91,6 +91,7 @@ huvu/                       (git root, github.com/fringewidth/huvu, private)
   docs/frontend-changes.md       what the frontend still has to do to catch up with the backend
   docs/v0.md                     what is left before the family uses huvu daily: decisions, setup, builds, first tests
   docs/sanity-check.md           the hands-on check of every feature a person touches, written for humans, run before the family gets a build
+  home-assistant/           huvu's Home Assistant custom components, copied into HA's `custom_components/`: bluestar_ac (the Blue Star AC through Blue Star's cloud); tests with `uv run --group dev pytest`
   backend/                  the Python backend: the kernel and the drivers
     src/huvu/               the kernel: sources, tables, triggers, policy, MCP, Hermes, conversations, HTTP; file map in docs/backend-architecture.md
     src/huvu_drivers/       the drivers, one package or module per data source: ha/ (Home Assistant), location.py (OwnTracks)
