@@ -87,6 +87,8 @@ NAME_COLUMNS = ("name", "aliases", "area", "device")
 WORKERS_AI = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/cloudflare/clef-flash"
 # How many of Clef-flash's answers are kept, by the ask's words.
 CACHE_SIZE = 2000
+# How long the connection to Workers AI stays open between asks, in seconds.
+KEEPALIVE = 300.0
 
 log = logging.getLogger("huvu.routing")
 
@@ -131,12 +133,23 @@ class Router:
         config = kernel.config
         self._account = config.cloudflare_account_id
         self._token = config.cloudflare_ai_token
-        self._http = httpx.AsyncClient(timeout=httpx.Timeout(config.router_timeout))
+        # Kept open between asks: a new TLS handshake to Cloudflare costs
+        # about as much as Clef-flash's answer.
+        self._http = httpx.AsyncClient(timeout=httpx.Timeout(config.router_timeout), limits=httpx.Limits(keepalive_expiry=KEEPALIVE))
         # Clef-flash's answers, by the ask's words.
         self._answers: OrderedDict[str, float] = OrderedDict()
 
     async def close(self) -> None:
         await self._http.aclose()
+
+    async def warm(self) -> None:
+        """Opens the connection to Workers AI, so the first ask doesn't pay
+        for the handshake. Its answer doesn't matter."""
+        if self._account and self._token:
+            try:
+                await self._http.get(WORKERS_AI.format(account=self._account), headers={"Authorization": f"Bearer {self._token}"}, timeout=5.0)
+            except httpx.HTTPError:
+                pass
 
     async def route(self, ask: str) -> Route:
         config = self._kernel.config
