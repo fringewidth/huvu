@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS memberships (
     PRIMARY KEY (group_id, user_id)
 );
 
+-- What one user calls another (mom, dad), for the model and on the
+-- notifications one sends the other. Without a row, the person's name.
+CREATE TABLE IF NOT EXISTS people_aliases (
+    owner_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    PRIMARY KEY (owner_id, user_id),
+    UNIQUE (owner_id, alias)
+);
+
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -181,7 +191,9 @@ CREATE TABLE IF NOT EXISTS notifications (
     -- Whose phones it went to: the user's, or with no user, the members of
     -- group_id.
     user_id TEXT,
-    group_id TEXT
+    group_id TEXT,
+    -- The user who sent it through huvu_message. NULL when huvu sent it.
+    sender_id TEXT
 );
 CREATE INDEX IF NOT EXISTS notifications_ts ON notifications (ts);
 
@@ -217,7 +229,7 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
 
 # Columns added to a table after it was first made, which CREATE TABLE IF
 # NOT EXISTS doesn't add to an older database.
-ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT")]
+ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("notifications", "sender_id", "TEXT")]
 
 
 # How long a statement waits for a lock another connection holds, in ms,

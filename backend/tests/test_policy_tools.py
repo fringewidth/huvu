@@ -215,3 +215,99 @@ async def test_approvals_say_what_and_who_in_words(kernel, family):
     assert mine["label"] == "Unlocks the front door." and mine["requester"] == "huvu, talking with Me on laptop"
     theirs = kernel.policy.public(kernel.policy.get(asked_at_tv.data["approval"]))
     assert theirs["requester"] == "someone on living room"
+
+
+async def test_people_group_lists_the_family_by_the_callers_aliases(kernel, family):
+    kernel.accounts.set_alias("me", "mom", "Amma")
+    seen = await kernel.tools.call("people_group", {}, Caller(kind="hermes", user="me"))
+    [home] = seen.data["groups"]
+    assert home["id"] == "home"
+    assert {p["id"]: (p["alias"], p["you"]) for p in home["people"]} == {"me": ("Me", True), "mom": ("Amma", False)}
+    # Mom set nothing, so she sees my name.
+    moms = await kernel.tools.call("people_group", {"group": "home"}, Caller(kind="hermes", user="mom"))
+    assert {p["id"]: p["alias"] for p in moms.data["groups"][0]["people"]}["me"] == "Me"
+    with pytest.raises(ToolError, match="your groups: home"):
+        await kernel.tools.call("people_group", {"group": "beach"}, Caller(kind="hermes", user="me"))
+
+
+async def test_an_alias_names_one_person_only(kernel, family):
+    accounts = kernel.accounts
+    accounts.set_alias("me", "mom", "Amma")
+    # What I call someone else, their name when I set nothing, someone
+    # else's username, and a group's id are all taken.
+    accounts.add_user("dad", "Dad", "a long password", "key-dad")
+    accounts.add_user("sis", "Sister", "a long password", "key-sis")
+    for taken, why in (("amma", "what me calls mom"), ("sis", "sis's username"), ("Sister ", "what me calls sis"), ("home", "the group home")):
+        with pytest.raises(AuthError, match=why):
+            accounts.set_alias("me", "dad", taken)
+    # Mom has her own names: she can call dad "Amma". Dad's own name is
+    # fine for him.
+    accounts.set_alias("mom", "dad", "Amma")
+    accounts.set_alias("me", "dad", "dad")
+    accounts.set_alias("me", "mom", "")
+    assert accounts.alias("me", "mom") == "Mom"
+
+
+async def test_a_new_user_or_group_cant_take_an_alias(kernel, family):
+    kernel.accounts.set_alias("me", "mom", "amma")
+    with pytest.raises(AuthError, match="me calls mom 'amma'"):
+        kernel.accounts.add_user("amma", "Amma", "a long password", "key-a")
+    with pytest.raises(AuthError, match="me calls mom 'amma'"):
+        kernel.accounts.add_group("amma", "Amma's", "key-g")
+
+
+async def test_the_model_sets_what_its_person_calls_someone(kernel, family):
+    me = Caller(kind="hermes", user="me")
+    result = await kernel.tools.call("huvu_set_person_alias", {"person": "Mom", "alias": "Amma"}, me)
+    assert result.data == {"person": "mom", "alias": "Amma"}
+    # Now the old alias and the new one both reach her: the username, and "Amma".
+    await kernel.tools.call("huvu_set_person_alias", {"person": "amma", "alias": "Ma"}, me)
+    assert kernel.accounts.alias("me", "mom") == "Ma"
+    assert kernel.accounts.alias("mom", "me") == "Me"
+    with pytest.raises(Exception, match="the group home"):
+        await kernel.tools.call("huvu_set_person_alias", {"person": "mom", "alias": "home"}, me)
+    with pytest.raises(Exception, match="nobody is recognized"):
+        await kernel.tools.call("huvu_set_person_alias", {"person": "mom", "alias": "x"}, Caller(kind="hermes", device=family.tv.id))
+
+
+async def test_messages_reach_the_person_by_their_alias_for_the_sender(kernel, family):
+    from .test_triggers import push_events
+
+    kernel.accounts.set_alias("me", "mom", "Amma")
+    kernel.accounts.set_alias("mom", "me", "kanna")
+    mine, mine_task = await push_events(kernel, family.me_phone.id)
+    moms, moms_task = await push_events(kernel, family.mom_phone.id)
+    result = await kernel.tools.call("huvu_message", {"person": "amma", "text": "running late"}, Caller(kind="hermes", user="me"))
+    await asyncio.sleep(0)
+    assert result.data == {"sent": True, "to": "amma"}
+    assert [(d["text"], d["from"]) for _, d in moms] == [("running late", "kanna")]
+    # The sender hears that it went (notify autonomy), from huvu.
+    assert [d["from"] for _, d in mine] == [None]
+    assert [(n["text"], n["from"]) for n in kernel.notifications("mom")] == [("running late", "kanna")]
+    rows = kernel.data.rows("huvu", "notifications", "1 = 1", ())
+    assert sorted((r["user_id"], r["sender"], r["recipient"]) for r in rows) == [("me", "me", "mom"), ("mom", "me", "mom")]
+    mine_task.cancel()
+    moms_task.cancel()
+
+
+async def test_group_messages_skip_their_sender(kernel, family):
+    from .test_triggers import push_events
+
+    kernel.accounts.set_alias("mom", "me", "kanna")
+    moms, moms_task = await push_events(kernel, family.mom_phone.id)
+    await kernel.tools.call("huvu_message", {"group": "home", "text": "dinner", "reason": "asked"}, Caller(kind="hermes", user="me"))
+    await asyncio.sleep(0)
+    assert [(d["text"], d["from"]) for _, d in moms] == [("dinner", "kanna")]
+    assert [n["text"] for n in kernel.notifications("me") if n["from"]] == []
+    assert [n["from"] for n in kernel.notifications("mom")] == ["kanna"]
+    moms_task.cancel()
+
+
+async def test_messages_go_only_to_people_the_sender_shares_a_group_with(kernel, family):
+    kernel.accounts.add_user("stranger", "Stranger", "a long password", "key-s")
+    with pytest.raises(Exception, match="you can message Mom"):
+        await kernel.tools.call("huvu_message", {"person": "stranger", "text": "hi"}, Caller(kind="hermes", user="me"))
+    with pytest.raises(Exception, match="nobody is recognized"):
+        await kernel.tools.call("huvu_message", {"person": "mom", "text": "hi"}, Caller(kind="hermes", device=family.tv.id))
+    with pytest.raises(Exception, match="one of the two"):
+        await kernel.tools.call("huvu_message", {"person": "mom", "group": "home", "text": "hi"}, Caller(kind="hermes", user="me"))

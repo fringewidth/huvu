@@ -5,7 +5,7 @@ import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
 import { chipsFor, interleave, kindOf, partsInSlot, type Slot } from "../stage/parts";
 import { capsClass, EASE } from "../stage/style";
-import type { ImagePart, RichPart, ToolPart, Turn } from "../chat/thread";
+import type { ImagePart, Notice, RichPart, ToolPart, Turn } from "../chat/thread";
 import type { MenuSection } from "./Menu";
 
 // One turn, in one of two sizes. As the hero it is the whole stage: the
@@ -59,6 +59,12 @@ function answerSize(answer: string, variant: TurnVariant, wide: boolean): { key:
 // `custom` is old size / new size. The entering copy starts at that scale
 // (so it looks old-sized) and settles to 1; the leaving copy, old-sized,
 // shrinks or grows by the inverse toward the new size.
+// A notice's cue: who sent it, and "urgent" first when it is.
+function noticeCue(notice: Notice): string {
+  const urgent = notice.urgency === "high";
+  return urgent && !notice.from ? "urgent" : `${urgent ? "urgent, " : ""}from ${notice.from ?? "huvu"}`;
+}
+
 const crossfade: Variants = {
   enter: (ratio: number) => ({ opacity: 0, scale: ratio }),
   shown: { opacity: 1, scale: 1, transition: { duration: 0.7, ease: EASE } },
@@ -145,12 +151,12 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
         </div>
       )}
 
-      {/* A notice asked nothing either. Its cue says huvu sent it unasked,
-          and how urgent it is. */}
+      {/* A notice asked nothing either. Its cue says who sent it unasked,
+          huvu or someone in the family, and how urgent it is. */}
       {turn.notice && (
         <div className={`relative z-10 flex items-baseline gap-3 ${hero ? "" : "pointer-events-none"}`}>
           <span className={`${capsClass} shrink-0 ${turn.notice.urgency === "high" ? "text-sindoor" : "text-ivory/55"}`}>
-            {turn.notice.urgency === "high" ? "urgent" : "from huvu"}
+            {noticeCue(turn.notice)}
           </span>
           {hero && turn.notice.opens === "triggers" && (
             <button

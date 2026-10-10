@@ -44,7 +44,13 @@ A group is a set of people who share devices and trust each other. The household
 1. **Members** trust each other implicitly. They see the group's rows, answer its approvals, and pair and unpair its shared devices. Any member can add a shared device to the group; a shared device never pairs to a user.
 1. **Guests** (a babysitter, a visitor) can use the group's shared devices and be recognized at them. They trust nothing: they see only their own rows, and they never approve anything. Every approval a guest causes, even with a tap on their own phone, goes to the group's members.
 
-A user can be in several groups, or none. The CLI puts a new user in `home` as a member unless told otherwise (`--group`, `--guest`, `--no-group`), and `huvu group add`, `join`, `leave` and `list` manage the rest.
+A user can be in several groups, or none. The CLI puts a new user in `home` as a member unless told otherwise (`--group`, `--guest`, `--no-group`), and `huvu group add`, `join`, `leave` and `list` manage the rest. Groups are made only from the command line for now; making them in the app is still to do (`v0.md`).
+
+### What people call each other
+
+Each user can have an alias for each other user (`people_aliases`): the owner calls their mother "mom", and she calls him by a pet name. With no alias, the person's name stands in. `setup.sh` asks for aliases both ways when it adds a user at a terminal, and `huvu user alias <owner> <person> <alias>` changes one later. The model sets its own person's with `huvu_set_person_alias` (silent: it changes only what that person's agent and phone call someone), such as when they say "I call her Amma". An alias names one person only: it can't be what the owner calls anyone else (their alias, or their name when there is none), another user's username, or a group's id. A new user or group can't take a name someone already uses as an alias. User and group ids never match, since both name Hermes profiles.
+
+The model learns who someone means from `people_group`, which lists the caller's groups with each person by the caller's alias, and then sends with `huvu_message`, naming the person by that alias or a group by its id. A message goes to people who share a group with the sender, guests included, or to the members of a group the sender is a member of, without the sender. Only a person can send one: on a shared device, someone must be recognized first. The recipient's phone shows it from the sender by the recipient's own alias for them (`from` on the `notify` push, and the native notification's title). Its autonomy is `notify`, so the sender gets a note that it went. A message to one person is a `huvu_notifications` row for each of the two; one to a group is the group's row.
 
 ### Who is at a shared device
 
@@ -112,7 +118,7 @@ A doorbell press's time is `house`, but what its snapshot shows is `external`, s
 
 Two sources are built into the kernel, behind the same contract:
 
-1. **`huvu`**: what no device owns. Its live tables are the family mode (`huvu_mode`), the aliases between what people call a thing and what it is (`huvu_aliases`), pending approvals (`huvu_approvals`) and the triggers (`huvu_triggers`). Its history tables are the kernel's own log (`huvu_events`, see [The kernel's log](#the-kernels-log)), every change of the mode (`huvu_modes`) and every notification huvu sent (`huvu_notifications`). A trigger reads `huvu_mode` the same way it reads `ha_entities`.
+1. **`huvu`**: what no device owns. Its live tables are the family mode (`huvu_mode`), the aliases between what people call a thing and what it is (`huvu_aliases`), pending approvals (`huvu_approvals`) and the triggers (`huvu_triggers`). Its history tables are the kernel's own log (`huvu_events`, see [The kernel's log](#the-kernels-log)), every change of the mode (`huvu_modes`) and every notification huvu sent (`huvu_notifications`), messages between people included, with their `sender` and `recipient`. A trigger reads `huvu_mode` the same way it reads `ha_entities`.
 1. **`chat`**: every conversation turn, as `chat_turns`. The kernel records a row when a turn ends, as its user's, or its group's on a shared device nobody was recognized at, with the turn's number in its conversation (`n`), the ask (`them`), the answer (`you`), the device, the app actions that rode with it and the model's token counts (`usage`). Rows are never removed: an edit rewinds the conversation in the app, and the new turn's row names the turn it replaced (`replaces`), so what an edit dropped stays readable. A fresh Hermes session reads only the latest turns (see [Sessions](#sessions)), and the model reads the rest here.
 
 A derived source, such as "who's home" from phone location, ESPresense rooms through HA and the last unlock, would read other sources' tables with SQL. None is built.
@@ -347,6 +353,7 @@ Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; 
 | `triggers_register`, `triggers_remove`, `triggers_pause`, `triggers_resume` | Trigger management. `triggers_register` with `dry_run` checks a trigger and registers nothing; the triggers themselves are `huvu_triggers` |
 | `act` | Runs a source action by name (`ha_bedroom_ac_set`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
 | `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
+| `people_group` | The caller's groups and who is in each, by what the caller calls them. See [What people call each other](#what-people-call-each-other) |
 | `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |
 
 `state_get`, `state_search`, `events_search`, `events_get`, `events_digest`, `sources_list`, `triggers_list` and `triggers_test` went on 2026-10-09: each is a query now.

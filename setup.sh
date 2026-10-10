@@ -4,7 +4,9 @@
 #
 #   ./setup.sh                                  Hermes's default profile, for shared devices
 #   ./setup.sh <username> <password> [name]     a user and their profile (an existing
-#                                               user's password is left as it is)
+#                                               user's password is left as it is). At a
+#                                               terminal, a new user is asked what they
+#                                               and everyone else call each other.
 #   --timezone <IANA name>                      the house's timezone, with either form, such
 #                                               as Europe/Berlin. Without it, the one set
 #                                               before is kept, or Asia/Kolkata.
@@ -130,6 +132,24 @@ print(json.dumps(sorted(n for n in os.listdir(sys.argv[1]) if n.startswith("huvu
   hermes $p plugins enable huvu >/dev/null
 }
 
+# What a new user and everyone else call each other, such as "mom", asked
+# only at a terminal. A blank answer keeps the person's name. Change them
+# later with `huvu user alias`.
+aliases() {
+  local other other_name answer
+  if [ ! -t 0 ]; then
+    echo "Nobody was asked what $name and the others call each other; set it with: huvu user alias <owner> <person> <alias>"
+    return 0
+  fi
+  while IFS=$'\t' read -r other other_name _; do
+    if [ "$other" = "$user" ]; then continue; fi
+    read -r -p "What does $name call $other_name? [$other_name] " answer </dev/tty
+    if [ -n "$answer" ]; then huvu user alias "$user" "$other" "$answer" || true; fi
+    read -r -p "What does $other_name call $name? [$name] " answer </dev/tty
+    if [ -n "$answer" ]; then huvu user alias "$other" "$user" "$answer" || true; fi
+  done < <(huvu user list)
+}
+
 if [ $# -eq 0 ]; then
   # Keep the default profile's API key if it already has one.
   existing=$(hermes config get API_SERVER_KEY --raw 2>/dev/null | tail -1 | grep -Ex '[A-Za-z0-9._~+/=-]{16,}' || true)
@@ -161,4 +181,5 @@ token=$(HUVU_PASSWORD=$password HUVU_HERMES_KEY=$key huvu user add "$user" --nam
 configure "$user" "$home"
 hermes -p "$user" config set API_SERVER_KEY "$key" >/dev/null
 hermes -p "$user" config set HUVU_MCP_TOKEN "$token" >/dev/null
+aliases
 echo "Set up $user. Restart Hermes: hermes gateway restart"

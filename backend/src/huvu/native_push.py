@@ -147,7 +147,8 @@ def _message(name: str, data: dict[str, Any]) -> dict[str, Any] | None:
     shown: tuple[str, str] | None = None
     urgent = True
     if name == "notify":
-        shown = ("huvu", data["text"])
+        # A message from someone in the family is titled with their name.
+        shown = (data.get("from") or "huvu", data["text"])
         urgent = data.get("urgency") == "high"
     elif name == "approval" and data.get("status") == "pending":
         shown = ("huvu needs a yes", f"{data['label'].rstrip('.')}. Asked by {data['requester']}.")

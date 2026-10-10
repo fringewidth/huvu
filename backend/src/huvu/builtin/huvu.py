@@ -2,7 +2,8 @@
 
 The kernel's own log (trigger runs, actions, approvals, wakes, attendance),
 the family mode, the aliases between what people call a thing and what it
-is, pending approvals, the triggers, and the notifications huvu sent. A
+is, pending approvals, the triggers, and the notifications huvu sent,
+messages between people included. A
 trigger reads `huvu_mode` the same way it reads `ha_entities`, and the
 agent changes the mode through actions that go through the same policy.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from ..accounts import AuthError
 from ..db import dumps, loads
 from ..prompts import TEXT
 from ..source import Source, SourceError
@@ -49,7 +51,7 @@ TABLES = [
     TableSpec(
         name="notifications",
         description=TEXT["huvu.table.notifications"],
-        columns=_columns("notifications", ("text", "text"), ("image", "text"), ("urgency", "text")),
+        columns=_columns("notifications", ("text", "text"), ("image", "text"), ("urgency", "text"), ("sender", "text"), ("recipient", "text")),
         labels=["owner"],
     ),
     TableSpec(name="mode", description=TEXT["huvu.table.mode"], columns=_columns("mode", ("mode", "text")), live=True, labels=["owner"]),
@@ -152,6 +154,31 @@ class HuvuSource(Source):
                     ),
                     autonomy="silent",
                 ),
+                ActionSpec(
+                    name="set_person_alias",
+                    description=TEXT["huvu.action.set_person_alias"],
+                    input_schema=_object({"person": {"type": "string"}, "alias": {"type": "string"}}, ["person", "alias"]),
+                    # It changes only what the caller's own agent and phone
+                    # call someone.
+                    autonomy="silent",
+                ),
+                ActionSpec(
+                    name="message",
+                    description=TEXT["huvu.action.message"],
+                    input_schema=_object(
+                        {
+                            "person": {"type": "string"},
+                            "group": {"type": "string"},
+                            "text": {"type": "string"},
+                            "image": {"type": "string"},
+                            "urgency": {"type": "string", "enum": ["low", "normal", "high"]},
+                        },
+                        ["text"],
+                    ),
+                    # Reaching someone else is a bigger act than reaching
+                    # your own person, so the sender hears that it went.
+                    autonomy="notify",
+                ),
             ],
         )
 
@@ -242,6 +269,8 @@ class HuvuSource(Source):
             "set_alias": self._set_alias,
             "remove_alias": self._remove_alias,
             "notify": self._notify,
+            "message": self._message,
+            "set_person_alias": self._set_person_alias,
             "activate_trigger": self._activate_trigger,
         }
         handler = handlers.get(name)
@@ -288,6 +317,54 @@ class HuvuSource(Source):
         row = {"text": args["text"], "image": args.get("image"), "urgency": args.get("urgency", "normal")}
         await self.ctx.record("notifications", row, user=caller.user, group=None if caller.user else caller.group)
         return Result(data={"sent": True}, labels=["owner"])
+
+    async def _message(self, args: dict[str, Any], caller: Caller) -> Result:
+        """A notification from one person to another, or to a group's
+        members, sent in the sender's name. The sender names the person by
+        their own alias for them."""
+        accounts = self._kernel.accounts
+        sender = caller.user
+        if sender is None:
+            raise SourceError("only a person can send a message, and nobody is recognized here; huvu_notify reaches this group's members")
+        if bool(args.get("person")) == bool(args.get("group")):
+            raise SourceError("name a person or a group, one of the two")
+        group = args.get("group")
+        if group is not None and not accounts.is_member(group, sender):
+            raise SourceError(f"you can message only your own groups: {', '.join(accounts.member_groups(sender)) or 'you are a member of none'}")
+        person = self._person(sender, args["person"]) if args.get("person") else None
+        image = self._kernel.media.url_for(args["image"]) if args.get("image") else None
+        urgency = args.get("urgency", "normal")
+        await self._kernel.notify(person, group, args["text"], image=image, urgency=urgency, sender=sender)
+        row = {"text": args["text"], "image": args.get("image"), "urgency": urgency, "sender": sender, "recipient": person or group}
+        # A group's members, the sender among them, all see the group's row.
+        # A message to one person is a row for each of the two.
+        owners = [(person, None), (sender, None)] if person else [(None, group)]
+        for user, owner_group in owners:
+            await self.ctx.record("notifications", row, user=user, group=owner_group)
+        return Result(data={"sent": True, "to": args.get("person") or group}, labels=["owner"])
+
+    async def _set_person_alias(self, args: dict[str, Any], caller: Caller) -> Result:
+        """Sets what the caller calls someone they share a group with."""
+        accounts = self._kernel.accounts
+        if caller.user is None:
+            raise SourceError("only a person has names for the others, and nobody is recognized here")
+        person = self._person(caller.user, args["person"])
+        try:
+            accounts.set_alias(caller.user, person, args["alias"])
+        except AuthError as err:
+            raise SourceError(str(err)) from err
+        return Result(data={"person": person, "alias": accounts.alias(caller.user, person)}, labels=["owner"])
+
+    def _person(self, sender: str, alias: str) -> str:
+        """The user the sender calls `alias` (or names by username), among
+        the people they can message."""
+        accounts = self._kernel.accounts
+        wanted = alias.strip().lower()
+        known = {u: accounts.alias(sender, u) for u in accounts.reachable(sender)}
+        match = next((u for u, called in known.items() if wanted in (u, called.lower())), None)
+        if match is None:
+            raise SourceError(f"nobody you can message is called {alias!r}; you can message {', '.join(known.values()) or 'nobody'}")
+        return match
 
 
 def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:

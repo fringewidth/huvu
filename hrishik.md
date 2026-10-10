@@ -129,6 +129,15 @@ ssh -t laptop "docker exec -it -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/
 ssh laptop "docker restart huvu-huvu-1"
 ```
 
+setup.sh asks what people call each other only at a terminal, so over
+`docker exec` without `-it` it skips that. Set them one at a time (owner,
+person, alias; "" goes back to the name), or list one person's:
+
+```sh
+ssh laptop "docker exec -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huvu user alias hrishik mom Amma"
+ssh laptop "docker exec -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huvu user aliases hrishik"
+```
+
 Wipe someone (no name: the home group and Hermes's default profile). It
 refuses while the backend runs:
 

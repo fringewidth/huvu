@@ -106,7 +106,7 @@ Only the dev seed (`?seed` in a dev build) shows parts without a model sending t
 | Event | To | Data |
 |---|---|---|
 | The turn events above | The device whose conversation it is | As above. A client gets its own turns twice and keeps one by turn id. A turn the device didn't start itself (a future Alexa ask shown on the TV) arrives only here. |
-| `notify` | The phones of the user it is for, or the group members' phones for a shared device | `id`, `at`, `text`, `image`, `urgency`, `opens`, `user`, `group`. `opens` names the app screen that deals with it: `"triggers"` for a trigger the wake limit paused, or for triggers that fire a lot |
+| `notify` | The phones of the user it is for, or the group members' phones for a shared device | `id`, `at`, `text`, `image`, `urgency`, `opens`, `user`, `group`, `from`. `opens` names the app screen that deals with it: `"triggers"` for a trigger the wake limit paused, or for triggers that fire a lot. `from` is set on a message one person sent another through huvu: the sender, as the recipient calls them (such as `"mom"`). It is null when huvu sent it. A message to a group never reaches its sender |
 | `approval` | The same phones | A pending or resolved approval |
 | `identify` | The phones of the person asked | `id`, `device` (`id`, `name`), `user`, `asked_by` (`device`, `model`, `voice` or `trigger`), `reason`, `asked_at`, `expires_at` |
 | `identify.done` | The same phones | `id`, `status` (`confirmed`, `denied`, `expired`, or `withdrawn` when someone else said yes first) |
