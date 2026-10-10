@@ -290,7 +290,9 @@ class ConversationHub:
         """A Hermes session for the conversation. `main` makes it the one
         its next asks on pro continue; a quick turn's session is used once."""
         session = f"huvu-{conversation_id}-{secrets.token_hex(3)}"
-        title = f"huvu {'chat' if main else 'quick turn'} on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}"
+        # Hermes refuses a title another session of the profile has, and
+        # two quick turns can start in the same minute: the id keeps it unique.
+        title = f"huvu {'chat' if main else 'quick turn'} on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M} ({session})"
         await self._kernel.hermes.create_session(profile, session, title=title)
         self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id, route=route)
         if main:

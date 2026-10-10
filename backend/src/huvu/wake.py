@@ -72,7 +72,7 @@ class Waker:
         trigger = payload.get("trigger", "manual")
         profile = self._kernel.accounts.profile(user)
         session = f"wake-{trigger}-{now:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
-        await self._kernel.hermes.create_session(profile, session, title=f"huvu wake {trigger}: {payload.get('note', '')[:60]}")
+        await self._kernel.hermes.create_session(profile, session, title=f"huvu wake {trigger} ({session}): {payload.get('note', '')[:60]}")
         self._kernel.sessions.record(session, "wake", user=user, trigger_id=trigger)
         reply = ""
         try:

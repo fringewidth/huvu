@@ -187,6 +187,13 @@ async def test_a_quick_turn_runs_alone_and_leaves_the_main_session(theatre, herm
     assert row["hermes_session"] == main
 
 
+async def test_two_quick_turns_can_start_in_the_same_minute(theatre, hermes: FakeHermes):
+    # Hermes refuses a title another session has, and titles hold the minute.
+    for ask in ["turn on the projector", "night sky off"]:
+        await collect(theatre, await theatre.conversations.ask("c1", ask, user="me"))
+    assert len(hermes.sessions) == 2
+
+
 async def test_the_main_session_hears_of_quick_turns_on_its_next_ask(theatre, hermes: FakeHermes, clock):
     await collect(theatre, await theatre.conversations.ask("c1", "plan a movie night for saturday", user="me"))
     main = hermes.sessions[0]
