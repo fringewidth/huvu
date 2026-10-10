@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -9,7 +10,7 @@ import pytest
 from huvu.config import Config
 from huvu.hermes import HermesClient, Profile
 from huvu.kernel import Kernel
-from huvu.routing import Vocabulary, plain_control, words
+from huvu.routing import Switchable, direct, words
 from huvu.spec import Caller
 from huvu_drivers.ha import source as ha_source
 from huvu_drivers.ha.source import HomeAssistant
@@ -17,131 +18,73 @@ from huvu_drivers.ha.source import HomeAssistant
 from .fake_ha import FakeHA
 from .fakes import FakeHermes
 
-THEATRE = Vocabulary(
-    names=frozenset(
-        words("Home Theatre AV AC Temperature Strip Lights Night Sky Focus Lights Projector on Projector off Amplifier mute")
-        + words("Home theatre volume Home theatre play Xiaomi Robot Vacuum-Mop Pro ground floor projector")
-        + words("Netflix Prime Video YouTube JioHotstar")
-    ),
-    options=("jiohotstar", "netflix", "prime video", "youtube"),
-)
 
-PLAIN = [
+def switchable(tool: str, *phrases: str, verbs: str = "on off") -> Switchable:
+    return Switchable(tool, phrases[0], tuple(" ".join(words(p)) for p in phrases), frozenset(verbs.split()))
+
+
+# Shaped like the home theatre: the names, aliases, and the area or device
+# before or off each name, as the router reads them.
+HOUSE = [
+    switchable("ha_light_night_sky", "Night sky", "home theatre night sky", "main switchboard night sky"),
+    switchable("ha_light_strip_lights", "Strip lights", "home theatre strip lights", "main switchboard strip lights"),
+    switchable("ha_light_focus_lights", "Focus lights", "home theatre focus lights", "main switchboard focus lights"),
+    switchable("ha_light_focus_and_strip", "Focus and strip lights", "all lights", "home theatre focus and strip lights"),
+    switchable("ha_switch_hrishik_dnd", "Hrishik Room Do not disturb", "do not disturb"),
+    switchable("ha_switch_living_dnd", "Living Room Do not disturb", "do not disturb", "home theatre living room do not disturb"),
+    switchable("ha_vacuum_robot", "Robot Cleaner", "vacuum", verbs="start stop"),
+]
+DIRECT = [
+    ("turn on the night sky", "ha_light_night_sky", "on"),
+    ("Turn off the night sky.", "ha_light_night_sky", "off"),
+    ("turn on the night ksy", "ha_light_night_sky", "on"),
+    ("switch off the strip lights", "ha_light_strip_lights", "off"),
+    ("switch on home theatre night sky", "ha_light_night_sky", "on"),
+    ("turn off all lights", "ha_light_focus_and_strip", "off"),
+    ("turn on focus light", "ha_light_focus_lights", "on"),
+    ("turn off hrishik room do not disturb", "ha_switch_hrishik_dnd", "off"),
+    ("start the vacuum", "ha_vacuum_robot", "start"),
+    ("stop robot cleaner", "ha_vacuum_robot", "stop"),
+]
+NOT_DIRECT = [
+    # two things share the name
+    "turn off do not disturb",
+    # nothing is that close
+    "turn on the lights",
+    "turn on the nite sky",
     "turn on the projector",
-    "Turn on the, uh, the projector.",
-    "can you turn on the projector for me please",
-    "projector on",
-    "night sky off",
-    "set the AC to 24",
-    "AC to 22",
-    "make the AC 26 degrees",
-    "turn the AC up 2 degrees",
-    "volume down 5",
-    "turn the volume up by 10",
-    "lower the volume a bit",
-    "increase the volume",
-    "decrease the volume by 5",
-    "start the vacuum",
-    "send the vacuum back to its dock",
-    "turn off the AC and the lights",
-    "turn on the strip lights, then turn the volume up by 10",
-    "play Stranger Things on Netflix",
-    "play the latest episode of the boys on prime video",
-    "is the projector on",
-    "are the theatre lights on?",
-]
-NOT_PLAIN = [
-    # for later, or on a change
-    "turn off the projector at midnight",
-    "turn on the AC in 10",
-    "turn on the AC in 10 minutes",
-    "turn on the AC when I get home",
-    "if the vacuum hasn't run by noon, start it",
-    "turn on the AC if it's above 28 inside",
-    # questions, finding, advice
-    "what's the best projector under 1 lakh",
-    "the lights keep turning off by themselves, what's going on",
-    "why is the AC not cooling",
-    # hints, vague, and too little to act on
-    "it's too hot in here",
-    "it's stuffy in here",
-    "movie time",
-    "set the mood for a movie",
-    "let's chill with some youtube",
-    "lights",
-    "play",
+    # more than the device
+    "turn on the night sky and the strip lights",
+    "turn on the night sky at 9",
+    "turn off the night sky when I leave",
+    "turn on the night sky please",
+    "can you turn on the night sky",
+    # another shape
+    "turn the night sky on",
+    "night sky on",
+    "is the night sky on",
+    "dim the night sky",
     "turn it on",
-    # a number that isn't a setting
-    "turn on the AC 6",
-    # a typo
-    "projectr on pls",
-    # a read of something that isn't the house's
-    "is it going to rain",
-    "is mom home",
-    "is the projector broken",
-    # nothing of the house's
-    "hi",
-    "remind me to call mom at 6",
+    "turn on",
+    # a verb the thing doesn't take
+    "stop the night sky",
+    "turn on the vacuum",
 ]
 
 
-@pytest.mark.parametrize("ask", PLAIN)
-def test_plain_house_control_goes_to_basic(ask):
-    assert plain_control(ask, THEATRE)
+@pytest.mark.parametrize(("ask", "tool", "verb"), DIRECT)
+def test_turning_one_thing_on_or_off_needs_no_model(ask, tool, verb):
+    command = direct(ask, HOUSE)
+    assert command is not None and (command.tool, command.verb) == (tool, verb)
 
 
-@pytest.mark.parametrize("ask", NOT_PLAIN)
-def test_anything_else_goes_to_pro(ask):
-    assert not plain_control(ask, THEATRE)
-
-
-async def test_the_vocabulary_is_the_names_of_what_huvu_can_work(tmp_path, clock, hermes, monkeypatch):
-    monkeypatch.setenv("HA_TOKEN", "secret")
-    monkeypatch.setattr(ha_source, "REFRESH_DEBOUNCE", 0.0)
-    ha = FakeHA(clock)
-    ha.entity("light.theatre_night_sky", "off", area="living_room", friendly_name="Night Sky", aliases=["stars"])
-    ha.entity("sensor.theatre_humidity", "60", area="living_room", friendly_name="Humidity", device_class="humidity")
-    ha.entity("vacuum.robot", "docked", area="hall", friendly_name="Robot Vacuum-Mop 2 Pro")
-    ha.script(
-        "theatre_play",
-        alias="Theatre play",
-        labels=["huvu_silent"],
-        fields={"app": {"selector": {"select": {"options": ["Netflix", {"value": "prime_video", "label": "Prime Video"}]}}}},
-    )
-    source = HomeAssistant({}, connect=ha.connect)
-    kernel = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"ha": source}, clock=clock)
-    task = asyncio.create_task(source.run())
-    for _ in range(200):
-        if source._connected and kernel.router.vocabulary().names:
-            break
-        await asyncio.sleep(0.01)
-    vocabulary = kernel.router.vocabulary()
-    # A sensor isn't something huvu works, and numbers in names don't count.
-    assert {"night", "sky", "stars", "living", "room", "robot", "vacuum", "mop", "pro", "theatre", "netflix", "prime", "video"} <= vocabulary.names
-    assert "humidity" not in vocabulary.names and "2" not in vocabulary.names
-    assert "prime video" in vocabulary.options and "netflix" in vocabulary.options
-    assert (await kernel.router.route("turn on the stars")).tier == "basic"
-    assert (await kernel.router.route("play Severance on Prime Video")).tier == "basic"
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
-    await kernel.conversations.close()
-    kernel.data.close()
-    kernel.db.close()
-
-
-# The conversation side.
+@pytest.mark.parametrize("ask", NOT_DIRECT)
+def test_anything_less_certain_goes_to_a_model(ask):
+    assert direct(ask, HOUSE) is None
 
 
 async def collect(kernel, live) -> list[tuple[str, dict]]:
     return [item async for item in kernel.conversations.subscribe(live)]
-
-
-@pytest.fixture
-def theatre(kernel, family):
-    """The kernel, its users, and the theatre's names. Chats run in their
-    user's Hermes profile, so the users must exist."""
-    kernel.router.vocabulary = lambda: THEATRE
-    return kernel
 
 
 async def routes(kernel, device: str = "c1") -> list[dict]:
@@ -150,106 +93,19 @@ async def routes(kernel, device: str = "c1") -> list[dict]:
     return [json.loads(r[0]) for r in (await kernel.tools.call("data_sql", {"sql": sql}, me)).data["rows"]]
 
 
-async def test_plain_house_control_runs_on_basic_without_thinking(theatre, hermes: FakeHermes):
-    live = await theatre.conversations.ask("c1", "turn on the projector", user="me")
-    await collect(theatre, live)
-    session = live.turn.hermes_session
-    assert (hermes.models[session], hermes.efforts[session]) == ("gpt-6-luna", "none")
-    assert await routes(theatre) == [{"tier": "basic", "model": "gpt-6-luna", "effort": "none", "why": "control", "p": None}]
-
-
-async def test_without_clef_anything_else_runs_on_pro(theatre, hermes: FakeHermes):
-    live = await theatre.conversations.ask("c1", "it's stuffy in here", user="me")
-    await collect(theatre, live)
-    session = live.turn.hermes_session
-    assert (hermes.models[session], hermes.efforts[session]) == ("gpt-6-sol", None)
-    assert await routes(theatre) == [{"tier": "pro", "model": "gpt-6-sol", "effort": None, "why": "failed", "p": None}]
-
-
-async def test_with_the_router_off_every_ask_runs_on_pro(theatre, hermes: FakeHermes):
-    theatre.config.router_enabled = False
-    live = await theatre.conversations.ask("c1", "turn on the projector", user="me")
-    await collect(theatre, live)
-    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
-    assert (await routes(theatre))[0]["why"] == "off"
-
-
-async def test_a_quick_turn_runs_alone_and_leaves_the_main_session(theatre, hermes: FakeHermes, clock):
-    await collect(theatre, await theatre.conversations.ask("c1", "plan a movie night for saturday", user="me"))
-    main = hermes.sessions[0]
-    clock.advance(minutes=1)
-    quick = await theatre.conversations.ask("c1", "turn on the projector", user="me")
-    await collect(theatre, quick)
-    # A session of its own, with the ask alone: no transcript, no notes.
-    assert quick.turn.hermes_session != main and hermes.models[quick.turn.hermes_session] == "gpt-6-luna"
-    assert hermes.messages[-1][1].endswith("\n\nturn on the projector") and "<earlier>" not in hermes.messages[-1][1]
-    row = theatre.db.execute("SELECT hermes_session FROM conversations WHERE id = 'c1'").fetchone()
-    assert row["hermes_session"] == main
-
-
-async def test_two_quick_turns_can_start_in_the_same_minute(theatre, hermes: FakeHermes):
-    # Hermes refuses a title another session has, and titles hold the minute.
-    for ask in ["turn on the projector", "night sky off"]:
-        await collect(theatre, await theatre.conversations.ask("c1", ask, user="me"))
-    assert len(hermes.sessions) == 2
-
-
-async def test_the_main_session_hears_of_quick_turns_on_its_next_ask(theatre, hermes: FakeHermes, clock):
-    await collect(theatre, await theatre.conversations.ask("c1", "plan a movie night for saturday", user="me"))
-    main = hermes.sessions[0]
-    for ask in ["turn on the projector", "night sky off"]:
-        clock.advance(minutes=1)
-        await collect(theatre, await theatre.conversations.ask("c1", ask, user="me"))
-    clock.advance(minutes=1)
-    await collect(theatre, await theatre.conversations.ask("c1", "what snacks go with that?", user="me"))
-    session, message = hermes.messages[-1]
-    assert session == main
-    assert 'they said "turn on the projector", and you answered "ok"' in message
-    assert message.index("turn on the projector") < message.index("night sky off") < message.index("what snacks go with that?")
-    # Told once: the ask after that carries no notes.
-    clock.advance(minutes=1)
-    await collect(theatre, await theatre.conversations.ask("c1", "and drinks?", user="me"))
-    assert "between your turns" not in hermes.messages[-1][1]
-    assert [r["why"] for r in await routes(theatre)] == ["failed", "control", "control", "failed", "failed"]
-
-
-async def test_a_cold_main_session_reads_quick_turns_in_its_transcript(theatre, hermes: FakeHermes, clock, monkeypatch):
-    from huvu import conversations
-
-    for ask in ["plan a movie night", "turn on the projector", "turn on the strip lights", "night sky off"]:
-        await collect(theatre, await theatre.conversations.ask("c1", ask, user="me"))
-    # Each turn is its ask and "ok": room for the last two.
-    monkeypatch.setattr(conversations, "TRANSCRIPT_CHARS", 45)
-    clock.advance(minutes=6)
-    await collect(theatre, await theatre.conversations.ask("c1", "what snacks go with it?", user="me"))
-    message = hermes.messages[-1][1]
-    assert "starts at turn 3, and the turns before it were left out" in message
-    assert "Them: turn on the strip lights\nYou: ok\nThem: night sky off\nYou: ok\n</earlier>" in message
-    assert "between your turns" not in message
-
-
-async def test_an_edit_by_a_quick_turn_restarts_the_main_session(theatre, hermes: FakeHermes, clock):
-    first = await theatre.conversations.ask("c1", "plan a movie night for saturday", user="me")
-    await collect(theatre, first)
-    await collect(theatre, await theatre.conversations.ask("c1", "turn on the projector", replaces=first.turn.id, user="me"))
-    await collect(theatre, await theatre.conversations.ask("c1", "what snacks go with it?", user="me"))
-    session, message = hermes.messages[-1]
-    assert session not in (hermes.sessions[0], hermes.sessions[1])
-    assert "Them: turn on the projector\nYou: ok\n</earlier>" in message and "plan a movie night" not in message
-
-
 def clef(kernel, answers: dict[str, float] | None = None, *, status: int = 200, slow: bool = False) -> list[str]:
     """Points the router at a fake Workers AI that answers each ask with its
-    probability of pro from `answers`, and returns the asks it was sent."""
+    probability of needing context from `answers`, and returns the asks it
+    was sent."""
     asked: list[str] = []
 
-    def answer(request: httpx.Request) -> httpx.Response:
+    async def answer(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         asked.append(body["state"]["ask"])
         assert request.headers["authorization"] == "Bearer cf-test"
         assert body["questions"]["escalate"]["type"] == "noul"
         if slow:
-            raise httpx.ReadTimeout("too slow", request=request)
+            await asyncio.sleep(5)
         if status != 200:
             return httpx.Response(status, json={"success": False})
         p = (answers or {})[body["state"]["ask"]]
@@ -261,37 +117,238 @@ def clef(kernel, answers: dict[str, float] | None = None, *, status: int = 200, 
     return asked
 
 
-async def test_clef_sends_quick_asks_to_basic_and_the_rest_to_pro(theatre, hermes: FakeHermes):
-    asked = clef(theatre, {"what's the temperature today": 0.18, "plan a movie night for saturday": 0.8})
-    quick = await theatre.conversations.ask("c1", "what's the temperature today", user="me")
-    await collect(theatre, quick)
-    assert hermes.models[quick.turn.hermes_session] == "gpt-6-luna" and hermes.efforts[quick.turn.hermes_session] == "none"
-    slow = await theatre.conversations.ask("c1", "plan a movie night for saturday", user="me")
-    await collect(theatre, slow)
-    assert hermes.models[slow.turn.hermes_session] == "gpt-6-sol"
-    # A house command never waits for Clef.
-    await collect(theatre, await theatre.conversations.ask("c1", "turn on the projector", user="me"))
-    assert asked == ["what's the temperature today", "plan a movie night for saturday"]
-    assert [(r["why"], r["p"]) for r in await routes(theatre)] == [("clef", 0.18), ("other", 0.8), ("control", None)]
+# On a fake Home Assistant: what huvu works itself.
 
 
-async def test_an_ask_at_the_line_runs_on_pro(theatre):
-    clef(theatre, {"what's the weather": 0.30})
-    assert (await theatre.router.route("what's the weather")).tier == "pro"
+@pytest.fixture
+async def house(tmp_path, clock, hermes, monkeypatch):
+    """A kernel on a fake Home Assistant, and a user."""
+    monkeypatch.setenv("HA_TOKEN", "secret")
+    monkeypatch.setattr(ha_source, "REFRESH_DEBOUNCE", 0.0)
+    ha = FakeHA(clock)
+    ha.entity("light.theatre_night_sky", "off", area="living_room", friendly_name="Night Sky", aliases=["stars"])
+    ha.entity("light.theatre_strip", "off", area="living_room", friendly_name="Strip Lights", labels=["huvu_ask"])
+    ha.entity("vacuum.robot", "docked", area="hall", friendly_name="Robot Cleaner", aliases=["vacuum"])
+    ha.entity("sensor.theatre_humidity", "60", area="living_room", friendly_name="Humidity", device_class="humidity")
+    source = HomeAssistant({}, connect=ha.connect)
+    kernel = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"ha": source}, clock=clock)
+    kernel.accounts.add_user("me", "Me", "correct horse", "key-me")
+    task = asyncio.create_task(source.run())
+    for _ in range(200):
+        if source._connected and kernel.router.switchables(Caller(kind="kernel", user="me")):
+            break
+        await asyncio.sleep(0.01)
+    yield kernel, ha
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    await kernel.conversations.close()
+    kernel.data.close()
+    kernel.db.close()
 
 
-async def test_a_failed_or_slow_clef_runs_on_pro(theatre):
-    clef(theatre, status=503)
-    assert (await theatre.router.route("what's the weather")).why == "failed"
-    clef(theatre, slow=True)
-    assert (await theatre.router.route("what's the weather")).why == "failed"
+async def test_what_huvu_can_work_itself_is_what_takes_a_verb_and_doesnt_ask(house):
+    kernel, _ = house
+    found = {s.tool: s for s in kernel.router.switchables(Caller(kind="kernel", user="me"))}
+    # The strip lights ask first, and a sensor has no action.
+    assert set(found) == {"ha_light_theatre_night_sky", "ha_vacuum_robot"}
+    assert found["ha_light_theatre_night_sky"].phrases == ("living room night sky", "night sky", "stars")
+    assert found["ha_vacuum_robot"].verbs == {"start", "stop"}
 
 
-async def test_clef_answers_a_repeated_ask_once(theatre):
-    asked = clef(theatre, {"what's the weather": 0.2})
+async def test_huvu_turns_a_thing_on_itself_and_logs_it(house, hermes: FakeHermes):
+    kernel, ha = house
+    live = await kernel.conversations.ask("c1", "turn on the night ksy", user="me")
+    events = await collect(kernel, live)
+    assert hermes.sessions == []
+    assert [(c["domain"], c["service"], c["target"]) for c in ha.calls] == [("light", "turn_on", {"entity_id": "light.theatre_night_sky"})]
+    assert live.turn.answer == "Turned on: Night Sky." and live.turn.ending is None
+    assert live.turn.parts[0]["toolName"] == "ha_light_theatre_night_sky" and live.turn.parts[0]["result"] == {}
+    assert ("turn.ended", {"turn": live.turn.id, "conversation": "c1", "ending": None, "answer": "Turned on: Night Sky."}) in events
+    assert await routes(kernel) == [{"tier": "direct", "model": None, "effort": None, "why": "direct", "p": None}]
+    sql = "SELECT summary FROM huvu_events WHERE type = 'action.requested'"
+    [row] = (await kernel.tools.call("data_sql", {"sql": sql}, Caller(kind="hermes", user="me"))).data["rows"]
+    assert row[0].startswith("kernel, user me, device c1 asked for ha.light_theatre_night_sky (silent)")
+
+
+async def test_huvu_starts_a_vacuum_itself_and_tells(house, hermes: FakeHermes):
+    kernel, ha = house
+    live = await kernel.conversations.ask("c1", "start the vacuum", user="me")
+    await collect(kernel, live)
+    assert hermes.sessions == [] and live.turn.answer == "Started: Robot Cleaner."
+    assert [(c["domain"], c["service"]) for c in ha.calls] == [("vacuum", "start")]
+
+
+async def test_a_failed_direct_turn_says_it_couldnt(house, monkeypatch):
+    kernel, ha = house
+
+    def refuse(message, context):
+        raise KeyError("light.theatre_night_sky")
+
+    monkeypatch.setattr(ha, "_run_device_service", refuse)
+    live = await kernel.conversations.ask("c1", "turn on the night sky", user="me")
+    await collect(kernel, live)
+    assert live.turn.answer == "I couldn't do that." and live.turn.ending is None
+    assert live.turn.parts[0]["result"] == {"error": True}
+
+
+async def test_a_thing_that_asks_first_goes_to_a_model(house, hermes: FakeHermes):
+    kernel, ha = house
+    await collect(kernel, await kernel.conversations.ask("c1", "turn on the strip lights", user="me"))
+    assert ha.calls == [] and len(hermes.sessions) == 1
+
+
+async def test_the_main_session_hears_of_what_huvu_did_itself(house, hermes: FakeHermes, clock):
+    kernel, _ = house
+    await collect(kernel, await kernel.conversations.ask("c1", "plan a movie night for saturday", user="me"))
+    main = hermes.sessions[0]
+    clock.advance(minutes=1)
+    await collect(kernel, await kernel.conversations.ask("c1", "turn off the stars", user="me"))
+    clock.advance(minutes=1)
+    await collect(kernel, await kernel.conversations.ask("c1", "and turn it back on in an hour", user="me"))
+    session, message = hermes.messages[-1]
+    assert session == main and hermes.sessions == [main]
+    assert 'they said "turn off the stars", and you answered "Turned off: Night Sky."' in message
+    assert message.endswith("and turn it back on in an hour")
+
+
+# Clef-flash, and the sessions each route runs in.
+
+
+@pytest.fixture
+def talk(kernel, family):
+    """The kernel and its users: chats run in their user's Hermes profile,
+    so the users must exist."""
+    return kernel
+
+
+async def test_a_one_off_runs_on_basic_alone_without_thinking(talk, hermes: FakeHermes):
+    clef(talk, {"what's the temperature today": 0.1})
+    live = await talk.conversations.ask("c1", "what's the temperature today", user="me")
+    await collect(talk, live)
+    session = live.turn.hermes_session
+    assert (hermes.models[session], hermes.efforts[session]) == ("gpt-6-luna", "none")
+    assert await routes(talk) == [{"tier": "basic", "model": "gpt-6-luna", "effort": "none", "why": "one_off", "p": 0.1}]
+
+
+async def test_an_ask_that_needs_context_runs_on_pro(talk, hermes: FakeHermes):
+    clef(talk, {"make it shorter": 0.9})
+    live = await talk.conversations.ask("c1", "make it shorter", user="me")
+    await collect(talk, live)
+    assert (hermes.models[live.turn.hermes_session], hermes.efforts[live.turn.hermes_session]) == ("gpt-6-sol", None)
+    assert (await routes(talk))[0]["why"] == "context"
+
+
+async def test_an_ask_at_the_line_runs_on_pro(talk):
+    clef(talk, {"what's the weather": 0.30})
+    assert (await talk.router.route("what's the weather", Caller(kind="kernel", user="me"))).tier == "pro"
+
+
+async def test_without_clef_every_ask_runs_on_pro(talk, hermes: FakeHermes):
+    live = await talk.conversations.ask("c1", "it's stuffy in here", user="me")
+    await collect(talk, live)
+    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
+    assert await routes(talk) == [{"tier": "pro", "model": "gpt-6-sol", "effort": None, "why": "failed", "p": None}]
+
+
+async def test_a_failed_clef_runs_on_pro(talk):
+    clef(talk, status=503)
+    assert (await talk.router.route("what's the weather", Caller(kind="kernel", user="me"))).why == "failed"
+
+
+async def test_a_slow_clef_is_cut_off_at_the_timeout(talk):
+    clef(talk, slow=True)
+    talk.config.router_timeout = 0.05
+    started = time.monotonic()
+    assert (await talk.router.route("what's the weather", Caller(kind="kernel", user="me"))).why == "failed"
+    assert time.monotonic() - started < 0.5
+
+
+async def test_clef_answers_a_repeated_ask_once(talk):
+    asked = clef(talk, {"what's the weather": 0.2})
     for ask in ["what's the weather", "What's the weather?", "what's  the weather"]:
-        assert (await theatre.router.route(ask)).tier == "basic"
+        assert (await talk.router.route(ask, Caller(kind="kernel", user="me"))).tier == "basic"
     assert asked == ["what's the weather"]
+
+
+async def test_with_the_router_off_every_ask_runs_on_pro(talk, hermes: FakeHermes):
+    talk.config.router_enabled = False
+    live = await talk.conversations.ask("c1", "turn on the projector", user="me")
+    await collect(talk, live)
+    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
+    assert (await routes(talk))[0]["why"] == "off"
+
+
+ONE_OFFS = {"turn on the projector": 0.05, "night sky off": 0.05, "what's the time": 0.05}
+CONTEXT = {"plan a movie night for saturday": 0.8, "plan a movie night": 0.8, "what snacks go with that?": 0.9, "what snacks go with it?": 0.9, "and drinks?": 0.9}
+
+
+async def test_a_one_off_runs_alone_and_leaves_the_main_session(talk, hermes: FakeHermes, clock):
+    clef(talk, {**ONE_OFFS, **CONTEXT})
+    await collect(talk, await talk.conversations.ask("c1", "plan a movie night for saturday", user="me"))
+    main = hermes.sessions[0]
+    clock.advance(minutes=1)
+    quick = await talk.conversations.ask("c1", "turn on the projector", user="me")
+    await collect(talk, quick)
+    # A session of its own, with the ask alone: no transcript, no notes.
+    assert quick.turn.hermes_session != main and hermes.models[quick.turn.hermes_session] == "gpt-6-luna"
+    assert hermes.messages[-1][1].endswith("\n\nturn on the projector") and "<earlier>" not in hermes.messages[-1][1]
+    row = talk.db.execute("SELECT hermes_session FROM conversations WHERE id = 'c1'").fetchone()
+    assert row["hermes_session"] == main
+
+
+async def test_two_one_offs_can_start_in_the_same_minute(talk, hermes: FakeHermes):
+    # Hermes refuses a title another session has, and titles hold the minute.
+    clef(talk, ONE_OFFS)
+    for ask in ["turn on the projector", "night sky off"]:
+        await collect(talk, await talk.conversations.ask("c1", ask, user="me"))
+    assert len(hermes.sessions) == 2
+
+
+async def test_the_main_session_hears_every_turn_since_its_last(talk, hermes: FakeHermes, clock):
+    clef(talk, {**ONE_OFFS, **CONTEXT})
+    await collect(talk, await talk.conversations.ask("c1", "plan a movie night for saturday", user="me"))
+    main = hermes.sessions[0]
+    for ask in ["turn on the projector", "night sky off"]:
+        clock.advance(minutes=1)
+        await collect(talk, await talk.conversations.ask("c1", ask, user="me"))
+    clock.advance(minutes=1)
+    await collect(talk, await talk.conversations.ask("c1", "what snacks go with that?", user="me"))
+    session, message = hermes.messages[-1]
+    assert session == main
+    assert 'they said "turn on the projector", and you answered "ok"' in message
+    assert message.index("turn on the projector") < message.index("night sky off") < message.index("what snacks go with that?")
+    # Told once: the ask after that carries no notes.
+    clock.advance(minutes=1)
+    await collect(talk, await talk.conversations.ask("c1", "and drinks?", user="me"))
+    assert "between your turns" not in hermes.messages[-1][1]
+    assert [r["why"] for r in await routes(talk)] == ["context", "one_off", "one_off", "context", "context"]
+
+
+async def test_a_cold_main_session_reads_every_turn_in_its_transcript(talk, hermes: FakeHermes, clock, monkeypatch):
+    from huvu import conversations
+
+    clef(talk, {**ONE_OFFS, **CONTEXT, "turn on the strip lights": 0.05})
+    for ask in ["plan a movie night", "turn on the projector", "turn on the strip lights", "night sky off"]:
+        await collect(talk, await talk.conversations.ask("c1", ask, user="me"))
+    # Each turn is its ask and "ok": room for the last two.
+    monkeypatch.setattr(conversations, "TRANSCRIPT_CHARS", 45)
+    clock.advance(minutes=6)
+    await collect(talk, await talk.conversations.ask("c1", "what snacks go with it?", user="me"))
+    message = hermes.messages[-1][1]
+    assert "starts at turn 3, and the turns before it were left out" in message
+    assert "Them: turn on the strip lights\nYou: ok\nThem: night sky off\nYou: ok\n</earlier>" in message
+    assert "between your turns" not in message
+
+
+async def test_an_edit_by_a_one_off_restarts_the_main_session(talk, hermes: FakeHermes, clock):
+    clef(talk, {**ONE_OFFS, **CONTEXT})
+    first = await talk.conversations.ask("c1", "plan a movie night for saturday", user="me")
+    await collect(talk, first)
+    await collect(talk, await talk.conversations.ask("c1", "turn on the projector", replaces=first.turn.id, user="me"))
+    await collect(talk, await talk.conversations.ask("c1", "what snacks go with it?", user="me"))
+    session, message = hermes.messages[-1]
+    assert session not in (hermes.sessions[0], hermes.sessions[1])
+    assert "Them: turn on the projector\nYou: ok\n</earlier>" in message and "plan a movie night" not in message
 
 
 async def test_hermes_gets_the_effort_as_a_model_option():
