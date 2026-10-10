@@ -168,6 +168,38 @@ def mode_note(mode: str) -> str:
     return VOICE_NOTE if mode == "voice" else TEXT_NOTE
 
 
+# The router's one question to Clef-flash (routing.py), for asks its
+# whitelist of house commands doesn't take. Tuned on 2026-10-10 against 200
+# labelled asks.
+ESCALATE_QUESTION = (
+    "A person asked their home assistant `ask`. A small, fast model will answer it, unless you escalate it to a larger "
+    "model. The small model sees this ask alone, with nothing said before it, and doesn't think before it acts. "
+    "It can work the home's devices, read how they are now, and look up quick facts. Should this ask be escalated?"
+)
+ESCALATE_CRITERIA = {
+    "true": (
+        "Escalate. It needs what was said before (yes, the second one, make it shorter, and the lights, more), sets a "
+        "reminder, a timer, a schedule or anything for later or on a change, takes steps that depend on what it finds, "
+        "asks about the past or about patterns, wants advice, a plan, writing, an explanation, troubleshooting or "
+        "research, hints at what it wants without saying it (it's stuffy, movie time), leaves the choice to you (play "
+        "something chill), depends on something it would have to check first (if it's above 28), or is unclear."
+    ),
+    "false": (
+        "The small model can do it. It works a device, scene or routine the ask names (increase the volume, turn on the "
+        "projector, AC to 24, play a show on Netflix), reads one thing that is true now (is the AC on, what's the "
+        "temperature today, the weather tomorrow, the time), is a greeting, thanks or small talk, or asks a fact with a "
+        "one-line answer."
+    ),
+}
+
+
+def quick_turn(time: str, ask: str, answer: str) -> str:
+    """A plain house command answered quickly in a session of its own, told
+    to the main session on its next ask."""
+    said = f'you answered "{answer}"' if answer else "your answer failed"
+    return f'(huvu, {time}: between your turns, they said "{ask}", and {said}. Not a request, no reply needed.)'
+
+
 def huvu_note(time: str, text: str) -> str:
     """Something huvu tells the model on the device's next ask."""
     return f"(huvu, {time}: {text}. Not a request, no reply needed.)"
@@ -349,7 +381,7 @@ TEXT: dict[str, str] = {
     'chat.table.turns.column.ending': 'stopped or failed; NULL when it finished',
     'chat.table.turns.column.n': 'Its number in its conversation, from 1',
     'chat.table.turns.column.replaces': 'The turn an edit replaced, if this turn came from one',
-    'chat.table.turns.column.route': "Which tier answered and why: {tier, model, effort, why}. why is control (plain house control, on basic), other (on pro), kept (the session was on pro already) or off (the router is off)",
+    'chat.table.turns.column.route': "Which tier answered and why: {tier, model, effort, why, p}. why is control (a plain house command, on basic in a session of its own), clef (a quick ask by Clef-flash, on basic too), other (on pro), failed (Clef-flash couldn't say, so on pro) or off (the router is off); p is Clef-flash's probability that the ask needed pro, when it was asked",
     'chat.table.turns.column.them': 'What the person asked',
     'chat.table.turns.column.turn_id': 'The turn',
     'chat.table.turns.column.usage': "The model's token counts for the turn, cache reads included",

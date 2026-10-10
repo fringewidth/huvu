@@ -161,6 +161,7 @@ class Kernel:
         await self.hermes.close()
         await self.native_push.close()
         await self.hearing.close()
+        await self.router.close()
         self.data.close()
         self.db.close()
 

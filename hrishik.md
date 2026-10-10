@@ -30,6 +30,15 @@ echo 'GROQ_API_KEY=gsk_...' >> backend/.env
 
 huvu speaks with Edge's voices, which need nothing set up.
 
+The router's Clef-flash, once per backend machine: a Cloudflare API token
+from the "Workers AI" template, and the account's ID. Without them, asks
+that aren't house commands all run on pro.
+
+```sh
+echo 'CLOUDFLARE_ACCOUNT_ID=...' >> backend/.env
+echo 'CLOUDFLARE_AI_TOKEN=...' >> backend/.env
+```
+
 Android, on a phone plugged in over USB with USB debugging on:
 
 ```sh
@@ -54,6 +63,8 @@ Next to `compose.yaml`, a `.env`:
 
 ```sh
 GROQ_API_KEY=gsk_...
+CLOUDFLARE_ACCOUNT_ID=...
+CLOUDFLARE_AI_TOKEN=...
 ```
 
 then:

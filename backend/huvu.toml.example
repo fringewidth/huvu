@@ -63,13 +63,16 @@ pro = "gpt-6-sol"
 advanced = "gpt-6-astra"
 # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 
-# The router: an ask that is plain house control (every word one it knows:
-# the house's names, a few verbs, settings) runs on basic without thinking,
-# and every other ask on pro. Routes only escalate: a session on pro stays
-# there until it goes cold.
+# The router: a plain house command (every word one it knows: the house's
+# names, a few verbs, settings) runs on basic without thinking, in a session
+# of its own. Any other ask goes to Clef-flash on Cloudflare Workers AI
+# (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AI_TOKEN), which says whether basic
+# can handle it alone; otherwise, and without those, it runs on pro.
 [router]
-enabled = true     # false runs every ask on pro
-effort = "none"    # the reasoning effort of an ask sent to basic
+enabled = true       # false runs every ask on pro
+effort = "none"      # the reasoning effort of an ask sent to basic
+escalate_at = 0.30   # Clef-flash's probability of pro at which an ask runs there
+timeout = 1.0        # seconds Clef-flash may take; slower, and the ask runs on pro
 
 # Each person's nightly dream, ending with a brief of notes to them.
 [dream]

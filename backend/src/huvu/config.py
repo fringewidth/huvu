@@ -26,9 +26,11 @@
     # the ChatGPT one.
     # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 
-    [router]                 # basic for plain house control, pro for the rest (routing.py)
+    [router]                 # basic for quick asks, pro for the rest (routing.py)
     enabled = true           # false runs every ask on pro
     effort = "none"          # the reasoning effort of an ask sent to basic
+    escalate_at = 0.30       # Clef-flash's probability of pro at which an ask runs there
+    timeout = 1.0            # seconds Clef-flash may take; slower, and the ask runs on pro
 
     [dream]
     at = "04:00"             # each person's nightly dream, local time
@@ -49,7 +51,10 @@ key) and HUVU_MCP_TOKEN (the token that profile sends to /mcp) come from the
 environment, or else from backend/.env (gitignored), which setup.sh writes;
 both serve the default group's shared devices. HUVU_FCM_CREDENTIALS, the
 path of a Firebase service account's JSON key, turns on native push.
-GROQ_API_KEY turns on speech to text (hearing.py). HUVU_TIMEZONE, which
+GROQ_API_KEY turns on speech to text (hearing.py). CLOUDFLARE_ACCOUNT_ID
+and CLOUDFLARE_AI_TOKEN (a token with Workers AI read) let the router ask
+Clef-flash about asks its whitelist doesn't take (routing.py); without
+them those run on pro. HUVU_TIMEZONE, which
 setup.sh writes, overrides `timezone`: an IANA name, Asia/Kolkata unless
 told otherwise. Never the server's own zone, which is UTC in the container. Users, devices and each user's
 profile secrets live in the database (see accounts.py), managed with
@@ -151,9 +156,17 @@ class Config:
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
-    # The router (routing.py): plain house control on basic, the rest on
-    # pro. Off runs every ask on pro.
+    # The router (routing.py): quick asks on basic, the rest on pro. Off
+    # runs every ask on pro.
     router_enabled: bool = True
+    # Clef-flash on Cloudflare Workers AI, for asks the whitelist doesn't
+    # take. Without both, those run on pro.
+    cloudflare_account_id: str | None = None
+    cloudflare_ai_token: str | None = None
+    # Clef-flash's probability that an ask needs pro, at which it runs there.
+    router_escalate_at: float = 0.30
+    # Seconds Clef-flash may take before the ask runs on pro without it.
+    router_timeout: float = 1.0
     # The reasoning effort of an ask the router sends to basic, as Hermes
     # names it: none, minimal, low, medium, high.
     router_effort: str = "none"
@@ -210,6 +223,10 @@ def load(path: Path | None = None) -> Config:
         groq_api_key=secret("GROQ_API_KEY"),
         stt_model=speech.get("stt_model", "whisper-large-v3"),
         router_enabled=bool(router.get("enabled", True)),
+        cloudflare_account_id=secret("CLOUDFLARE_ACCOUNT_ID"),
+        cloudflare_ai_token=secret("CLOUDFLARE_AI_TOKEN"),
+        router_escalate_at=float(router.get("escalate_at", 0.30)),
+        router_timeout=float(router.get("timeout", 1.0)),
         router_effort=str(router.get("effort", "none")),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
@@ -218,6 +235,8 @@ def load(path: Path | None = None) -> Config:
             raise ValueError(f"models.{tier}: the tiers are {', '.join(DEFAULT_MODELS)}")
     if config.dream_tier not in DEFAULT_MODELS:
         raise ValueError(f"dream.tier must be one of {', '.join(DEFAULT_MODELS)}")
+    if not 0 < config.router_escalate_at <= 1:
+        raise ValueError(f"router.escalate_at must be above 0 and at most 1, not {config.router_escalate_at}")
     if config.auth_mode not in ("on", "off"):
         raise ValueError(f"auth.mode must be on or off, not {config.auth_mode!r}")
     for key, level in config.policy.items():

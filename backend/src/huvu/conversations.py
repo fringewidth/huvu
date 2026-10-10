@@ -20,23 +20,13 @@ Every turn that ends becomes a `chat_turns` row (builtin/chat.py), with
 its cache reads (`usage`), so the window can be checked against the
 provider, and its route.
 
-The router (routing.py) picks each ask's tier before its turn starts. A
-model, a provider and an effort each have their own prompt cache, so an ask
-on another route than its session's starts a fresh session too, the same
-way a cold one does. Routes only escalate: a session on basic moves to pro
-when an ask needs it, and a session on pro stays there until it goes cold
-or is rewound, without asking the router.
-
-Edit and retry rewind: the turn and everything after it are replaced.
-Hermes's API can fork a session but can't cut one short, so a rewind always
-starts a fresh session from the transcript of the turns that stay. (A rewind
-endpoint in Hermes, wrapping what its CLI's /undo does, would keep a warm
-cache; see docs/backend-architecture.md.)
-
-Stopping a turn asks Hermes to stop, and keeps relaying until Hermes's own
-stream ends, so the turn shows every token Hermes produced and ends the way
-Hermes says it did: complete if it finished anyway, stopped if it was cut
-off. Only a Hermes that hasn't ended STOP_GRACE later is cut off here.
+The router (routing.py) picks each ask's tier before its turn starts.
+Plain house control runs on basic in a session of its own, with the ask
+alone, used once. Everything else runs on pro in the conversation's main
+session, so a quick turn never touches its cache. The main session's next
+ask carries a note for each quick turn since its last one: what was said
+and what was answered. A fresh main session reads them in its transcript
+instead.
 """
 
 from __future__ import annotations
@@ -236,33 +226,35 @@ class ConversationHub:
         actions = actions or []
         tz = self._kernel.now().tzinfo
         self._kernel.attendance.touch(conversation_id)
-        notes = self._take_notes(conversation_id)
-        message = _with_notes(_with_actions(f"{prompts.mode_note(mode)}\n\n{text}", actions, tz), notes, tz)
+        asked = f"{prompts.mode_note(mode)}\n\n{text}"
         if replaces is not None:
             index = next((i for i, t in enumerate(kept) if t.id == replaces), None)
             if index is None:
                 raise KeyError(f"no turn {replaces!r} in conversation {conversation_id!r}")
             self._db.execute("DELETE FROM turns WHERE conversation_id = ? AND seq >= ?", (conversation_id, kept[index].seq))
             kept = kept[:index]
+            # The main session holds turns the rewind dropped.
+            self._db.execute("UPDATE conversations SET hermes_session = NULL WHERE id = ?", (conversation_id,))
             session = None
-        elif session is not None and self._cold(session):
-            session = None
-        on = self._kernel.sessions.route(session) if session else None
-        staying = self._kernel.router.stay_on_pro()
-        if on == staying.key:
-            # Only escalations: a session on pro stays there, so the router
-            # isn't asked.
-            route = staying
+        route = await self._kernel.router.route(text)
+        if route.tier == "basic":
+            # Plain house control: a session of its own with the ask alone,
+            # so the main session and its cache are never touched.
+            message = asked
+            session = await self._new_session(conversation_id, user, group, profile, route.key, main=False)
         else:
-            route = self._kernel.router.route(text)
-        if session is not None and on != route.key:
-            session = None
-        if session is None:
-            # A rewind, a cold cache, another route, or a session the
-            # retention sweep deleted: a fresh session carries the
-            # conversation so far.
-            message = _seeded(kept, message, tz, conversation_id)
-            session = await self._new_session(conversation_id, user, group, profile, route.key)
+            if session is not None and (self._cold(session) or self._kernel.sessions.route(session) != route.key):
+                session = None
+            notes = self._take_notes(conversation_id)
+            message = _with_notes(_with_actions(asked, actions, tz), notes, tz)
+            if session is None:
+                # A rewind, a cold cache, another model, or a session the
+                # retention sweep deleted: a fresh session carries the
+                # conversation so far, the quick turns among it.
+                message = _seeded(kept, message, tz, conversation_id)
+                session = await self._new_session(conversation_id, user, group, profile, route.key, main=True)
+            else:
+                message = _with_quick_turns(message, _since(kept, session), tz)
         turn = Turn(
             id=turn_id or f"t_{secrets.token_hex(5)}",
             conversation_id=conversation_id,
@@ -292,12 +284,17 @@ class ConversationHub:
             raise PermissionError(f"conversation {conversation_id} belongs to someone else")
         return row
 
-    async def _new_session(self, conversation_id: str, user: str | None, group: str | None, profile: Profile, route: str) -> str:
+    async def _new_session(
+        self, conversation_id: str, user: str | None, group: str | None, profile: Profile, route: str, *, main: bool
+    ) -> str:
+        """A Hermes session for the conversation. `main` makes it the one
+        its next asks on pro continue; a quick turn's session is used once."""
         session = f"huvu-{conversation_id}-{secrets.token_hex(3)}"
-        title = f"huvu chat on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}"
+        title = f"huvu {'chat' if main else 'quick turn'} on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M}"
         await self._kernel.hermes.create_session(profile, session, title=title)
         self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id, route=route)
-        self._db.execute("UPDATE conversations SET hermes_session = ? WHERE id = ?", (session, conversation_id))
+        if main:
+            self._db.execute("UPDATE conversations SET hermes_session = ? WHERE id = ?", (session, conversation_id))
         return session
 
     async def subscribe(self, live: LiveTurn) -> AsyncIterator[tuple[str, dict[str, Any]]]:
@@ -704,6 +701,26 @@ def _with_actions(text: str, actions: list[Action], tz: tzinfo | None) -> str:
     if not actions:
         return text
     return "\n".join([*(_note(a, tz) for a in actions), "", text])
+
+
+def _since(kept: list[Turn], session: str) -> list[Turn]:
+    """The turns after the main session's last one: the quick turns it
+    hasn't heard of."""
+    last = max((i for i, t in enumerate(kept) if t.hermes_session == session), default=None)
+    return kept[last + 1 :] if last is not None else []
+
+
+def _with_quick_turns(text: str, turns: list[Turn], tz: tzinfo | None) -> str:
+    """The main session's next message, after the quick turns that ran in
+    sessions of their own: each one's action notes, what was said and what
+    was answered. Appended, so the session's prompt cache holds."""
+    if not turns:
+        return text
+    lines: list[str] = []
+    for t in turns:
+        lines += [_note(a, tz) for a in t.actions]
+        lines.append(prompts.quick_turn(f"{t.at.astimezone(tz):%H:%M}", t.ask, t.answer))
+    return "\n".join([*lines, "", text])
 
 
 def _seeded(kept: list[Turn], text: str, tz: tzinfo | None, device: str) -> str:
