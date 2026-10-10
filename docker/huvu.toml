@@ -17,6 +17,8 @@ advanced = "gpt-6-astra"
 [router]
 enabled = true
 effort = "none"
+escalate_at = 0.30
+timeout = 1.0
 
 [dream]
 at = "04:00"

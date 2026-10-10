@@ -27,30 +27,50 @@ listed. The words it knows:
 It also needs a word of the house's names that isn't one of its own, and a
 verb, particle or read word.
 
-Every turn's route goes into its `chat_turns` row, so real asks show where
-the whitelist falls short.
+An ask the whitelist doesn't take goes to Clef-flash, Cloudflare's decision
+model on Workers AI, with one yes-or-no question (`ESCALATE_QUESTION` in
+prompts.py): can a fast model that sees this ask alone, with nothing said
+before it and no thinking, handle it? That covers what no list of house
+words can, such as "what's the temperature today". Below
+`router.escalate_at` (its probability of yes) the ask runs on basic too;
+otherwise on pro, as it does when Clef-flash errs, takes longer than
+`router.timeout`, or there are no credentials (CLOUDFLARE_ACCOUNT_ID and
+CLOUDFLARE_AI_TOKEN). Clef-flash gives the same answer for the same text,
+so its answers are kept by the ask's words, and a repeated ask never waits
+for it twice. Workers AI's free 10,000 Neurons a day cover about 2.9
+million of its tokens, thousands of asks.
 
-A model, a provider and an effort each have their own prompt cache, so the
-conversation starts a fresh session whenever its route changes, primed with
-the transcript the way a cold one is (see conversations.py). Routes only
-escalate: a session moves from basic to pro, never back, and the router
-isn't asked while it is on pro. A fresh session, after the cache went cold
-or an edit, is routed from the start again.
+Every turn's route goes into its `chat_turns` row, with Clef-flash's
+probability when it was asked, so real asks show where the router falls
+short.
+
+A quick turn needs nothing said before it, so it runs in a session of its
+own with the ask alone, and the conversation's main session stays on pro,
+its cache untouched. The main session's next ask tells it what the quick
+turns did (see conversations.py).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+import httpx
+
+from . import prompts
 from .config import ModelChoice
 
 if TYPE_CHECKING:
     from .kernel import Kernel
 
-VERBS = frozenset("turn switch set put start stop pause resume dock send play mute unmute dim lower raise kill flip toggle make open close".split())
+VERBS = frozenset(
+    "turn switch set put start stop pause resume dock send play mute unmute dim lower raise kill flip toggle make open close boot "
+    "increase decrease reduce boost bump adjust change".split()
+)
 PARTICLES = frozenset("on off up down to by back".split())
 READS = frozenset("is are what's whats".split())
 UNITS = frozenset("degrees degree percent steps step notches notch bit little more less".split())
@@ -64,7 +84,13 @@ NUMBER_AFTER = frozenset("to by up down".split())
 # The columns of a row huvu can work that name it.
 NAME_COLUMNS = ("name", "aliases", "area", "device")
 
-Why = Literal["control", "other", "kept", "off"]
+WORKERS_AI = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/cloudflare/clef-flash"
+# How many of Clef-flash's answers are kept, by the ask's words.
+CACHE_SIZE = 2000
+
+log = logging.getLogger("huvu.routing")
+
+Why = Literal["control", "clef", "other", "failed", "off"]
 
 
 @dataclass(frozen=True)
@@ -73,19 +99,22 @@ class Route:
     choice: ModelChoice
     # The reasoning effort to ask Hermes for; None keeps the profile's.
     effort: str | None
-    # "control" when the ask was plain house control, "other" when it
-    # wasn't, "kept" when its session was on pro already and the router
-    # wasn't asked, and "off" when the router is turned off.
+    # "control" when the whitelist took the ask, "clef" when Clef-flash
+    # said basic can handle it, "other" when it said pro, "failed" when it
+    # erred, took too long or has no credentials, and "off" when the router
+    # is turned off.
     why: Why
+    # Clef-flash's probability that the ask needs pro, when it was asked.
+    p: float | None = None
 
     @property
     def key(self) -> str:
-        """What a session's prompt cache depends on: a session runs on one
-        route for good."""
+        """What a session's prompt cache depends on: the main session runs
+        on one route for good."""
         return f"{self.choice.model}|{self.choice.provider or ''}|{self.effort or ''}"
 
     def row(self) -> dict[str, Any]:
-        return {"tier": self.tier, "model": self.choice.model, "effort": self.effort, "why": self.why}
+        return {"tier": self.tier, "model": self.choice.model, "effort": self.effort, "why": self.why, "p": self.p}
 
 
 @dataclass(frozen=True)
@@ -99,22 +128,62 @@ class Vocabulary:
 class Router:
     def __init__(self, kernel: Kernel) -> None:
         self._kernel = kernel
+        config = kernel.config
+        self._account = config.cloudflare_account_id
+        self._token = config.cloudflare_ai_token
+        self._http = httpx.AsyncClient(timeout=httpx.Timeout(config.router_timeout))
+        # Clef-flash's answers, by the ask's words.
+        self._answers: OrderedDict[str, float] = OrderedDict()
 
-    def route(self, ask: str) -> Route:
+    async def close(self) -> None:
+        await self._http.aclose()
+
+    async def route(self, ask: str) -> Route:
         config = self._kernel.config
         if not config.router_enabled:
             return self._pro("off")
         if plain_control(ask, self.vocabulary()):
-            return Route("basic", config.model("basic"), config.router_effort, "control")
-        return self._pro("other")
+            return self._basic("control")
+        p = await self._needs_pro(ask)
+        if p is None:
+            return self._pro("failed")
+        if p < config.router_escalate_at:
+            return self._basic("clef", p)
+        return self._pro("other", p)
 
-    def stay_on_pro(self) -> Route:
-        """The route of an ask in a session already on pro: routes only
-        escalate, so it stays there."""
-        return self._pro("kept")
+    def _basic(self, why: Why, p: float | None = None) -> Route:
+        config = self._kernel.config
+        return Route("basic", config.model("basic"), config.router_effort, why, p)
 
-    def _pro(self, why: Why) -> Route:
-        return Route("pro", self._kernel.config.model("pro"), None, why)
+    def _pro(self, why: Why, p: float | None = None) -> Route:
+        return Route("pro", self._kernel.config.model("pro"), None, why, p)
+
+    async def _needs_pro(self, ask: str) -> float | None:
+        """Clef-flash's probability that the ask needs pro, or None when it
+        can't say in time."""
+        key = " ".join(words(ask))
+        if key in self._answers:
+            self._answers.move_to_end(key)
+            return self._answers[key]
+        if not (self._account and self._token):
+            return None
+        body = {
+            "model": "clef-flash",
+            "state": {"ask": ask},
+            "questions": {"escalate": {"type": "noul", "instructions": prompts.ESCALATE_QUESTION, "criteria": prompts.ESCALATE_CRITERIA}},
+        }
+        try:
+            res = await self._http.post(WORKERS_AI.format(account=self._account), headers={"Authorization": f"Bearer {self._token}"}, json=body)
+            res.raise_for_status()
+            data = res.json()
+            p = float(data.get("result", data)["answers"]["escalate"]["noul"])
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as err:
+            log.warning("Clef-flash couldn't say, so the ask runs on pro: %r", err)
+            return None
+        self._answers[key] = p
+        if len(self._answers) > CACHE_SIZE:
+            self._answers.popitem(last=False)
+        return p
 
     def vocabulary(self) -> Vocabulary:
         """The house's names now, from every live row huvu can work."""
