@@ -64,6 +64,16 @@ REFRESH_DEBOUNCE = 2.0
 FLUSH_EVERY = 30.0
 # A script call waits this long for HA to finish the script.
 ACT_TIMEOUT = 120.0
+# A service call on an entity that fails inside its integration, such as a
+# cloud that refused it once ("sign invalid" from Tuya), is sent once more
+# after this long. HA answers such a failure with one of these codes; any
+# other code (bad arguments, no such entity) would fail again the same way.
+RETRY_DELAY = 1.0
+RETRY_CODES = {"unknown_error", "home_assistant_error"}
+# Services that change something relative to now, so a second send could
+# undo or double the first (an infrared power toggle is a press). They are
+# never sent twice.
+RELATIVE_SERVICES = {"press", "volume_up", "volume_down", "media_next_track", "media_previous_track"}
 
 REGISTRY_EVENTS = ("entity_registry_updated", "area_registry_updated", "device_registry_updated", "label_registry_updated")
 # The attributes that say what a person chose, per domain. A change in one
@@ -625,7 +635,7 @@ class HomeAssistant(Source):
         sent: list[str] = []
         try:
             for domain, service, data in calls:
-                result = await client.call("call_service", domain=domain, service=service, service_data=data, target={"entity_id": control.entity_id}, timeout=ACT_TIMEOUT)
+                result = await _call_service(client, domain, service, data, control.entity_id)
                 context_id = ((result or {}).get("context") or {}).get("id")
                 self._attribution.remember(context_id, Actor("huvu", caller.user, self._attribution.own_user))
                 sent.append(f"{domain}.{service}")
@@ -637,6 +647,21 @@ class HomeAssistant(Source):
             if call in pending:
                 pending.remove(call)
         return Result(data={"status": "done", "entity": control.entity_id, "sent": sent}, labels=["house"])
+
+async def _call_service(client: HAClient, domain: str, service: str, data: dict[str, Any], entity_id: str) -> Any:
+    """One service call on one entity, sent once more when it fails inside
+    its integration and sending it twice is safe. A timeout isn't retried:
+    HA may still be doing the first."""
+    retries = 0 if service in RELATIVE_SERVICES else 1
+    while True:
+        try:
+            return await client.call("call_service", domain=domain, service=service, service_data=data, target={"entity_id": entity_id}, timeout=ACT_TIMEOUT)
+        except HAError as err:
+            if retries == 0 or err.code not in RETRY_CODES:
+                raise
+        retries -= 1
+        await asyncio.sleep(RETRY_DELAY)
+
 
 def _name(state: dict[str, Any]) -> str:
     return str((state.get("attributes") or {}).get("friendly_name") or state.get("entity_id") or "")
