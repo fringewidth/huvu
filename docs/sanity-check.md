@@ -36,7 +36,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask something quick that isn't about the house, such as "what's the temperature today?". It should answer in a few seconds, with no faint thinking line.
 1. Turn the home theatre's AV unit on and wait a minute. Tell huvu you're in the home theatre and about to watch something. Then say only "open YouTube". YouTube should open on the projector within a few seconds, and huvu should not ask which room or which device. Then say "play Interstellar on Netflix". It should start on the screen. huvu can't see the screen, but it hears what Alexa said back, so within about ten seconds it should tell you what Alexa answered, such as "Here's Interstellar".
 1. With the AV unit on, ask huvu for something on the TV that Alexa can't do, such as "open the app called Zorblat on the TV". huvu should tell you what Alexa said, such as that it couldn't find it. It should not say it's done.
-1. With the home theatre off, tell huvu "turn on the home theatre". The strip lights and the focus lights should come on within a few seconds, and the AC should start. The AV unit should come on too: the projector lights up and the amp's volume climbs, about half a minute later. huvu should not ask what you meant.
+1. With the home theatre off, tell huvu "turn on the home theatre". The strip lights and the focus lights should come on within a few seconds, and the AC should start. The AV unit should come on too: the projector lights up and the amp's volume climbs, about half a minute later. Once the Fire TV has started, huvu should open on it by itself. huvu should not ask what you meant.
 1. With the home theatre on, tell huvu "turn off the home theatre". The strip lights, the focus lights and the night sky should go off within a few seconds, the AC should stop, and the projector should go dark. The amp should go off too. The AV unit's power should stay on for about two minutes while the projector cools, and only then go off.
 1. With the AV unit on, note the volume on the amp's display, then tell huvu "turn the volume up by 10 points". The number on the amp should climb by 10 within about ten seconds, and huvu should answer in one go, without saying it worked in batches. Then say "turn it down by 2.5". It should drop by 2.5.
 1. With the home theatre's AC off, tell huvu "set the home theatre AC to 24". The AC should beep and start within a few seconds, and huvu should say it's on at 24. Ask "how warm is it in the home theatre?" and huvu should give the room's temperature. Then turn the AC off with its own remote and ask huvu whether it's on. It should say it's off. Ask for 23.5 and huvu should say the AC takes whole degrees only.
@@ -143,8 +143,9 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 
 ## The TV: asking through Alexa
 
-1. With huvu open on the TV, hold the remote's mic button and say "Alexa, ask huvu what time is it". Alexa should say nothing, and huvu should show your ask on the TV and answer it out loud.
+1. With huvu open on the TV, hold the remote's mic button and say "Alexa, ask my huvu what time is it". Alexa should say nothing, and huvu should show your ask on the TV and answer it out loud.
 1. While huvu is still talking, press back. It should go quiet.
+1. Open YouTube on the TV, then tell huvu "turn on the home theatre" from your phone. Within a few seconds, huvu should come to the front on the TV over YouTube.
 1. Close huvu on the TV and ask again. Alexa should say huvu isn't open on the TV.
 
 ## The TV: who's here
