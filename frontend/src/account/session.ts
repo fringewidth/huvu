@@ -7,6 +7,7 @@ import { call, getJson, getReach, onReach, postJson, setToken, whenUnauthorized,
 import * as household from "./household";
 import { startNativePush, stopNativePush } from "./nativePush";
 import { startPush, stopPush } from "./push";
+import { startWebPush, stopWebPush } from "./webPush";
 import * as waiting from "./waiting";
 
 export { errorText } from "../net/http";
@@ -99,6 +100,7 @@ function enter(): void {
   set({ status: "in", reason: null });
   startPush();
   if (PHONE) void startNativePush();
+  if (PHONE) void startWebPush();
   void refreshMe();
 }
 
@@ -129,6 +131,7 @@ export async function login(username: string, password: string, deviceName: stri
 export async function signOut(reason: string | null): Promise<void> {
   stopPush();
   if (PHONE) void stopNativePush();
+  if (PHONE) stopWebPush();
   setToken(null);
   thread.reset();
   waiting.reset();
@@ -179,9 +182,20 @@ export function defaultDeviceName(): string {
         : /Safari\//.test(agent)
           ? "Safari"
           : "a browser";
-  const os = /Mac OS X/.test(agent) ? "Mac" : /Windows/.test(agent) ? "Windows" : /Android/.test(agent) ? "Android" : /Linux/.test(agent) ? "Linux" : "";
+  // An iPhone's browser says "Mac OS X" too, so it is asked first.
+  const os = /iPhone/.test(agent)
+    ? "iPhone"
+    : /Mac OS X/.test(agent)
+      ? "Mac"
+      : /Windows/.test(agent)
+        ? "Windows"
+        : /Android/.test(agent)
+          ? "Android"
+          : /Linux/.test(agent)
+            ? "Linux"
+            : "";
   const platform = Capacitor.getPlatform();
-  const phone = platform === "ios" ? "iPhone" : "phone";
+  const phone = platform === "ios" || os === "iPhone" ? "iPhone" : "phone";
   const web = os ? `${browser} on ${os}` : browser;
   return TV ? "Fire TV" : PHONE ? phone : web;
 }

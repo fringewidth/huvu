@@ -198,12 +198,14 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS notifications_ts ON notifications (ts);
 
 -- Each phone's FCM token, for native push while its app is closed
--- (native_push.py).
+-- (native_push.py), or its Web Push subscription's endpoint (web_push.py).
 CREATE TABLE IF NOT EXISTS push_tokens (
     token TEXT PRIMARY KEY,
     device_id TEXT NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
-    -- "android" or "ios".
+    -- "android" or "ios", or "web" for a subscription.
     platform TEXT NOT NULL,
+    -- A subscription's keys as JSON (p256dh, auth). NULL for an FCM token.
+    keys TEXT,
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS push_tokens_device ON push_tokens (device_id);
@@ -229,7 +231,7 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
 
 # Columns added to a table after it was first made, which CREATE TABLE IF
 # NOT EXISTS doesn't add to an older database.
-ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("notifications", "sender_id", "TEXT")]
+ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("notifications", "sender_id", "TEXT"), ("push_tokens", "keys", "TEXT")]
 
 
 # How long a statement waits for a lock another connection holds, in ms,

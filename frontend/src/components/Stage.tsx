@@ -4,7 +4,7 @@ import { Capacitor } from "@capacitor/core";
 import * as m from "motion/react-m";
 import { AnimatePresence, LayoutGroup } from "motion/react";
 import { growForWords } from "../canvas/host";
-import { onOpens } from "../account/nativePush";
+import { onOpens } from "../account/opens";
 import { useReach } from "../account/session";
 import { useWaiting } from "../account/waiting";
 import { refreshFeeds, type Feed } from "../chat/feeds";

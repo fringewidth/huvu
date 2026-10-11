@@ -1,5 +1,6 @@
 """Native push: FCM, so a phone hears what needs its person while the app
-is closed.
+is closed, and Web Push (web_push.py) for huvu added to an iPhone's home
+screen, which logs in as a phone too.
 
 The push stream (push.py) reaches a phone only while its app holds it open.
 A phone also registers its FCM token (`POST /api/push/token`), and the
@@ -15,7 +16,7 @@ twice.
 FCM's HTTP v1 API reaches Android, and iOS through APNs once the Firebase
 project has the APNs key. It is signed with a service account's JSON key,
 whose path is in HUVU_FCM_CREDENTIALS. Without it, native push is off and
-tokens are still kept.
+tokens are still kept. Web Push needs no setup.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import json
 import logging
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -32,6 +34,7 @@ import httpx
 import jwt
 
 from .db import iso
+from .web_push import Gone, WebPushClient
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -95,33 +98,51 @@ class FcmClient:
         return self._access[0]
 
 
+@dataclass(frozen=True)
+class Notice:
+    """What a push event shows on a phone, before FCM or Web Push shapes it."""
+
+    title: str
+    body: str
+    kind: str
+    id: str
+    urgent: bool
+    image: str | None
+    opens: str | None
+
+
 class NativePush:
-    def __init__(self, kernel: Kernel, sender: Sender | None) -> None:
+    def __init__(self, kernel: Kernel, sender: Sender | None, web: WebPushClient) -> None:
         self._kernel = kernel
         self.sender = sender
+        self.web = web
         self._tasks: set[asyncio.Task[None]] = set()
 
-    def register(self, device_id: str, token: str, platform: str) -> None:
-        """A phone's current FCM token. A device has one; a token moves to
-        the device that registered it last."""
+    def register(self, device_id: str, token: str, platform: str, keys: dict[str, str] | None = None) -> None:
+        """A phone's current FCM token, or its Web Push subscription: the
+        endpoint as the token, and its keys. A device has one; a token
+        moves to the device that registered it last."""
         db = self._kernel.db
         db.execute("DELETE FROM push_tokens WHERE device_id = ? OR token = ?", (device_id, token))
         db.execute(
-            "INSERT INTO push_tokens (token, device_id, platform, updated_at) VALUES (?, ?, ?, ?)",
-            (token, device_id, platform, iso(self._kernel.now())),
+            "INSERT INTO push_tokens (token, device_id, platform, keys, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (token, device_id, platform, json.dumps(keys) if keys else None, iso(self._kernel.now())),
         )
 
     def forward(self, name: str, data: Any, devices: Iterable[str]) -> None:
         """Called by the push hub for everything it sends. Only what needs a
         person goes on."""
-        message = _message(name, data)
+        notice = _notice(name, data)
         wanted = list(devices)
-        if message is None or self.sender is None or not wanted:
+        if notice is None or not wanted:
             return
         marks = ", ".join("?" * len(wanted))
-        rows = self._kernel.db.execute(f"SELECT token FROM push_tokens WHERE device_id IN ({marks})", wanted).fetchall()
+        rows = self._kernel.db.execute(f"SELECT token, keys FROM push_tokens WHERE device_id IN ({marks})", wanted).fetchall()
         for row in rows:
-            task = asyncio.get_running_loop().create_task(self._send(row["token"], message), name=f"native_push:{name}")
+            keys = json.loads(row["keys"]) if row["keys"] else None
+            if keys is None and self.sender is None:
+                continue
+            task = asyncio.get_running_loop().create_task(self._send(row["token"], keys, notice), name=f"native_push:{name}")
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
 
@@ -130,20 +151,24 @@ class NativePush:
             task.cancel()
         if self.sender is not None:
             await self.sender.close()
+        await self.web.close()
 
-    async def _send(self, token: str, message: dict[str, Any]) -> None:
+    async def _send(self, token: str, keys: dict[str, str] | None, notice: Notice) -> None:
         try:
-            await self.sender.send({**message, "token": token})  # type: ignore[union-attr]
-        except Unregistered:
-            log.info("dropping a push token FCM no longer knows")
+            if keys is None:
+                await self.sender.send({**_fcm_message(notice), "token": token})  # type: ignore[union-attr]
+            else:
+                await self.web.send(token, keys, _web_message(notice), notice.urgent)
+        except (Unregistered, Gone):
+            log.info("dropping a push token its service no longer knows")
             self._kernel.db.execute("DELETE FROM push_tokens WHERE token = ?", (token,))
         except Exception:
             log.exception("native push failed")
 
 
-def _message(name: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    """The FCM message for a push event, without its token. None for an
-    event that needs no person: turn events, answers, attendance."""
+def _notice(name: str, data: dict[str, Any]) -> Notice | None:
+    """What a push event shows. None for an event that needs no person:
+    turn events, answers, attendance."""
     shown: tuple[str, str] | None = None
     urgent = True
     if name == "notify":
@@ -159,16 +184,41 @@ def _message(name: str, data: dict[str, Any]) -> dict[str, Any] | None:
         return None
     title, body = shown
     image = data.get("image") if name == "notify" else None
-    notification = {"title": title, "body": body, **({"image": image} if image and image.startswith("http") else {})}
+    return Notice(
+        title=title,
+        body=body,
+        kind=name,
+        id=str(data["id"]),
+        urgent=urgent,
+        image=image if image and image.startswith("http") else None,
+        opens=data.get("opens") or None,
+    )
+
+
+def _fcm_message(notice: Notice) -> dict[str, Any]:
+    """The FCM message for a notice, without its token."""
+    notification = {"title": notice.title, "body": notice.body, **({"image": notice.image} if notice.image else {})}
     # Strings only: FCM's data is a map of strings.
-    extra = {"kind": name, "id": str(data["id"]), **({"opens": data["opens"]} if data.get("opens") else {})}
+    extra = {"kind": notice.kind, "id": notice.id, **({"opens": notice.opens} if notice.opens else {})}
     return {
         "notification": notification,
         "data": extra,
         "android": {
-            "priority": "high" if urgent else "normal",
+            "priority": "high" if notice.urgent else "normal",
             # One notification per approval or question, replaced if sent again.
-            "notification": {"channel_id": URGENT_CHANNEL if urgent else CHANNEL, "tag": extra["id"]},
+            "notification": {"channel_id": URGENT_CHANNEL if notice.urgent else CHANNEL, "tag": notice.id},
         },
-        "apns": {"headers": {"apns-priority": "10" if urgent else "5", "apns-collapse-id": extra["id"]}},
+        "apns": {"headers": {"apns-priority": "10" if notice.urgent else "5", "apns-collapse-id": notice.id}},
+    }
+
+
+def _web_message(notice: Notice) -> dict[str, Any]:
+    """What the service worker (frontend/public/sw.js) reads from a push."""
+    return {
+        "title": notice.title,
+        "body": notice.body,
+        "kind": notice.kind,
+        "id": notice.id,
+        **({"image": notice.image} if notice.image else {}),
+        **({"opens": notice.opens} if notice.opens else {}),
     }

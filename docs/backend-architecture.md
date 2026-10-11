@@ -416,7 +416,8 @@ backend/
     wipe.py           what `huvu wipe` deletes for a user or a group
     sessions.py       what the kernel knows about Hermes sessions
     push.py           the push channel
-    native_push.py    FCM tokens and the sender, for phones whose app is closed
+    native_push.py    push tokens and which events reach a phone whose app is closed, through FCM or Web Push
+    web_push.py       Web Push for huvu on an iPhone's home screen: the VAPID key, encryption, the sender
     media.py          media URLs for refs, image files and https URLs
     bundles.py        the phone app's web build, for its live updates
     http.py           the HTTP server

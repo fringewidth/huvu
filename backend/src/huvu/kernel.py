@@ -32,6 +32,7 @@ from .hermes import HermesClient
 from .routing import Router
 from .media import MediaStore
 from .native_push import FcmClient, NativePush
+from .web_push import WebPushClient, load_key
 from .policy import Policy
 from .push import PushHub
 from .registry import Registry
@@ -87,7 +88,9 @@ class Kernel:
         self.conversations = ConversationHub(self)
         self.waker = Waker(self)
         self.attendance = Attendance(self)
-        self.native_push = NativePush(self, FcmClient(config.fcm_credentials) if config.fcm_credentials else None)
+        fcm = FcmClient(config.fcm_credentials) if config.fcm_credentials else None
+        web_push = WebPushClient(load_key(config.data_dir / "vapid.pem"), config.public_url)
+        self.native_push = NativePush(self, fcm, web_push)
         self.push = PushHub(self.native_push.forward)
         self.media = MediaStore(self)
         self.voice = Voice(config)

@@ -106,6 +106,21 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Tell huvu: "I call mom Amma" (use a new name for the other person). Then ask it to "tell Amma I'm home". It should reach the same person. When they message you, your phone should show it from "Amma".
 1. Ask huvu: "tell everyone dinner is ready". Everyone else in the household should get it. Your own phone should get only huvu's note that it went.
 
+## iPhone: huvu on the home screen
+
+There is no iPhone app. On an iPhone, huvu is the web page added to the home screen, and it gets notifications from there (iOS 16.4 or later).
+
+1. On the iPhone, open https://huvu.hrishik.me in Safari. Tap the share button, then "Add to Home Screen". The icon should be huvu's, with the flowers, named "huvu".
+1. Open huvu from that icon. It should open full screen, with no Safari address bar, and ask you to log in, even if you logged in on Safari before. Log in.
+1. Open the menu. Under "you", it should say "on iPhone" and "notifications off", with "turn on" next to it.
+1. Tap "turn on". iOS should ask whether huvu may send notifications. Allow it. The menu should say "notifications on".
+1. Close huvu, and get huvu to send this person a notification (from another phone: "tell mom I'm home"). The iPhone should show it on the lock screen, titled with the sender's name.
+1. Tap it. huvu should open and show the notice.
+1. With huvu open on the iPhone, send another. It should show on huvu's screen. A banner from iOS may flash for a moment, and should not stay in the notification list.
+1. From the TV's "who's here", pick this person. The iPhone should get "Is it you?" with huvu closed. Tap it, and the card should be waiting. Tap yes, and the TV should say this person is there.
+1. With huvu closed on the iPhone, ask for something that needs this person's yes. The iPhone should show "huvu needs a yes".
+1. In a Safari tab (not the home screen icon), log in. The menu should show no notifications row, and say "on Safari on iPhone".
+
 ## Approvals (phones only)
 
 1. Ask huvu: "remind me every day at 9pm to drink water, and use the advanced model for it". A card should appear above the text field. It should say "approve?", what the action does, who asked, and a countdown.
@@ -181,5 +196,5 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Live camera feeds. The list may appear, but no feed can play yet.
 1. The doorbell. It waits for the Tuya driver.
 1. The house's devices, such as "turn on the bedroom light when I walk in". They wait for the Home Assistant setup (`home-assistant.md`). Once it is done: walk into the room, and the light should come on within a second or two.
-1. iPhones. No iOS build exists yet.
+1. An iPhone app. iPhones use huvu from the home screen (see above).
 1. Phone notifications, until the Firebase project is set up (see `v0.md`). Before that, notices, approvals and questions show only while the app is open.

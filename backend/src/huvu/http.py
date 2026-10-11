@@ -91,6 +91,18 @@ class PushToken(BaseModel):
     platform: Literal["android", "ios"]
 
 
+class WebPushKeys(BaseModel):
+    p256dh: str = Field(min_length=1)
+    auth: str = Field(min_length=1)
+
+
+class WebPushSubscription(BaseModel):
+    """A browser's PushSubscription, as its toJSON() gives it."""
+
+    endpoint: str = Field(pattern=r"^https://")
+    keys: WebPushKeys
+
+
 class Thinking(BaseModel):
     session: str
     text: str
@@ -317,6 +329,18 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         """A phone's FCM token, so what needs its person reaches it while the
         app is closed. Logging the device out drops it."""
         kernel.native_push.register(me.id, body.token, body.platform)
+        return {"ok": True}
+
+    @app.get("/api/push/web", dependencies=[phone])
+    async def web_push_key() -> dict[str, str]:
+        """The VAPID public key a home screen web app subscribes with."""
+        return {"key": kernel.native_push.web.public_key}
+
+    @app.post("/api/push/web")
+    async def web_push_subscribe(body: WebPushSubscription, me: Device = phone) -> dict[str, bool]:
+        """A home screen web app's push subscription, in place of an FCM
+        token. Logging the device out drops it."""
+        kernel.native_push.register(me.id, body.endpoint, "web", body.keys.model_dump())
         return {"ok": True}
 
     @app.get("/api/feeds", dependencies=[device])

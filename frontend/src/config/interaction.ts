@@ -176,11 +176,15 @@ function resolveTarget(): Target {
 export const TARGET: Target = resolveTarget();
 // The web build in a phone's browser: a touch screen with no mouse or
 // trackpad. It looks like a phone, so it takes the phone's screen rules (no
-// space to talk, a send button, the phone's hints and garden density). To
-// the backend it stays a browser: it logs in like one and gets no native
-// push.
+// space to talk, a send button, the phone's hints and garden density). In a
+// browser tab it stays a browser to the backend. Added to the home screen
+// (on an iPhone, which has no huvu app), it opens in its own window and
+// logs in as a phone: it gets notifications through Web Push
+// (account/webPush.ts), answers approvals and "is it you?", and pairs.
 const TOUCH_WEB = TARGET === "web" && window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
-export const ui: Profile = TOUCH_WEB ? { ...PROFILES.phone, deviceKind: "web" } : PROFILES[TARGET];
+const HOME_SCREEN =
+  TOUCH_WEB && (window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
+export const ui: Profile = HOME_SCREEN ? PROFILES.phone : TOUCH_WEB ? { ...PROFILES.phone, deviceKind: "web" } : PROFILES[TARGET];
 export const TV = TARGET === "firetv";
 // A shared device pairs instead of logging in, and can recognize who is at
 // it. A phone answers approvals and "is it you?" questions, and gets

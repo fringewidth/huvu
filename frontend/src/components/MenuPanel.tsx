@@ -3,6 +3,7 @@ import { allow, confirmPairing, refreshDevices, refreshTriggers, revoke, setPaus
 import { canPair, errorText, logOut, useReach, useSession } from "../account/session";
 import { UNREACHABLE } from "../net/http";
 import { release, useWaiting } from "../account/waiting";
+import { turnOnWebPush, useWebPush } from "../account/webPush";
 import { capsClass } from "../stage/style";
 import type { MenuSection } from "./Menu";
 
@@ -85,8 +86,36 @@ function You() {
           </button>
         </div>
       ))}
+      <Notifications />
       {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
     </Section>
+  );
+}
+
+// Notifications on a home screen web app, which iOS turns on only from a
+// tap. The native app asks by itself, so it shows nothing here.
+function Notifications() {
+  const push = useWebPush();
+  const [error, setError] = useState<string | null>(null);
+  if (push === "unsupported") return null;
+  const turnOn = () => {
+    setError(null);
+    turnOnWebPush().catch((err: unknown) => setError(errorText(err)));
+  };
+  return (
+    <>
+      <div className="flex items-baseline gap-3">
+        <span className={`${capsClass} ${push === "on" ? "text-ivory/45" : "text-sindoor"}`}>
+          {push === "on" ? "notifications on" : push === "blocked" ? "notifications blocked / turn them on in settings" : "notifications off"}
+        </span>
+        {push === "off" && (
+          <button type="button" onClick={turnOn} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
+            turn on
+          </button>
+        )}
+      </div>
+      {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
+    </>
   );
 }
 
