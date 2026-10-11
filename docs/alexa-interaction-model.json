@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "huvu",
+      "invocationName": "hoo voo",
       "intents": [
         {
           "name": "AskIntent",
