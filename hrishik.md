@@ -157,6 +157,14 @@ ssh laptop "docker exec -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huv
 ssh laptop "docker exec -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huvu user aliases hrishik"
 ```
 
+OwnTracks on someone's phone. The link holds the tracker's token and is
+shown once; the QR code in the output is the same link. The home waypoint
+is in `/opt/data/huvu/huvu.toml`.
+
+```sh
+ssh laptop "docker exec -u hermes -w /opt/huvu/backend huvu-huvu-1 .venv/bin/huvu tracker add mom --name \"Mom's iPhone\""
+```
+
 Wipe someone (no name: the home group and Hermes's default profile). It
 refuses while the backend runs:
 

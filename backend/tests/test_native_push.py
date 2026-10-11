@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
+import http_ece
 import httpx
 import jwt
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from huvu.native_push import FcmClient, Unregistered
 from huvu.spec import Caller
+from huvu.web_push import WebPushClient, b64url, load_key
 
 
 class FakeFcm:
@@ -129,3 +132,70 @@ async def test_the_fcm_client_signs_and_reuses_its_access_token(tmp_path):
     await client.close()
     assert len(grants) == 1 and grants[0]["scope"] == "https://www.googleapis.com/auth/firebase.messaging"
     assert [s["message"]["token"] for s in sends] == ["t1", "t2", "gone"]
+
+
+class Browser:
+    """A browser's push subscription, and the push service it lives at."""
+
+    def __init__(self, endpoint: str = "https://web.push.apple.com/sub-1") -> None:
+        self.endpoint = endpoint
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        self.auth = os.urandom(16)
+        point = self.key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        self.keys = {"p256dh": b64url(point), "auth": b64url(self.auth)}
+        self.received: list[tuple[httpx.Request, dict[str, Any]]] = []
+        self.gone = False
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        if self.gone:
+            return httpx.Response(410)
+        body = http_ece.decrypt(request.content, private_key=self.key, auth_secret=self.auth, version="aes128gcm")
+        self.received.append((request, json.loads(body)))
+        return httpx.Response(201)
+
+
+def web(kernel, browser: Browser) -> WebPushClient:
+    client = WebPushClient(kernel.native_push.web._key, "https://huvu.example", httpx.AsyncClient(transport=httpx.MockTransport(browser.handle)))
+    kernel.native_push.web = client
+    return client
+
+
+async def test_a_notification_reaches_a_web_push_subscription_encrypted_and_signed(kernel, family):
+    browser = Browser()
+    client = web(kernel, browser)
+    kernel.native_push.register(family.mom_phone.id, browser.endpoint, "web", browser.keys)
+    kernel.accounts.set_alias("mom", "me", "kanna")
+    await kernel.notify("mom", None, "running late", sender="me", opens="triggers")
+    await settle()
+    [(request, payload)] = browser.received
+    assert payload["title"] == "kanna" and payload["body"] == "running late"
+    assert payload["kind"] == "notify" and payload["opens"] == "triggers"
+    assert request.headers["Content-Encoding"] == "aes128gcm" and request.headers["Urgency"] == "normal"
+    scheme, params = request.headers["Authorization"].split(" ", 1)
+    fields = dict(part.split("=", 1) for part in params.split(", "))
+    assert scheme == "vapid" and fields["k"] == client.public_key
+    claims = jwt.decode(fields["t"], kernel.native_push.web._key.public_key(), algorithms=["ES256"], audience="https://web.push.apple.com")
+    assert claims["sub"] == "https://huvu.example"
+
+
+async def test_web_push_works_without_fcm_and_drops_a_gone_subscription(kernel, family):
+    assert kernel.native_push.sender is None
+    browser = Browser()
+    web(kernel, browser)
+    kernel.native_push.register(family.mom_phone.id, browser.endpoint, "web", browser.keys)
+    await kernel.attendance.ask(family.tv.id, "mom", "device")
+    await settle()
+    [(request, payload)] = browser.received
+    assert payload["title"] == "Is it you?" and request.headers["Urgency"] == "high"
+    browser.gone = True
+    await kernel.notify("mom", None, "hello")
+    await settle()
+    assert kernel.db.execute("SELECT token FROM push_tokens").fetchall() == []
+
+
+def test_the_vapid_key_is_made_once_and_kept(tmp_path):
+    path = tmp_path / "vapid.pem"
+    first = load_key(path)
+    again = load_key(path)
+    assert first.private_numbers() == again.private_numbers()
+    assert oct(path.stat().st_mode & 0o777) == "0o600"

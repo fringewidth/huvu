@@ -33,6 +33,40 @@ function colors(): Plugin {
   }
 }
 
+// The web app manifest and the home screen icon, so huvu can be added to a
+// phone's home screen, where it opens in its own window and gets
+// notifications (src/account/webPush.ts). The manifest is colored from
+// src/manifest.json, served by the dev server and written into the build.
+// The links are added after Vite reads the page, so it doesn't look for the
+// manifest among the sources.
+function manifest(): Plugin {
+  const name = 'manifest.webmanifest'
+  const source = () => fillColors(readFileSync(new URL('./src/manifest.json', import.meta.url), 'utf8'))
+  let base = '/'
+  return {
+    name: 'huvu-manifest',
+    configResolved(config) {
+      base = config.base
+    },
+    configureServer(server) {
+      server.middlewares.use(`${base}${name}`, (_req, res) => {
+        res.setHeader('Content-Type', 'application/manifest+json')
+        res.end(source())
+      })
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: name, source: source() })
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler: () => [
+        { tag: 'link', attrs: { rel: 'manifest', href: `${base}${name}` }, injectTo: 'head' },
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', href: `${base}icons/apple-touch-icon.png` }, injectTo: 'head' },
+      ],
+    },
+  }
+}
+
 // Stamps the build with bundle.json: a hash of every file in it, and the
 // native version it needs (native.json). A native app reads its own stamp
 // and the host's, and live-updates when the hashes differ
@@ -66,5 +100,5 @@ function stamp(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), colors(), stamp()],
+  plugins: [react(), tailwindcss(), colors(), manifest(), stamp()],
 })

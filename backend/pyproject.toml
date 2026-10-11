@@ -17,6 +17,7 @@ dependencies = [
     "tzdata>=2026.5",
     "cryptography>=50.0.2",
     "certifi>=2026.7.22",
+    "http-ece>=1.2.1",
 ]
 
 [project.scripts]

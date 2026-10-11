@@ -271,6 +271,17 @@ def test_only_a_phone_registers_a_push_token(server):
     assert tuple(row) == ("fcm-1", "android")
 
 
+def test_a_home_screen_web_app_subscribes_to_web_push(server):
+    phone = server.login("phone")
+    key = httpx.get(f"{server.base}/api/push/web", headers=phone).json()["key"]
+    assert key == server.kernel.native_push.web.public_key
+    body = {"endpoint": "https://web.push.apple.com/abc", "keys": {"p256dh": "pk", "auth": "au"}}
+    assert httpx.post(f"{server.base}/api/push/web", json=body, headers=server.login("web")).status_code == 403
+    assert httpx.post(f"{server.base}/api/push/web", json=body, headers=phone).json() == {"ok": True}
+    [row] = server.kernel.db.execute("SELECT token, platform, keys FROM push_tokens").fetchall()
+    assert tuple(row) == ("https://web.push.apple.com/abc", "web", '{"p256dh": "pk", "auth": "au"}')
+
+
 def test_the_web_client_is_served_beside_the_api(tmp_path):
     from fastapi.testclient import TestClient
 
