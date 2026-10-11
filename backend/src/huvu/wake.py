@@ -21,7 +21,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from . import prompts
-from .hermes import HermesError
+from .hermes import TITLE_MAX, HermesError
 from .times import for_model
 
 if TYPE_CHECKING:
@@ -72,7 +72,10 @@ class Waker:
         trigger = payload.get("trigger", "manual")
         profile = self._kernel.accounts.profile(user)
         session = f"wake-{trigger}-{now:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
-        await self._kernel.hermes.create_session(profile, session, title=f"huvu wake {trigger} ({session}): {payload.get('note', '')[:60]}")
+        # The session id goes first: it names the trigger, and keeps the title
+        # unique when the note is cut.
+        title = f"huvu wake {session}: {payload.get('note', '')}"[:TITLE_MAX]
+        await self._kernel.hermes.create_session(profile, session, title=title)
         self._kernel.sessions.record(session, "wake", user=user, trigger_id=trigger)
         reply = ""
         try:

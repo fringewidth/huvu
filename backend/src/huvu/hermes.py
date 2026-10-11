@@ -27,6 +27,9 @@ import httpx
 
 log = logging.getLogger("huvu.hermes")
 
+# Hermes refuses a longer session title with a 500.
+TITLE_MAX = 100
+
 
 class HermesError(Exception):
     pass
