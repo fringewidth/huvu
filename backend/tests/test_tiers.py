@@ -100,6 +100,15 @@ async def test_everyone_gets_one_dream_and_a_removed_one_stays_gone(kernel):
     assert not [t for t in kernel.triggers.list(ME) if t.spec.note.startswith("Your dream.")]
 
 
+async def test_a_dream_wakes_its_person_at_four(kernel, hermes, clock):
+    await kernel.dreams.ensure()
+    clock.advance(minutes=4 * 60 + 10)
+    await kernel.triggers.tick()
+    await kernel.triggers.settle()
+    dreams = [m for s, m in hermes.messages if s.startswith("wake-")]
+    assert len(dreams) == 2 and all("Your dream." in m for m in dreams)
+
+
 def test_a_tier_can_run_on_another_provider(tmp_path):
     from huvu.config import ModelChoice, load
 

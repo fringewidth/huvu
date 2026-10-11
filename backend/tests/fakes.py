@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from typing import Any
 
-from huvu.hermes import HermesError, HermesEvent, Profile
+from huvu.hermes import TITLE_MAX, HermesError, HermesEvent, Profile
 from huvu.source import Source, SourceError
 from huvu.spec import ActionSpec, Blob, Caller, ColumnSpec, Feed, Result, SourceSpec, TableSpec
 
@@ -140,6 +140,8 @@ class FakeHermes:
         self.hooks: list[Any] = []
 
     async def create_session(self, profile: Profile, session_id: str, *, title: str | None = None) -> str:
+        if title is not None and len(title) > TITLE_MAX:
+            raise HermesError(f"creating session {session_id}: 500 title too long")
         # Hermes refuses a title another session of the profile has.
         if title is not None and title in self.titles.setdefault(profile.name, set()):
             raise HermesError(f"creating session {session_id}: 400 title already in use")
