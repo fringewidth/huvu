@@ -125,38 +125,38 @@ const PROFILES: Record<Target, Profile> = {
     feedsKey: "ContextMenu",
     // Asks reach the TV through Alexa, so each greeting shows one.
     greetings: [
-      { line: "Feeling a classic, or something new?", example: "alexa, ask huvu for a film like blade runner" },
-      { line: "One more episode?", example: "alexa, ask huvu how long is the first season of Invincible" },
+      { line: "Feeling a classic, or something new?", example: "alexa, ask my huvu for a film like blade runner" },
+      { line: "One more episode?", example: "alexa, ask my huvu how long is the first season of Invincible" },
       {
         line: "Sit back and relax.",
         example: (() => {
           const languages = ["Telugu", "Kannada", "Hindi", "Tamil", "Malayalam"];
-          return `alexa, ask huvu what's some cool ${languages[Math.floor(Math.random() * languages.length)]} movies`;
+          return `alexa, ask my huvu what's some cool ${languages[Math.floor(Math.random() * languages.length)]} movies`;
         })(),
       },
-      { line: "Got your popcorn?", example: "alexa, ask huvu what's a good movie under two hours" },
+      { line: "Got your popcorn?", example: "alexa, ask my huvu what's a good movie under two hours" },
       // Two more for the show the clock is in, read once at launch in the
       // device's local time, the way a cinema runs its day.
       ...(() => {
         const hour = new Date().getHours();
         return hour >= 21 || hour < 5
           ? [
-              { line: "The late-night screening is on.", example: "alexa, ask huvu for something to watch before bed" },
-              { line: "Something short tonight?", example: "alexa, ask huvu for a series with episodes under 30 minutes" },
+              { line: "The late-night screening is on.", example: "alexa, ask my huvu for something to watch before bed" },
+              { line: "Something short tonight?", example: "alexa, ask my huvu for a series with episodes under 30 minutes" },
             ]
           : hour < 12
             ? [
-                { line: "The morning show is open.", example: "alexa, ask huvu for something light to start the day" },
-                { line: "Slow start? Pick something easy.", example: "alexa, ask huvu for a feel-good comedy" },
+                { line: "The morning show is open.", example: "alexa, ask my huvu for something light to start the day" },
+                { line: "Slow start? Pick something easy.", example: "alexa, ask my huvu for a feel-good comedy" },
               ]
             : hour < 17
               ? [
-                  { line: "Matinee time.", example: "alexa, ask huvu what to watch this afternoon" },
-                  { line: "An afternoon off deserves a good film.", example: "alexa, ask huvu for a movie under two hours" },
+                  { line: "Matinee time.", example: "alexa, ask my huvu what to watch this afternoon" },
+                  { line: "An afternoon off deserves a good film.", example: "alexa, ask my huvu for a movie under two hours" },
                 ]
               : [
-                  { line: "The evening show is about to begin.", example: "alexa, ask huvu what's worth watching tonight" },
-                  { line: "What are we watching tonight?", example: "alexa, ask huvu what's good on netflix" },
+                  { line: "The evening show is about to begin.", example: "alexa, ask my huvu what's worth watching tonight" },
+                  { line: "What are we watching tonight?", example: "alexa, ask my huvu what's good on netflix" },
                 ];
       })(),
     ],

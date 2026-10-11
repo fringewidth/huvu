@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "hoo voo",
+      "invocationName": "my hoover",
       "intents": [
         {
           "name": "AskIntent",

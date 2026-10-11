@@ -1,7 +1,7 @@
 """Asks through Alexa, for the Fire TV, which gives apps no mic.
 
 A custom Alexa skill, kept in development stage so it needs no review
-("Alexa, ask huvu ..."), posts each ask to `POST /api/alexa`. Its one
+("Alexa, ask my huvu ...", invoked as `my hoover`), posts each ask to `POST /api/alexa`. Its one
 intent holds the whole sentence in a catch-all slot
 (docs/alexa-interaction-model.json). huvu checks that the request is
 Amazon's and for its skill, asks it in the conversation of the household TV
@@ -50,7 +50,7 @@ ASK_SLOT = "ask"
 # What Alexa says. Everything else it leaves to the TV.
 NO_TV = "huvu isn't open on the TV."
 NOT_HEARD = "I didn't catch that."
-HELP = "Say, Alexa, ask huvu, and then your question. The answer shows on the TV."
+HELP = "Say, Alexa, ask my hoover, and then your question. The answer shows on the TV."
 
 
 class AlexaError(Exception):
