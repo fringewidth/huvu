@@ -72,12 +72,57 @@ def waypoint_names(reply: list[dict]) -> list[str]:
     return [w["desc"] for w in sets[-1]["waypoints"]["waypoints"]] if sets else []
 
 
-async def test_a_phone_gets_its_waypoints_once(location, clock):
+def holds(reply: list[dict], *extra: dict) -> dict:
+    """What a phone posts when asked for its waypoints, having taken the
+    last setWaypoints in a reply."""
+    sets = [c for c in reply if c.get("action") == "setWaypoints"]
+    taken = sets[-1]["waypoints"]["waypoints"] if sets else []
+    return {"_type": "waypoints", "waypoints": [{**w, "_id": "x"} for w in taken] + list(extra)}
+
+
+ASK = {"_type": "cmd", "action": "waypoints"}
+
+
+async def test_a_phone_gets_its_waypoints_and_says_it_holds_them(location, clock):
     first = await location.ingest(fix(clock), MY_TRACKER)
     assert waypoint_names(first) == ["home", "near_home"]
     assert first[0]["waypoints"]["waypoints"][0]["rad"] == 150
+    # It's asked what it took, and says so in a post of its own.
+    assert first[-1] == ASK
+    assert await location.ingest(holds(first), MY_TRACKER) == []
     clock.advance(minutes=15)
     assert await location.ingest(fix(clock), MY_TRACKER) == []
+    # Now and then it's asked again.
+    clock.advance(minutes=15)
+    assert await location.ingest(fix(clock), MY_TRACKER) == [ASK]
+
+
+async def test_a_phone_that_lost_its_waypoints_gets_them_again(location, clock):
+    sent = await location.ingest(fix(clock), MY_TRACKER)
+    await location.ingest(holds(sent), MY_TRACKER)
+    clock.advance(hours=2)
+    # OwnTracks came back with no waypoints.
+    assert await location.ingest(fix(clock), MY_TRACKER) == [ASK]
+    again = await location.ingest({"_type": "waypoints", "waypoints": []}, MY_TRACKER)
+    assert waypoint_names(again) == ["home", "near_home"]
+    assert again[-1] == ASK
+    assert await location.ingest(holds(again), MY_TRACKER) == []
+
+
+async def test_a_phone_that_never_takes_its_waypoints_gets_them_hourly(location, clock):
+    sent = await location.ingest(fix(clock), MY_TRACKER)
+    assert waypoint_names(sent) == ["home", "near_home"]
+    assert await location.ingest({"_type": "waypoints", "waypoints": []}, MY_TRACKER) == []
+    clock.advance(minutes=59)
+    assert waypoint_names(await location.ingest({"_type": "waypoints", "waypoints": []}, MY_TRACKER)) == []
+    clock.advance(minutes=1)
+    assert waypoint_names(await location.ingest({"_type": "waypoints", "waypoints": []}, MY_TRACKER)) == ["home", "near_home"]
+
+
+async def test_a_region_made_on_the_phone_is_left_alone(location, clock):
+    sent = await location.ingest(fix(clock), MY_TRACKER)
+    gym = {"_type": "waypoint", "desc": "gym", "lat": 1.0, "lon": 2.0, "rad": 100, "tst": 1000}
+    assert await location.ingest(holds(sent, gym), MY_TRACKER) == []
 
 
 async def test_an_arrival_is_only_its_persons(kernel, location, clock):
@@ -186,16 +231,18 @@ async def test_removed_waypoints_are_cleared_on_phones(kernel, location, clock):
     await location.ingest(fix(clock, *NEARBY), MY_TRACKER)
     added = await kernel.tools.call("location_waypoint_add", {"name": "office"}, ME)
     assert added.data["lat"] == NEARBY[0]
-    assert "office" in waypoint_names(await location.ingest(fix(clock), MY_TRACKER))
+    added_reply = await location.ingest(fix(clock), MY_TRACKER)
+    assert "office" in waypoint_names(added_reply)
     await location.ingest(crossing(clock, "enter", "office"), MY_TRACKER)
     assert await place(kernel) == [["office"]]
 
     await kernel.tools.call("location_waypoint_remove", {"name": "office"}, ME)
     assert await place(kernel) == [["elsewhere"]]
-    reply = await location.ingest(fix(clock), MY_TRACKER)
+    # The phone still holds it, so it's cleared.
+    reply = await location.ingest(holds(added_reply), MY_TRACKER)
     assert reply[0] == {"_type": "cmd", "action": "clearWaypoints"}
     assert waypoint_names(reply) == ["home", "near_home"]
-    # The region stays on an Android phone; its crossings are ignored.
+    # A crossing sent before the phone took that is ignored.
     clock.advance(minutes=1)
     await location.ingest(crossing(clock, "leave", "office"), MY_TRACKER)
     assert await sql(kernel, ME, "SELECT count(*) FROM location_transitions WHERE event = 'leave' AND changed = 1") == [[0]]
