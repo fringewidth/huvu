@@ -307,6 +307,18 @@ Each family member runs OwnTracks on their phone, in significant-change mode, po
 1. **Privacy.** Location is private to its person, from everyone, members of their groups included: every row is the person's (`user_id`), so the scope views show it to nobody else, through `data_sql` or a trigger. Group membership means trust about the house, not about where someone is.
 1. **Maps is not a source.** Routes, ETA and geocoding have no state and no events, so they are a Hermes tool. Triggers use `near_home` in place of an ETA.
 
+## Browsing
+
+Decided on 2026-10-12. The driver is `huvu_drivers/browser.py`, and the Chrome extension that feeds it is `browser-extension/` at the repo root.
+
+The extension runs in a person's desktop Chrome. About once a minute it reads Chrome's own history (`chrome.history.search`, then `getVisits` for each page) and posts every visit since its cursor to `POST /api/ingest/browser`, 500 at a time, with a tracker's token (`uv run huvu tracker add <user> --browser`). The cursor moves only after a post succeeds, so visits made while huvu is down go later. A visit younger than 30 s waits for the next sync, since a page has no title yet when the visit happens; that is also why the history is read and not watched with `history.onVisited`. The first sync sends the 90 days Chrome keeps. Incognito windows never reach Chrome's history.
+
+1. **What a URL keeps.** No query string and no fragment, except the parameters that say what the page is: a YouTube video's `v`, and the search words of Google, YouTube, Bing and DuckDuckGo (`KEEP` in the driver, mirrored in the extension's `page.js`). A URL can carry a password reset token, an OAuth code or a session id, and the model's reads go to the model's provider. The extension strips URLs before they leave the browser, and the backend strips them again, so the rule holds without the extension. A secret in a URL's path is not caught.
+1. **Sites kept out.** The extension skips a list of sites the person can edit in its options, Gmail, Google's login and WhatsApp Web by default. A blocked site covers its subdomains.
+1. **Storage.** Every visit is a row of `browser_visits`, kept for good: the URL, the domain, the title, Chrome's transition (link, typed, reload...), Chrome's visit id, and `video_id` and `search` where the URL has them. A visit sent twice is kept once, by its device and visit id. A visit huvu can't read is dropped, not refused, so it can't hold up the extension.
+1. **Privacy and provenance.** Browsing is private to its person, like location: every row is theirs. A page's title is written by whoever made the page, so the table is labelled `external`, and a wake from a trigger that reads it says so.
+1. **YouTube.** Watch history leaves Google only through Takeout (manual, every two months at best) or, for accounts in the EEA, the Data Portability API; the YouTube Data API hasn't returned it since 2016. So YouTube comes from the extension, for what is watched in desktop Chrome. The phone app and the TV are not covered. A Takeout import is a possible later addition.
+
 ## Actions and the policy
 
 Every write goes through one policy check in the backend, whoever asks: Hermes, a script, or a frontend button.
@@ -427,6 +439,7 @@ backend/
     ha/               Home Assistant: client.py (WebSocket), scripts.py (scripts as actions),
                       history.py (who caused a change, sensor buckets), source.py (the driver)
     location.py       where each person is, from OwnTracks
+    browser.py        what each person browses, from huvu's Chrome extension
   tests/              fakes.py (a fake house and Hermes), fake_ha.py (a fake Home Assistant)
 hermes-plugin/huvu/   the Hermes plugin
 ```

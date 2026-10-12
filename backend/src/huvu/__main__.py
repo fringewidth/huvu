@@ -18,6 +18,7 @@ Users and devices are managed from here too:
     uv run huvu device list
     uv run huvu device revoke d_1a2b3c4d5e
     uv run huvu tracker add mom              prints a QR code and link that set up OwnTracks on her phone
+    uv run huvu tracker add me --browser     prints the address and token for huvu's Chrome extension
     uv run huvu wipe mom                     deletes her triggers, conversations and history (see wipe.py)
     uv run huvu wipe --group home            the same for a group's shared devices
     uv run huvu skills                       writes every source's Hermes skill and exits (setup.sh
@@ -88,7 +89,8 @@ def main() -> None:
     tracker = commands.add_parser("tracker", help="manage location trackers (OwnTracks)").add_subparsers(dest="action", required=True)
     add_tracker = tracker.add_parser("add", help="add OwnTracks on a user's phone, and print the link that sets it up")
     add_tracker.add_argument("user")
-    add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone)")
+    add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone, or <user>'s Chrome)")
+    add_tracker.add_argument("--browser", action="store_true", help="for huvu's Chrome extension (browser-extension/), not OwnTracks")
 
     commands.add_parser("skills", help="write every source's Hermes skill, then exit")
 
@@ -185,6 +187,8 @@ def _manage(config, args) -> None:
                 print(f"{d.id}\t{d.kind}\t{d.user or f'group {d.group}'}\t{d.name}\t{d.created_at:%Y-%m-%d}")
         case ("device", "revoke"):
             accounts.revoke(args.id)
+        case ("tracker", "add") if args.browser:
+            _add_browser(config, accounts, args.user, args.name or f"{args.user}'s Chrome")
         case ("tracker", "add"):
             _add_tracker(config, accounts, args.user, args.name or f"{args.user}'s phone")
         case ("wipe", _):
@@ -228,6 +232,18 @@ def _add_tracker(config, accounts: Accounts, user: str, name: str) -> None:
     segno.make(link, error="l").terminal(compact=True)
     print(f"Added tracker {device.id} for {user}. On their phone, install OwnTracks, then scan this code or open the link (it holds the token, shown once):")
     print(link)
+
+
+def _add_browser(config, accounts: Accounts, user: str, name: str) -> None:
+    """Adds a tracker for huvu's Chrome extension, and prints what goes in
+    the extension's options."""
+    source = next((s.name for s in config.sources if s.driver.endswith("browser:BrowserSource")), None)
+    if source is None:
+        raise AuthError("no browser source in huvu.toml; add one first (see huvu_drivers/browser.py)")
+    device, token = accounts.add_tracker(user, name)
+    print(f"Added tracker {device.id} for {user}. In the huvu extension's options in their Chrome, set (the token is shown once):")
+    print(f"  address  {config.public_url}")
+    print(f"  token    {token}")
 
 
 def _new_password() -> str:

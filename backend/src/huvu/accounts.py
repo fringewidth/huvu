@@ -19,9 +19,10 @@ names people by the caller's aliases (people_group, huvu_message), and a
 notification one user sends shows the sender by the recipient's alias for
 them. Without an alias, the person's name stands in.
 
-A tracker is a location app on a user's phone (OwnTracks), added from the
-command line. It has a token of its own, revoked apart from the phone's
-login, and it can only post to a source's ingest route.
+A tracker is an app that posts a user's own data, added from the command
+line: OwnTracks on their phone, or huvu's extension in their Chrome. It has
+a token of its own, revoked apart from the phone's login, and it can only
+post to a source's ingest route.
 
 Every device has its own token, stored hashed, so a lost phone can be cut
 off without logging anyone else out. Phones are taken to be on their user's
@@ -424,8 +425,8 @@ class Accounts:
         return self._add_device(name, cast(DeviceKind, kind), username, None)
 
     def add_tracker(self, user_id: str, name: str) -> tuple[Device, str]:
-        """Adds a location tracker for a user. Returns the device and its
-        token, shown this once."""
+        """Adds a tracker for a user (OwnTracks, or the Chrome extension).
+        Returns the device and its token, shown this once."""
         self._require_user(user_id)
         return self._add_device(name, "tracker", user_id, None)
 

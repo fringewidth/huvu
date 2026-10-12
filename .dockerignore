@@ -18,3 +18,4 @@ backend/data/
 backend/tests/
 backend/.env
 backend/huvu.toml
+browser-extension/
