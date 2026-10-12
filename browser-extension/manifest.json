@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "huvu",
+  "version": "1.0.0",
+  "description": "Sends the pages you open in Chrome to your own huvu, so your agent knows what you read and watch.",
+  "icons": {
+    "128": "icon.png"
+  },
+  "permissions": ["history", "storage", "alarms"],
+  "host_permissions": ["https://huvu.hrishik.me/*"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "huvu"
+  }
+}

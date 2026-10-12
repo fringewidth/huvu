@@ -52,6 +52,13 @@ url = "http://localhost:8642"
 # driver = "huvu_drivers.location:LocationSource"
 # options = { home = { lat = 17.385, lon = 78.4867, radius_m = 150 }, near_home_km = 3, group = "home" }
 
+# What each person browses, from huvu's Chrome extension (browser-extension/
+# at the repo root). `uv run huvu tracker add <username> --browser` prints
+# the token for each person's extension.
+# [[sources]]
+# name = "browser"
+# driver = "huvu_drivers.browser:BrowserSource"
+
 # The model behind each tier. An ask runs on the tier the router picks, pro
 # when it can't; a trigger's wakes on its own tier, basic by default;
 # advanced needs the person's yes.
