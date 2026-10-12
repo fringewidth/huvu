@@ -2,12 +2,13 @@
 // hasn't had yet to POST /api/ingest/browser (backend/src/huvu_drivers/
 // browser.py). The cursor is the time of the last visit huvu took: it moves
 // only after a post succeeds, so a visit made while huvu is down goes later.
-// The first sync sends the 90 days Chrome keeps.
+// The first sync sends the 90 days Chrome keeps. Only titles leave the
+// browser, never an address (page.js).
 //
 // The history is read, not watched with history.onVisited: a page has no
 // title yet when the visit happens, and a sync a minute later finds both.
 
-import { cleanUrl, DEFAULT_ADDRESS, DEFAULT_BLOCKED } from "./page.js";
+import { DEFAULT_ADDRESS, DEFAULT_BLOCKED, sendable } from "./page.js";
 
 const KEPT_MS = 90 * 24 * 60 * 60 * 1000;
 // A visit younger than this waits for the next sync, so its page has a title.
@@ -22,13 +23,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) void sync();
 });
 chrome.action.onClicked.addListener(() => void chrome.runtime.openOptionsPage());
-// The options page asks for a sync after a save, and with "send now".
+// The options page asks for a sync after a save, with "send now", and with
+// "send 90 days again", which starts the cursor over.
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
-  if (message === "sync") {
-    void sync().then(() => reply(true));
-    return true;
-  }
-  return false;
+  const again = message === "again" ? chrome.storage.local.remove("cursor") : Promise.resolve();
+  const known = message === "sync" || message === "again";
+  if (known) void again.then(sync).then(() => reply(true));
+  return known;
 });
 
 function schedule() {
@@ -70,11 +71,10 @@ async function visitsBetween(from, until, blocked) {
   const items = await chrome.history.search({ text: "", startTime: from, maxResults: 100000 });
   const visits = [];
   for (const item of items) {
-    const url = cleanUrl(item.url, blocked);
-    if (url === null) continue;
+    if (!item.title || !sendable(item.url, blocked)) continue;
     for (const visit of await chrome.history.getVisits({ url: item.url })) {
       if (visit.visitTime >= from && visit.visitTime <= until) {
-        visits.push({ id: visit.visitId, url, title: item.title || null, at: Math.round(visit.visitTime), transition: visit.transition });
+        visits.push({ id: visit.visitId, title: item.title, at: Math.round(visit.visitTime), transition: visit.transition });
       }
     }
   }

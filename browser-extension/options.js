@@ -28,9 +28,9 @@ async function save() {
   await sendNow();
 }
 
-async function sendNow() {
+async function sendNow(message = "sync") {
   $("status").textContent = "Sending. The first time sends 90 days, which takes a minute or two.";
-  await chrome.runtime.sendMessage("sync");
+  await chrome.runtime.sendMessage(message);
   await showStatus();
 }
 
@@ -50,4 +50,5 @@ async function showStatus() {
 
 $("save").addEventListener("click", () => void save());
 $("now").addEventListener("click", () => void sendNow());
+$("again").addEventListener("click", () => void sendNow("again"));
 void load();

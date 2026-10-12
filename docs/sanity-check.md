@@ -194,9 +194,10 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. On the backend, run `uv run huvu tracker add <you> --browser`. It should print an address and a token.
 1. In Chrome, open `chrome://extensions`, turn on Developer mode, choose "Load unpacked" and pick the `browser-extension` folder. huvu's icon should appear in the toolbar.
 1. Click the icon. The options page should open. Paste the token and press Save. Within a minute or two it should say how many visits it sent and how far up to.
+1. After a code change in the extension, press its reload button in `chrome://extensions`. Chrome doesn't reload an unpacked extension by itself.
 1. Open a YouTube video. About a minute later, ask huvu "what did I just watch on YouTube?". It should name the video.
 1. Search Google for something unusual. A minute later, ask huvu what you searched for. It should say the words.
-1. Open a page whose address has a long query string, such as a link from an email. Ask huvu for the address of the last page you opened. It should give the address without the part after the `?`.
+1. Ask huvu for the address of the last page you opened. It should say it only knows the page's title, never its address.
 1. Open Gmail. Ask huvu whether you opened your mail in the last few minutes. It should say it can't see that.
 1. Open a page in an incognito window. huvu should never learn of it.
 1. From another family member's phone, ask huvu what you watched. It should say it can't tell, since your browsing is yours alone.
