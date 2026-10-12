@@ -104,6 +104,10 @@ configure() {
   # tend to promise an action and end the turn without calling the tool.
   hermes $p config set agent.execution_guidance false >/dev/null
   hermes $p config set agent.task_completion_guidance false >/dev/null
+  # Tool-calling rounds per run, down from Hermes's 500. A dream takes a few
+  # dozen; a run stuck in a loop ends here, and a wake also ends at its
+  # deadline ([wakes] in huvu.toml).
+  hermes $p config set agent.max_turns 100 >/dev/null
   # Hermes's bundled skills (Apple Notes, Manim, arXiv and 60 more) cost about
   # 1,700 tokens of index on every request. huvu's own skills come from
   # skills.external_dirs, and skills huvu writes itself are never removed.

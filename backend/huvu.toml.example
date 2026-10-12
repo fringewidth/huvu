@@ -84,6 +84,11 @@ timeout = 1.0        # seconds Clef-flash may take; slower, and the ask runs on 
 at = "04:00"
 tier = "pro"
 
+# A trigger's wake runs apart from its script, which has 30 s. Past this many
+# seconds, huvu stops the wake's run.
+[wakes]
+deadline = 900
+
 # huvu's voice (an Edge voice) and speech to text (Groq, GROQ_API_KEY).
 # Voices: en-US-AvaNeural, en-IN-NeerjaExpressiveNeural, en-IN-PrabhatNeural
 # and more (`uv run edge-tts --list-voices`).
