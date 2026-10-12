@@ -10,7 +10,9 @@ The phone watches its waypoints itself, through the OS's region monitoring,
 so an arrival comes at once and costs little battery. huvu holds the master
 list and sends each phone the waypoints its person sees. OwnTracks fetches
 nothing on its own, so they go in the reply to the phone's next post, as a
-`setWaypoints` command.
+`setWaypoints` command. huvu can't tell what a phone holds from what it
+sent, since a phone can lose its waypoints. So it asks each phone for its
+list now and then, and sends the waypoints again when the list differs.
 
 A waypoint belongs to the person who named it, and they can share it with
 one of their groups, whose members' phones then get it too. `home` and
@@ -30,7 +32,7 @@ with data_sql. A transition that changed where huvu thinks the person is
 tables: where each person is (`location_people`) and the waypoints
 (`location_waypoints`). The source's own database (`location.db` in its
 folder) holds what it works from: the waypoints, where each person is, and
-what each phone was last sent.
+what each phone said it holds.
 
     [[sources]]
     name = "location"
@@ -41,7 +43,6 @@ what each phone was last sent.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import math
@@ -69,6 +70,11 @@ ELSEWHERE = "elsewhere"
 # The waypoints the config makes, by id.
 HOME = "wp_home"
 NEAR_HOME = "wp_near_home"
+# How often huvu asks a phone for its waypoints, in the reply to a post.
+ASK_EVERY_S = 30 * 60
+# How long huvu waits before it sends a phone the same waypoints again,
+# for a phone that says it lacks them after they were sent.
+RESEND_AFTER_S = 60 * 60
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS waypoints (
@@ -99,13 +105,18 @@ CREATE TABLE IF NOT EXISTS presence (
     PRIMARY KEY (user_id, waypoint_id)
 );
 
--- The waypoints each tracker was last sent.
-CREATE TABLE IF NOT EXISTS synced (
+-- What each tracker holds and was sent.
+DROP TABLE IF EXISTS synced;
+CREATE TABLE IF NOT EXISTS phones (
     device_id TEXT PRIMARY KEY,
-    signature TEXT NOT NULL,
-    -- The tsts sent, as JSON, to tell when one went away.
-    tsts TEXT NOT NULL,
-    at TEXT NOT NULL
+    -- The waypoints the phone last said it holds, as JSON in OwnTracks's
+    -- shape. NULL until it first says.
+    holds TEXT,
+    held_at REAL,
+    asked_at REAL,
+    -- The waypoints last sent, as JSON in OwnTracks's shape.
+    sent TEXT,
+    sent_at REAL
 );
 """
 
@@ -353,10 +364,10 @@ class LocationSource(Source):
 
     async def ingest(self, body: Any, caller: Caller) -> Any:
         """Takes what OwnTracks posts, and answers with the commands for the
-        phone: its waypoints, when they changed since it was last sent
-        them. A payload huvu can't read is logged and dropped, not refused:
-        OwnTracks retries a refused post, and the bad one would hold up the
-        phone's queue for good."""
+        phone: its waypoints, when it lacks them, and now and then a
+        request for the list it holds. A payload huvu can't read is logged
+        and dropped, not refused: OwnTracks retries a refused post, and the
+        bad one would hold up the phone's queue for good."""
         user, device = caller.user, caller.device
         if user is None or device is None:
             raise SourceError("location data needs a person's device")
@@ -374,6 +385,8 @@ class LocationSource(Source):
             await self._fix(payload, user, device)
         elif kind == "transition":
             await self._transition(payload, user, device)
+        elif kind == "waypoints":
+            self._held(payload, device)
         elif kind == "encrypted":
             log.warning("%s sends encrypted payloads; turn encryption off in OwnTracks, since TLS covers it", device)
 
@@ -426,7 +439,7 @@ class LocationSource(Source):
     def _match(self, user: str, wtst: Any, desc: Any) -> Waypoint | None:
         """The waypoint a transition is about: by its tst, which huvu set,
         or else by name among the person's. A removed waypoint, still on a
-        phone that can't drop it (Android), matches nothing."""
+        phone that hasn't been cleared yet, matches nothing."""
         visible = self._visible(user)
         by_tst = next((w for w in visible if wtst is not None and w.tst == int(wtst)), None)
         return by_tst or next((w for w in visible if w.name == desc), None)
@@ -450,24 +463,52 @@ class LocationSource(Source):
             crossing["stayed_min"] = int((at - datetime.fromtimestamp(row["ts"], UTC)).total_seconds() // 60)
         return crossing
 
+    def _held(self, p: dict[str, Any], device: str) -> None:
+        """Keeps the list of waypoints a phone says it holds, which it
+        sends when huvu asks (the `waypoints` command)."""
+        held = [
+            {"desc": w["desc"], "lat": float(w["lat"]), "lon": float(w["lon"]), "rad": int(w.get("rad") or 0), "tst": int(w["tst"])}
+            for w in p.get("waypoints") or []
+        ]
+        self.db.execute(
+            "INSERT INTO phones (device_id, holds, held_at) VALUES (?, ?, ?) "
+            "ON CONFLICT (device_id) DO UPDATE SET holds = excluded.holds, held_at = excluded.held_at",
+            (device, dumps(held), self.ctx.now().timestamp()),
+        )
+
     def _sync(self, user: str, device: str) -> list[dict[str, Any]]:
-        """The commands that bring a tracker's waypoints up to date: none
-        when it has them already. setWaypoints only adds and overwrites, so
-        when one went away, clearWaypoints goes first; only iOS does it, so
-        a removed waypoint stays on an Android phone, where huvu ignores it."""
-        visible = self._visible(user)
-        signature = hashlib.sha256(json.dumps([(w.tst, w.name, w.lat, w.lon, w.radius_m) for w in visible]).encode()).hexdigest()
-        row = self.db.execute("SELECT * FROM synced WHERE device_id = ?", (device,)).fetchone()
+        """The commands for a tracker: its waypoints, when the phone lacks
+        one or holds one huvu took away, and the `waypoints` command, which
+        asks the phone for its list. A phone that never said what it holds
+        gets them too. setWaypoints only adds and overwrites, so for a
+        waypoint taken away, clearWaypoints goes first; it also clears any
+        region made on the phone itself. The same waypoints go out again
+        only after RESEND_AFTER_S, so a phone whose list never matches
+        can't keep posting."""
+        want = [w.owntracks() for w in self._visible(user)]
+        now = self.ctx.now().timestamp()
+        row = self.db.execute("SELECT * FROM phones WHERE device_id = ?", (device,)).fetchone()
+        holds = loads(row["holds"]) if row is not None and row["holds"] is not None else None
+        ours = {r["tst"] for r in self.db.execute("SELECT tst FROM waypoints").fetchall()}
+        stale = {w["tst"] for w in holds or []} & (ours - {w["tst"] for w in want})
+        missing = holds is None or any(not any(_same(w, h) for h in holds) for w in want)
+        resent = row is not None and row["sent"] is not None and loads(row["sent"]) == want and now - row["sent_at"] < RESEND_AFTER_S
         commands: list[dict[str, Any]] = []
-        if row is None or row["signature"] != signature:
-            tsts = [w.tst for w in visible]
-            if row is not None and set(loads(row["tsts"])) - set(tsts):
+        if (missing or stale) and not resent:
+            if stale:
                 commands.append({"_type": "cmd", "action": "clearWaypoints"})
-            commands.append({"_type": "cmd", "action": "setWaypoints", "waypoints": {"_type": "waypoints", "waypoints": [w.owntracks() for w in visible]}})
+            commands.append({"_type": "cmd", "action": "setWaypoints", "waypoints": {"_type": "waypoints", "waypoints": want}})
             self.db.execute(
-                "INSERT INTO synced (device_id, signature, tsts, at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT (device_id) DO UPDATE SET signature = excluded.signature, tsts = excluded.tsts, at = excluded.at",
-                (device, signature, dumps(tsts), self.ctx.now().isoformat()),
+                "INSERT INTO phones (device_id, sent, sent_at) VALUES (?, ?, ?) "
+                "ON CONFLICT (device_id) DO UPDATE SET sent = excluded.sent, sent_at = excluded.sent_at",
+                (device, dumps(want), now),
+            )
+        # After a setWaypoints the phone says what it took at once.
+        if commands or row is None or row["asked_at"] is None or now - row["asked_at"] >= ASK_EVERY_S:
+            commands.append({"_type": "cmd", "action": "waypoints"})
+            self.db.execute(
+                "INSERT INTO phones (device_id, asked_at) VALUES (?, ?) ON CONFLICT (device_id) DO UPDATE SET asked_at = excluded.asked_at",
+                (device, now),
             )
         return commands
 
@@ -660,6 +701,17 @@ def _waypoint(row: Row) -> Waypoint:
         group=row["group_id"],
         tst=row["tst"],
         origin=row["origin"],
+    )
+
+
+def _same(want: dict[str, Any], held: dict[str, Any]) -> bool:
+    """Whether a phone holds a waypoint as huvu sent it."""
+    return (
+        held["tst"] == want["tst"]
+        and held["desc"] == want["desc"]
+        and held["rad"] == want["rad"]
+        and abs(held["lat"] - want["lat"]) < 1e-6
+        and abs(held["lon"] - want["lon"]) < 1e-6
     )
 
 

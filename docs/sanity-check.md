@@ -185,7 +185,8 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. From the other phone, ask huvu where you are. It should say it can't tell, since your location is yours alone.
 1. Ask huvu "remember this place as the corner shop" while you stand somewhere new. Within about 15 minutes, `corner shop` should appear in OwnTracks's regions on your phone, and not on the other phone.
 1. Ask huvu to share the corner shop with the household. Within about 15 minutes it should appear on the other phone too.
-1. Ask huvu to forget the corner shop. On an iPhone it should go from OwnTracks's regions. On Android it stays in the list, and huvu ignores it.
+1. Ask huvu to forget the corner shop. Within about 15 minutes it should go from OwnTracks's regions, on Android and on iPhone.
+1. Force stop OwnTracks from Android's app settings, and open it again. If its regions are gone, tap the button that sends your location now about every 15 minutes. Within about 45 minutes `home` and `near_home` should be back.
 1. Turn on flight mode, walk out of home, walk back in, and turn flight mode off. huvu should still learn that you left and came back, a little late.
 1. Run `uv run huvu device list` on the backend. Each tracker should be listed with the kind `tracker`.
 
