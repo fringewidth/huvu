@@ -483,3 +483,29 @@ async def test_a_trigger_without_a_script_or_once_is_refused(kernel):
         await kernel.tools.call("triggers_register", {k: v for k, v in DOORBELL.items() if k != "script"}, OWNER)
     with pytest.raises(ToolError, match="once"):
         await kernel.tools.call("triggers_register", {k: v for k, v in DOORBELL.items() if k != "once"}, OWNER)
+
+
+def logged(kernel, kind: str) -> list[str]:
+    return [r["summary"] for r in kernel.data.rows("huvu", "events", "type = ?", (kind,))]
+
+
+async def test_a_wake_outlives_its_scripts_time_limit(kernel, home, hermes, monkeypatch):
+    monkeypatch.setattr("huvu.scripts.TIMEOUT", 0.2)
+    hermes.script = [("run.started", {"run_id": "run_1"}), lambda _: asyncio.sleep(0.5), ("assistant.delta", {"delta": "dreamt"}), ("run.completed", {})]
+    await kernel.triggers.register(spec(**DOORBELL), OWNER)
+    await home.press()
+    await settle(kernel)
+    assert logged(kernel, "trigger.error") == []
+    assert len(logged(kernel, "wake.done")) == 1 and "dreamt" in logged(kernel, "wake.done")[0]
+
+
+async def test_a_wake_past_its_deadline_is_stopped(kernel, home, hermes):
+    kernel.config.wake_deadline = 0.2
+    hermes.script = [("run.started", {"run_id": "run_9"}), ("assistant.delta", {"delta": "looking"}), lambda _: asyncio.sleep(10)]
+    await kernel.triggers.register(spec(**DOORBELL), OWNER)
+    await home.press()
+    await settle(kernel)
+    assert hermes.stopped == ["run_9"]
+    assert logged(kernel, "wake.done") == []
+    [error] = logged(kernel, "trigger.error")
+    assert "stopped at its deadline of 0.2 s: looking" in error

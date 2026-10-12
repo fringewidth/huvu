@@ -37,6 +37,9 @@
     at = "04:00"             # each person's nightly dream, local time
     tier = "pro"
 
+    [wakes]
+    deadline = 900           # seconds a wake may run before huvu stops it
+
     [speech]
     voice = "en-US-AvaNeural"   # an Edge voice: uv run edge-tts --list-voices
     speed = 1.0
@@ -158,6 +161,8 @@ class Config:
     # Each person's nightly dream (dream.py): when, and on which tier.
     dream_at: str = "04:00"
     dream_tier: str = "pro"
+    # Seconds a wake may run before huvu stops its Hermes run (wake.py).
+    wake_deadline: float = 900.0
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
@@ -229,6 +234,7 @@ def load(path: Path | None = None) -> Config:
         models={t: _choice(t, m) for t, m in {**DEFAULT_MODELS, **raw.get("models", {})}.items()},
         dream_at=str(dream.get("at", "04:00")),
         dream_tier=str(dream.get("tier", "pro")),
+        wake_deadline=float(raw.get("wakes", {}).get("deadline", 900.0)),
         speech_voice=speech.get("voice", "en-US-AvaNeural"),
         speech_speed=float(speech.get("speed", 1.0)),
         groq_api_key=secret("GROQ_API_KEY"),
@@ -249,6 +255,8 @@ def load(path: Path | None = None) -> Config:
             raise ValueError(f"models.{tier}: the tiers are {', '.join(DEFAULT_MODELS)}")
     if config.dream_tier not in DEFAULT_MODELS:
         raise ValueError(f"dream.tier must be one of {', '.join(DEFAULT_MODELS)}")
+    if config.wake_deadline <= 0:
+        raise ValueError(f"wakes.deadline must be above 0 seconds, not {config.wake_deadline}")
     if not 0 < config.router_escalate_at <= 1:
         raise ValueError(f"router.escalate_at must be above 0 and at most 1, not {config.router_escalate_at}")
     if config.auth_mode not in ("on", "off"):

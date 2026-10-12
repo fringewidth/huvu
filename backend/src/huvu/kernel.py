@@ -164,6 +164,7 @@ class Kernel:
             self._warming.cancel()
         await self.conversations.close()
         await self.triggers.stop()
+        await self.waker.stop()
         await self.registry.stop()
         await self.hermes.close()
         await self.native_push.close()

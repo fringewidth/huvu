@@ -24,5 +24,8 @@ timeout = 1.0
 at = "04:00"
 tier = "pro"
 
+[wakes]
+deadline = 900
+
 [speech]
 voice = "en-US-AvaNeural"

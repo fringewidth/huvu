@@ -125,8 +125,10 @@ class ScriptRunner:
     async def _wake(self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], dry: bool, report: dict[str, Any]) -> dict[str, Any]:
         wake = {"text": message["wake"], "data": message.get("data")}
         report["wakes"].append(wake)
+        # The wake runs on in the background, so a long one doesn't count
+        # against the script's TIMEOUT.
         if not dry:
-            await self._kernel.waker.wake({**payload, "script": wake}, trigger.user)
+            self._kernel.waker.start({**payload, "script": wake}, trigger.user)
         return {"result": {"woke": not dry}}
 
     async def _call(self, message: dict[str, Any], trigger: Trigger, caller: Caller, dry: bool, report: dict[str, Any]) -> dict[str, Any]:

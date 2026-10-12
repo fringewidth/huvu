@@ -544,10 +544,11 @@ class TriggerEngine:
                 await self._look(trigger)
 
     async def settle(self) -> None:
-        """Waits until every queued look and every run has ended. For tests
-        and for a clean stop."""
-        while self._tasks:
+        """Waits until every queued look, every run and every wake has ended.
+        For tests and for a clean stop."""
+        while self._tasks or self._kernel.waker.busy:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+            await self._kernel.waker.settle()
 
     async def _poll_forever(self) -> None:
         while True:
