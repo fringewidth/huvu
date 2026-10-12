@@ -1,0 +1,40 @@
+/* huvu's night-garden colors (frontend/src/config/palette.ts), and what
+   the options page and the popup share. */
+:root {
+  --paper: rgb(13, 14, 23);
+  --ivory: rgb(239, 231, 216);
+  --dim: rgba(239, 231, 216, 0.55);
+  --line: rgba(239, 231, 216, 0.18);
+  --sindoor: rgb(224, 113, 90);
+  --marigold: rgb(233, 162, 59);
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ivory);
+  font: 15px/1.55 system-ui, sans-serif;
+}
+h1 {
+  margin: 0 0 4px;
+  font: italic 34px Georgia, serif;
+}
+p {
+  margin: 0 0 20px;
+  color: var(--dim);
+}
+button {
+  padding: 10px 18px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ivory);
+  font: inherit;
+  cursor: pointer;
+}
+button.primary {
+  border-color: var(--marigold);
+  color: var(--marigold);
+}
+.error {
+  color: var(--sindoor);
+}

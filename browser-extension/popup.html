@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>huvu</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      main {
+        width: 260px;
+        padding: 16px;
+      }
+      h1 {
+        font-size: 26px;
+      }
+      p {
+        margin-bottom: 14px;
+      }
+      .choices {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .choices button {
+        padding: 8px 10px;
+      }
+      #resume {
+        width: 100%;
+        margin-bottom: 8px;
+      }
+      #settings {
+        display: block;
+        margin-top: 14px;
+        color: var(--dim);
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>huvu</h1>
+      <p id="state"></p>
+      <button id="resume" class="primary" type="button" hidden>Resume</button>
+      <div class="choices">
+        <button type="button" data-minutes="30">Pause 30 min</button>
+        <button type="button" data-minutes="60">Pause 1 hour</button>
+        <button type="button" data-minutes="180">Pause 3 hours</button>
+        <button type="button" data-minutes="">Pause</button>
+      </div>
+      <a id="settings" href="#">Settings</a>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

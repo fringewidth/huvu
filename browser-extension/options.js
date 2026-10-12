@@ -1,4 +1,5 @@
 import { DEFAULT_ADDRESS, DEFAULT_BLOCKED } from "./page.js";
+import { current } from "./pause.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,8 +36,10 @@ async function sendNow() {
 }
 
 async function showStatus() {
-  const { lastSync, lastError, sent = 0, cursor } = await chrome.storage.local.get(["lastSync", "lastError", "sent", "cursor"]);
+  const { lastSync, lastError, sent = 0, cursor, pauses = [] } = await chrome.storage.local.get(["lastSync", "lastError", "sent", "cursor", "pauses"]);
   const lines = [`${sent.toLocaleString()} visits sent.`];
+  const on = current(pauses);
+  if (on) lines.push(on.until === null ? "Paused until you resume." : `Paused until ${new Date(on.until).toLocaleString()}.`);
   if (cursor) lines.push(`Sent up to ${new Date(cursor).toLocaleString()}.`);
   if (lastSync) lines.push(`Last sync ${new Date(lastSync).toLocaleString()}.`);
   $("status").textContent = lines.join("\n");

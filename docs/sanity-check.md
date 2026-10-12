@@ -194,7 +194,9 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 
 1. On the backend, run `uv run huvu tracker add <you> --browser`. It should print an address and a token.
 1. In Chrome, open `chrome://extensions`, turn on Developer mode, choose "Load unpacked" and pick the `browser-extension` folder. huvu's icon should appear in the toolbar.
-1. Click the icon. The options page should open. Paste the token and press Save. It should send nothing from before this moment. Open a page, wait a minute and press Send now: it should say it sent a visit.
+1. Click the icon. A small window should open, saying it sends the titles of the pages you open. Click Settings in it. The options page should open. Paste the token and press Save. It should send nothing from before this moment. Open a page, wait a minute and press Send now: it should say it sent a visit.
+1. Click the icon and choose "Pause 30 min". The icon should show two bars, and hovering it should say until when. Open a page, wait two minutes and press Send now on the options page: no visit should be sent, and the options page should say it is paused. Click the icon and press Resume. The bars should go, and a page opened after that should be sent within a minute or two. The page opened during the pause should never be sent.
+1. Click the icon and choose "Pause", with no timer. Close Chrome and open it again. The icon should still show the bars, and nothing should be sent until you press Resume.
 1. After a code change in the extension, press its reload button in `chrome://extensions`. Chrome doesn't reload an unpacked extension by itself.
 1. Open a YouTube video. About a minute later, ask huvu "what did I just watch on YouTube?". It should name the video.
 1. Search Google for something unusual. A minute later, ask huvu what you searched for. It should say the words.
