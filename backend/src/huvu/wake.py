@@ -11,8 +11,9 @@ tells the model and asks it to deal with the repeats; one more past the
 limit doesn't happen, and the trigger pauses itself and tells its user. The
 count is read from the kernel's log, so a restart doesn't reset it.
 
-A wake runs in the background, apart from the script that asked for it, so
-the script's own time limit never cuts a long wake short. Each wake has a
+A wake runs apart from the script that asked for it, so the script's own
+time limit never cuts a long wake short; the trigger's run waits for it
+after the script ends. Each wake has a
 deadline of its own (`[wakes] deadline`): past it, huvu stops the Hermes run
 and logs a trigger.error, which the next dream reads.
 """
@@ -48,20 +49,12 @@ class Waker:
         self._slots = asyncio.Semaphore(CONCURRENT)
         self._tasks: set[asyncio.Task[None]] = set()
 
-    def start(self, payload: dict[str, Any], user: str | None) -> None:
-        """Starts one wake in the background and returns at once."""
+    def start(self, payload: dict[str, Any], user: str | None) -> asyncio.Task[None]:
+        """Starts one wake and returns it at once, running."""
         task = asyncio.create_task(self._run(payload, user), name=f"wake:{payload.get('trigger')}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-
-    @property
-    def busy(self) -> bool:
-        return bool(self._tasks)
-
-    async def settle(self) -> None:
-        """Waits until every wake has ended. For tests and for a clean stop."""
-        while self._tasks:
-            await asyncio.gather(*list(self._tasks), return_exceptions=True)
+        return task
 
     async def stop(self) -> None:
         for task in list(self._tasks):
