@@ -72,6 +72,8 @@ class ScriptRunner:
         path.write_text(trigger.spec.script or "")
         caller = Caller(kind="script", trigger=trigger.id, user=trigger.user, group=trigger.group)
         report: dict[str, Any] = {"dry_run": dry, "calls": [], "wakes": [], "error": None, "log": ""}
+        # The wakes the script asked for, running apart from it.
+        started: list[asyncio.Task[None]] = []
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -82,7 +84,7 @@ class ScriptRunner:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            await asyncio.wait_for(self._converse(proc, trigger, payload, caller, dry, report), TIMEOUT)
+            await asyncio.wait_for(self._converse(proc, trigger, payload, caller, dry, report, started), TIMEOUT)
         except TimeoutError:
             proc.kill()
             report["error"] = f"timed out after {int(TIMEOUT)} s"
@@ -98,9 +100,14 @@ class ScriptRunner:
             report["log"] = stderr.decode(errors="replace")[-LOG_TAIL:]
         if not dry:
             await self._log(trigger, report)
+        # The run lasts until its wakes end, so rows that come meanwhile wait
+        # and fire together, as one more run. Only the script has TIMEOUT.
+        await asyncio.gather(*started, return_exceptions=True)
         return report
 
-    async def _converse(self, proc, trigger: Trigger, payload: dict[str, Any], caller: Caller, dry: bool, report: dict[str, Any]) -> None:
+    async def _converse(
+        self, proc, trigger: Trigger, payload: dict[str, Any], caller: Caller, dry: bool, report: dict[str, Any], started: list[asyncio.Task[None]]
+    ) -> None:
         assert proc.stdin and proc.stdout
         await _send(proc, {"payload": payload})
         while True:
@@ -112,23 +119,27 @@ class ScriptRunner:
             if "done" in message:
                 report["error"] = message.get("error")
                 break
-            reply = await self._answer(message, trigger, payload, caller, dry, report)
+            reply = await self._answer(message, trigger, payload, caller, dry, report, started)
             await _send(proc, {"id": message.get("id"), **reply})
 
-    async def _answer(self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], caller: Caller, dry: bool, report: dict[str, Any]) -> dict[str, Any]:
+    async def _answer(
+        self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], caller: Caller, dry: bool, report: dict[str, Any], started: list[asyncio.Task[None]]
+    ) -> dict[str, Any]:
         if "wake" in message:
-            reply = await self._wake(message, trigger, payload, dry, report)
+            reply = await self._wake(message, trigger, payload, dry, report, started)
         else:
             reply = await self._call(message, trigger, caller, dry, report)
         return reply
 
-    async def _wake(self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], dry: bool, report: dict[str, Any]) -> dict[str, Any]:
+    async def _wake(
+        self, message: dict[str, Any], trigger: Trigger, payload: dict[str, Any], dry: bool, report: dict[str, Any], started: list[asyncio.Task[None]]
+    ) -> dict[str, Any]:
         wake = {"text": message["wake"], "data": message.get("data")}
         report["wakes"].append(wake)
-        # The wake runs on in the background, so a long one doesn't count
-        # against the script's TIMEOUT.
+        # The script gets its answer at once, so a long wake doesn't count
+        # against its TIMEOUT.
         if not dry:
-            self._kernel.waker.start({**payload, "script": wake}, trigger.user)
+            started.append(self._kernel.waker.start({**payload, "script": wake}, trigger.user))
         return {"result": {"woke": not dry}}
 
     async def _call(self, message: dict[str, Any], trigger: Trigger, caller: Caller, dry: bool, report: dict[str, Any]) -> dict[str, Any]:
