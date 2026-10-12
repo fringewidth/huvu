@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "huvu",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Sends the titles of the pages you open in Chrome to your own huvu, so your agent knows what you read and watch. No address leaves the browser.",
   "icons": {
     "128": "icon.png"

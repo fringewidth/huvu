@@ -2,15 +2,15 @@
 // hasn't had yet to POST /api/ingest/browser (backend/src/huvu_drivers/
 // browser.py). The cursor is the time of the last visit huvu took: it moves
 // only after a post succeeds, so a visit made while huvu is down goes later.
-// The first sync sends the 90 days Chrome keeps. Only titles leave the
-// browser, never an address (page.js).
+// The first sync starts from the moment the extension is set up; the
+// history from before stays in the browser. Only titles leave the browser,
+// never an address (page.js).
 //
 // The history is read, not watched with history.onVisited: a page has no
 // title yet when the visit happens, and a sync a minute later finds both.
 
 import { DEFAULT_ADDRESS, DEFAULT_BLOCKED, sendable } from "./page.js";
 
-const KEPT_MS = 90 * 24 * 60 * 60 * 1000;
 // A visit younger than this waits for the next sync, so its page has a title.
 const SETTLE_MS = 30 * 1000;
 // Visits per post; the backend takes at most 1000.
@@ -23,13 +23,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) void sync();
 });
 chrome.action.onClicked.addListener(() => void chrome.runtime.openOptionsPage());
-// The options page asks for a sync after a save, with "send now", and with
-// "send 90 days again", which starts the cursor over.
+// The options page asks for a sync after a save, and with "send now".
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
-  const again = message === "again" ? chrome.storage.local.remove("cursor") : Promise.resolve();
-  const known = message === "sync" || message === "again";
-  if (known) void again.then(sync).then(() => reply(true));
-  return known;
+  if (message === "sync") {
+    void sync().then(() => reply(true));
+    return true;
+  }
+  return false;
 });
 
 function schedule() {
@@ -49,9 +49,10 @@ function sync() {
 async function run() {
   const settings = await chrome.storage.local.get(["address", "token", "blocked", "cursor"]);
   const until = Date.now() - SETTLE_MS;
-  const cursor = settings.cursor ?? until - KEPT_MS;
   try {
     if (!settings.token) throw new Error("No token yet: set one in the options.");
+    // The first sync with a token starts here, and sends nothing older.
+    const cursor = settings.cursor ?? until;
     const visits = await visitsBetween(cursor, until, settings.blocked ?? DEFAULT_BLOCKED);
     for (let i = 0; i < visits.length; i += BATCH) {
       const batch = visits.slice(i, i + BATCH);
