@@ -67,6 +67,9 @@ CACHE_TTL = timedelta(minutes=5)
 # out, so a long conversation doesn't cost more on every cold start; the
 # model reads them from `chat_turns`.
 TRANSCRIPT_CHARS = 50_000
+# How many notes wait for a device's next ask; older ones go. A phone
+# nobody asks from for days gathers every notification.
+NOTES_KEPT = 12
 # How long a stopped turn may take to end before huvu cuts it off itself.
 STOP_GRACE = 15.0
 # Hermes's own tools that are the agent's housekeeping, not something to
@@ -174,8 +177,7 @@ class ConversationHub:
         who was recognized there. Appended to that ask's message, so the
         session's prompt cache holds. Kept in the database, so a restart
         doesn't lose it."""
-        notes = self._notes(conversation_id)
-        notes.append(Action(text=text, at=self._kernel.now()))
+        notes = [*self._notes(conversation_id), Action(text=text, at=self._kernel.now())][-NOTES_KEPT:]
         self._db.execute(
             "INSERT INTO kv (namespace, key, value) VALUES ('notes', ?, ?) ON CONFLICT (namespace, key) DO UPDATE SET value = excluded.value",
             (conversation_id, dumps([n.model_dump() for n in notes])),
@@ -239,7 +241,7 @@ class ConversationHub:
             # The main session holds turns the rewind dropped.
             self._db.execute("UPDATE conversations SET hermes_session = NULL WHERE id = ?", (conversation_id,))
             session = None
-        route = await self._kernel.router.route(text)
+        route = await self._kernel.router.route(text, notes=bool(self._notes(conversation_id)))
         if route.tier == "basic":
             # A one-off: a session of its own with the ask alone, so the
             # main session and its cache are never touched.
