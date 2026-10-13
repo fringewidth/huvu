@@ -51,8 +51,9 @@ log = logging.getLogger("huvu.routing")
 
 # "one_off" when Clef-flash said the ask needs nothing said before it,
 # "context" when it said it does, "failed" when it erred, took too long or
-# has no credentials, and "off" when the router is turned off.
-Why = Literal["one_off", "context", "failed", "off"]
+# has no credentials, "off" when the router is turned off, and "notes" when
+# notes wait for the conversation, such as a notification the ask may answer.
+Why = Literal["one_off", "context", "failed", "off", "notes"]
 
 
 @dataclass(frozen=True)
@@ -106,10 +107,16 @@ class Router:
             except httpx.HTTPError:
                 pass
 
-    async def route(self, ask: str) -> Route:
+    async def route(self, ask: str, *, notes: bool = False) -> Route:
+        """`notes`: notes wait for the conversation's next ask, such as a
+        notification on the person's phone. The ask may answer one, and
+        only the main session reads them, so it goes there without asking
+        Clef-flash, which sees the ask alone."""
         config = self._kernel.config
         if not config.router_enabled:
             return self._on("pro", "off")
+        if notes:
+            return self._on("pro", "notes")
         p = await self._needs_context(ask)
         if p is None:
             return self._on("pro", "failed")

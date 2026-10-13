@@ -202,3 +202,32 @@ async def test_hermes_gets_the_effort_as_a_model_option():
     assert sent[0] == {"message": "hi", "model": "gpt-6-luna", "model_options": {"reasoning_effort": "none"}}
     assert sent[1] == {"message": "hi", "model": "gpt-6-sol"}
     await client.close()
+
+
+async def test_a_reply_to_a_notification_reaches_the_main_session_with_it(talk, family, hermes: FakeHermes, clock):
+    asked = clef(talk, {"a juniper, under 2000": 0.05, "turn on the projector": 0.05})
+    await talk.notify("me", None, "Still after a bonsai? Found three near you; what kind do you want?", urgency="low")
+    await talk.notify("mom", None, "Mom's own note")
+    # A notification is a question the reply may answer: the ask goes to the
+    # main session, past Clef-flash, with the notification before it.
+    await collect(talk, await talk.conversations.ask(family.me_phone.id, "a juniper, under 2000", user="me"))
+    _, message = hermes.messages[-1]
+    assert 'you sent them a notification: "Still after a bonsai? Found three near you; what kind do you want?"' in message
+    assert message.endswith("a juniper, under 2000") and "Mom's own note" not in message
+    assert asked == [] and [r["why"] for r in await routes(talk, family.me_phone.id)] == ["notes"]
+    # Each of their own devices hears it, and only once.
+    await collect(talk, await talk.conversations.ask(family.me_web.id, "a juniper, under 2000", user="me"))
+    assert "Still after a bonsai?" in hermes.messages[-1][1]
+    clock.advance(minutes=1)
+    await collect(talk, await talk.conversations.ask(family.me_phone.id, "turn on the projector", user="me"))
+    assert [r["why"] for r in await routes(talk, family.me_phone.id)] == ["notes", "one_off"]
+    assert "notification" not in hermes.messages[-1][1]
+
+
+async def test_notes_waiting_on_a_quiet_device_stay_few(talk, family):
+    from huvu.conversations import NOTES_KEPT
+
+    for i in range(NOTES_KEPT + 5):
+        await talk.notify("me", None, f"reminder {i}")
+    kept = talk.conversations._notes(family.me_phone.id)
+    assert len(kept) == NOTES_KEPT and kept[-1].text.endswith(f'"reminder {NOTES_KEPT + 4}"')

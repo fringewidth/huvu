@@ -305,7 +305,13 @@ class Kernel:
         # One send per person, since each sees the sender by their own alias.
         recipients = [user] if user else [m for m in self.accounts.members(group) if m != sender]
         for person in recipients:
-            self.push.send("notify", {**payload, "from": self._sender(person, sender)}, self.accounts.phones(person))
+            said_by = self._sender(person, sender)
+            self.push.send("notify", {**payload, "from": said_by}, self.accounts.phones(person))
+            # The next ask on any of their own devices carries it, so a reply
+            # to what huvu asked comes with the question.
+            for device in self.accounts.devices_for(person):
+                if device.user == person:
+                    self.conversations.note(device.id, prompts.notified(text, said_by))
 
     def _sender(self, recipient: str | None, sender: str | None) -> str | None:
         """Who a notification is from, as its recipient calls them. None

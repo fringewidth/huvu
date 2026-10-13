@@ -105,6 +105,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Ask huvu: "tell mom I'll be late" (use whatever you call the other person). Their phone should get "I'll be late" or similar, marked as from you, by the name they call you. With the app closed, their phone's notification should have that name as its title. Your phone should get a short note from huvu that it was sent.
 1. Tell huvu: "I call mom Amma" (use a new name for the other person). Then ask it to "tell Amma I'm home". It should reach the same person. When they message you, your phone should show it from "Amma".
 1. Ask huvu: "tell everyone dinner is ready". Everyone else in the household should get it. Your own phone should get only huvu's note that it went.
+1. Ask huvu to send you a notification with a question, such as "ask me tomorrow morning what I want for lunch". When it arrives, answer in the app with only the answer ("dosa"). huvu should know what you are answering.
 
 ## iPhone: huvu on the home screen
 
