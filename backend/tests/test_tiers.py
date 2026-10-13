@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -13,6 +14,12 @@ pytestmark = pytest.mark.usefixtures("family")
 
 ME = Caller(kind="hermes", session="s1", user="me")
 BELL = {"note": "Doorbell.", "sql": "SELECT id FROM home_doorbell", "fire": "rows", "once": False, "script": WAKE}
+
+
+async def until(condition, timeout: float = 2.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not condition():
+            await asyncio.sleep(0.01)
 
 
 async def ring(kernel) -> None:
@@ -107,6 +114,41 @@ async def test_a_dream_wakes_its_person_at_four(kernel, hermes, clock):
     await kernel.triggers.settle()
     dreams = [m for s, m in hermes.messages if s.startswith("wake-")]
     assert len(dreams) == 2 and all("Your dream." in m for m in dreams)
+
+
+async def test_a_dream_runs_with_the_situation_and_a_longer_deadline(kernel, hermes, clock):
+    kernel.config.wake_deadline = 0.05
+
+    async def slow(_session: str) -> None:
+        await asyncio.sleep(0.2)
+
+    hermes.script = [("run.started", {"run_id": "run_1"}), slow, ("assistant.delta", {"delta": "slept"}), ("run.completed", {})]
+    await kernel.dreams.ensure()
+    clock.advance(minutes=4 * 60 + 10)
+    await kernel.triggers.tick()
+    await kernel.triggers.settle()
+    await until(lambda: kernel.events_since("wake.done", kernel.now() - timedelta(hours=1)) == 2, timeout=5)
+    [session] = [s for s, _ in hermes.messages if s.startswith("wake-") and hermes.profiles[s] == "me"]
+    [situation] = hermes.histories[session]
+    assert situation["content"].startswith("[huvu situation]\nNow: ")
+    assert f"Your wiki: {kernel.config.hermes_home / 'profiles' / 'me' / 'wiki'}" in situation["content"]
+
+    # Any other wake still ends at the wakes' deadline.
+    await kernel.triggers.register(TriggerSpec.model_validate(BELL), ME)
+    await ring(kernel)
+    await until(lambda: kernel.events_since("trigger.error", kernel.now() - timedelta(hours=1)) == 1, timeout=5)
+
+
+async def test_a_live_dream_follows_the_code(kernel, monkeypatch):
+    from huvu import dream
+
+    await kernel.dreams.ensure()
+    [mine] = [t for t in kernel.triggers.list(ME) if kernel.dreams.is_dream(t.id)]
+    monkeypatch.setattr(dream, "DREAM_NOTE", "Your dream. Read everything.")
+    await kernel.dreams.ensure()
+    [now] = [t for t in kernel.triggers.list(ME) if kernel.dreams.is_dream(t.id)]
+    assert now.id == mine.id and now.spec.note == "Your dream. Read everything."
+    assert not kernel.dreams.is_dream("tr_other") and not kernel.dreams.is_dream(None)
 
 
 def test_a_tier_can_run_on_another_provider(tmp_path):

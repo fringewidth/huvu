@@ -31,7 +31,7 @@ def hermes() -> FakeHermes:
 
 @pytest.fixture
 async def kernel(tmp_path, clock, home, hermes):
-    k = Kernel(Config(data_dir=tmp_path), hermes=hermes, sources={"home": home}, clock=clock)
+    k = Kernel(Config(data_dir=tmp_path, hermes_home=tmp_path / "hermes"), hermes=hermes, sources={"home": home}, clock=clock)
     # Not started: the tests drive the sources and the clock themselves.
     await home.run()
     await k.triggers.load()

@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -21,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.routing import Route
 
-from . import mcp_server, prompts
+from . import mcp_server, wiki
 from .accounts import AuthError, Device
 from .alexa import Alexa, AlexaError
 from .bundles import BundleError, Bundles
@@ -40,6 +41,13 @@ from .triggers import TriggerError
 log = logging.getLogger("huvu.http")
 
 KEEPALIVE = 15.0
+
+
+class WikiEdit(BaseModel):
+    path: str
+    text: str = Field(max_length=wiki.MAX_BYTES)
+    # The version the edit was made from; None makes a new page.
+    version: str | None = None
 
 
 class Ask(BaseModel):
@@ -439,6 +447,54 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(409, str(err)) from err
         return JSONResponse(api_json(trigger.public()))
 
+    def my_wiki(me: Device) -> tuple[Any, Any]:
+        """The wiki of this device's user: its folder and its profile's.
+        A shared device has no wiki of its own to show."""
+        if me.user is None:
+            raise HTTPException(403, "a shared device has no wiki; open it on your own phone")
+        profile = accounts.profile(me.user)
+        return wiki.folder(config.hermes_home, profile), wiki.home(config.hermes_home, profile)
+
+    @app.get("/api/wiki")
+    async def wiki_pages(me: Device = device) -> JSONResponse:
+        """Every page of the user's wiki, newest first, and its index: the
+        entries of the profile's MEMORY.md."""
+        root, home = my_wiki(me)
+        return JSONResponse(api_json({"pages": wiki.pages(root, kernel.tz), "index": wiki.index(home)}))
+
+    @app.get("/api/wiki/page")
+    async def wiki_page(path: str, me: Device = device) -> JSONResponse:
+        root, _ = my_wiki(me)
+        try:
+            page = wiki.read(root, path, kernel.tz)
+        except wiki.WikiError as err:
+            raise HTTPException(404, str(err)) from err
+        return JSONResponse(api_json(asdict(page)))
+
+    @app.put("/api/wiki/page")
+    async def wiki_save(body: WikiEdit, me: Device = device) -> JSONResponse:
+        """Saves a page. One the agent changed since `version` answers 409,
+        and nothing is written."""
+        root, _ = my_wiki(me)
+        try:
+            page = wiki.write(root, body.path, body.text, body.version, kernel.tz)
+        except wiki.Conflict as err:
+            raise HTTPException(409, str(err)) from err
+        except wiki.WikiError as err:
+            raise HTTPException(400, str(err)) from err
+        return JSONResponse(api_json(asdict(page)))
+
+    @app.delete("/api/wiki/page")
+    async def wiki_delete(path: str, version: str, me: Device = device) -> dict[str, bool]:
+        root, _ = my_wiki(me)
+        try:
+            wiki.delete(root, path, version)
+        except wiki.Conflict as err:
+            raise HTTPException(409, str(err)) from err
+        except wiki.WikiError as err:
+            raise HTTPException(400, str(err)) from err
+        return {"deleted": True}
+
     @app.post("/api/actions/{source}/{action}")
     async def act(source: str, action: str, request: Request, me: Device = device) -> JSONResponse:
         """Taps in the app. On a personal device the tap is the approval, so
@@ -488,16 +544,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         known, user, group = mcp_caller(config, accounts, bearer(request))
         if not known:
             raise HTTPException(401, "unauthorized")
-        helping = shared = None
-        if user:
-            named = accounts.user(user)
-            helping = named.name if named else user
-        else:
-            group_named = accounts.group(group)
-            people = ", ".join(f"{u.name} ({u.id})" for u in accounts.people(group or accounts.default_group()))
-            shared = (group_named.name if group_named else group, people)
-        pending = kernel.policy.pending_for(accounts.scope(user, group))
-        return {"text": prompts.situation(f"{kernel.now():%a %Y-%m-%d %H:%M}", helping, shared, kernel.huvu.mode(), len(pending))}
+        return {"text": kernel.situation(user, group)}
 
     # The web client, so huvu.hrishik.me is both the app and its backend.
     # Mounted last, so every route above wins over a file of the same path.

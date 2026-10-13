@@ -131,6 +131,8 @@ class FakeHermes:
         self.providers: dict[str, str | None] = {}
         self.efforts: dict[str, str | None] = {}
         self.messages: list[tuple[str, str]] = []
+        # A run's history, by session: what a wake sends before its message.
+        self.histories: dict[str, list[dict[str, str]]] = {}
         self.stopped: list[str] = []
         self.deleted: list[str] = []
         self.titles: dict[str, set[str]] = {}
@@ -172,6 +174,22 @@ class FakeHermes:
                 continue
             name, data = step
             yield HermesEvent(name, {"session_id": session_id, **data})
+
+    async def run(
+        self,
+        profile: Profile,
+        session_id: str,
+        history: list[dict[str, str]],
+        message: str,
+        *,
+        model: str | None = None,
+        provider: str | None = None,
+    ) -> AsyncIterator[HermesEvent]:
+        """A run with its history, as wakes send: recorded like a chat, with
+        its history kept apart."""
+        self.histories[session_id] = history
+        async for event in self.chat(profile, session_id, message, model=model, provider=provider):
+            yield event
 
     async def stop(self, profile: Profile, run_id: str) -> None:
         self.stopped.append(run_id)

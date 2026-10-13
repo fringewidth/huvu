@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import * as m from "motion/react-m";
@@ -17,6 +17,7 @@ import { useSlotGeometry } from "../stage/useSlotGeometry";
 import { useStable } from "../stage/useStable";
 import { useWide } from "../stage/useWide";
 import { speaking, stopSpeaking } from "../voice/speaker";
+import { isWikiOpen, onWikiChange, useWikiOpen, wikiBack } from "../wiki/wiki";
 import { useSpokenAnswers } from "../voice/useSpokenAnswers";
 import { useVoiceSession, type VoicePhase } from "../voice/useVoiceSession";
 import { Composer } from "./Composer";
@@ -25,6 +26,10 @@ import { Menu, type MenuSection } from "./Menu";
 import { TurnView } from "./TurnView";
 import { Waiting } from "./Waiting";
 import { VoiceFlower, type FlowerState } from "./VoiceFlower";
+
+// The wiki, and its Markdown and editor libraries, load the first time it
+// opens.
+const WikiView = lazy(() => import("./Wiki").then((mod) => ({ default: mod.WikiView })));
 
 declare global {
   interface Window {
@@ -93,6 +98,7 @@ export function Stage() {
   const [draft, setDraft] = useState("");
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [menu, setMenu] = useState<MenuSection | null>(null);
+  const wikiOpen = useWikiOpen();
   // How tall the card of what waits on this phone is, so the turn stops
   // short of it.
   const [waitingH, setWaitingH] = useState(0);
@@ -187,7 +193,8 @@ export function Stage() {
   // or an opened turn, then voice mode. Returns false when there is
   // nothing left to undo (the hardware back button then leaves the app).
   const goBack = (): boolean => {
-    if (menu) setMenu(null);
+    if (isWikiOpen()) wikiBack();
+    else if (menu) setMenu(null);
     else if (feedsOpen) setFeedsOpen(false);
     // A screen that says every answer: back quiets huvu, and stops the
     // reply if it is still coming in.
@@ -343,6 +350,12 @@ export function Stage() {
   };
 
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    // The wiki has keys of its own, its editor among them: only back
+    // reaches the stage.
+    if (isWikiOpen()) {
+      if (e.key === "Escape" || e.key === "GoBack" || e.key === "BrowserBack") goBack();
+      return;
+    }
     const t = e.target instanceof HTMLElement ? e.target : null;
     const inField = t?.tagName === "TEXTAREA" || t?.tagName === "INPUT" || !!t?.isContentEditable;
 
@@ -464,6 +477,15 @@ export function Stage() {
 
   // A tapped notification that names a screen opens the menu there.
   useEffect(() => onOpens((section) => setMenu(section)), []);
+
+  // The menu opens the wiki, which takes its place.
+  useEffect(
+    () =>
+      onWikiChange(() => {
+        if (isWikiOpen()) setMenu(null);
+      }),
+    [],
+  );
 
   // A written reply grows the garland a little per new word. In voice mode,
   // and on a screen that says every answer, huvu's voice grows it instead.
@@ -599,6 +621,23 @@ export function Stage() {
       {ui.hasInput ? <Menu open={menu} onToggle={menuActions.toggle} onClose={menuActions.close} /> : <TvWordmark />}
 
       <Feeds open={feedsOpen} onToggle={feedsActions.toggle} onPick={feedsActions.pick} listRef={feedsRef} />
+
+      <AnimatePresence>
+        {wikiOpen && (
+          <m.div
+            key="wiki"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4, ease: EASE }}
+            className="absolute inset-0 z-40"
+          >
+            <Suspense fallback={<div className="absolute inset-0 bg-paper" />}>
+              <WikiView />
+            </Suspense>
+          </m.div>
+        )}
+      </AnimatePresence>
 
       <OutOfReach />
 

@@ -2,7 +2,8 @@
 # Sets Hermes up for huvu. Safe to run again: it only fills in what's missing
 # and re-applies the settings.
 #
-#   ./setup.sh                                  Hermes's default profile, for shared devices
+#   ./setup.sh                                  Hermes's default profile, for shared devices,
+#                                               and every user's profile again
 #   ./setup.sh <username> <password> [name]     a user and their profile (an existing
 #                                               user's password is left as it is). At a
 #                                               terminal, a new user is asked what they
@@ -119,7 +120,8 @@ configure() {
   hermes $p tools disable --platform api_server cronjob >/dev/null
   # Every huvu-* skill is pinned fully loaded, so the model never spends a
   # round trip on skill_view before acting. The list is what the backend
-  # wrote at its last start: run this again after adding a source.
+  # wrote at its last start. The container runs this for every profile on
+  # each start, so a new source reaches them all.
   hermes $p config set skills.auto_load "$(python3 -c '
 import json, os, sys
 print(json.dumps(sorted(n for n in os.listdir(sys.argv[1]) if n.startswith("huvu-"))))
@@ -132,6 +134,11 @@ print(json.dumps(sorted(n for n in os.listdir(sys.argv[1]) if n.startswith("huvu
       hermes $p config set "$k" "$(hermes config get "$k" --raw | tail -1)" >/dev/null
     done
   fi
+  # The agent's memory is its wiki, a folder of pages it organizes itself,
+  # and MEMORY.md, always in its prompt, is the wiki's index. Hermes's
+  # 2,200 characters hold about ten facts; an index needs more room.
+  mkdir -p "$home/wiki"
+  hermes $p config set memory.memory_char_limit 10000 >/dev/null
   skills_dir "$1"
   hermes $p plugins enable huvu >/dev/null
 }
@@ -162,7 +169,14 @@ if [ $# -eq 0 ]; then
   configure "" "$hermes_home"
   hermes config set API_SERVER_KEY "$key" >/dev/null
   hermes config set HUVU_MCP_TOKEN "$token" >/dev/null
-  echo "Hermes's default profile is set up for huvu's shared devices, in $timezone. Restart Hermes (hermes gateway restart) and huvu."
+  # Every user's profile gets the same settings again, so none is left on
+  # an older setup: a skill added since, a new setting, the soul.
+  while IFS=$'\t' read -r user _; do
+    if [ -d "$hermes_home/profiles/$user" ]; then
+      configure "$user" "$hermes_home/profiles/$user" || echo "could not set up $user's profile again" >&2
+    fi
+  done < <(huvu user list)
+  echo "Hermes's default profile and every user's are set up for huvu, in $timezone. Restart Hermes (hermes gateway restart) and huvu."
   exit 0
 fi
 

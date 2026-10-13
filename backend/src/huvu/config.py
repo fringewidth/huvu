@@ -14,6 +14,7 @@
 
     [hermes]
     url = "http://localhost:8642"
+    home = "~/.hermes"       # Hermes's own folder, where each profile keeps its wiki; HERMES_HOME wins
 
     [policy]
     "ha.turn_on" = "silent"  # source.action = silent | notify | ask
@@ -36,6 +37,7 @@
     [dream]
     at = "04:00"             # each person's nightly dream, local time
     tier = "pro"
+    deadline = 3600          # seconds a dream may run, in place of [wakes] deadline
 
     [wakes]
     deadline = 900           # seconds a wake may run before huvu stops it
@@ -138,6 +140,8 @@ class Config:
     # The token Hermes's default profile (the household's) sends to /mcp.
     mcp_token: str | None = None
     hermes_url: str = "http://localhost:8642"
+    # Hermes's own folder. Each profile keeps its wiki in it (wiki.py).
+    hermes_home: Path = Path.home() / ".hermes"
     # The default profile's API key.
     hermes_api_key: str | None = None
     # The path of a Firebase service account's JSON key, for native push.
@@ -161,6 +165,7 @@ class Config:
     # Each person's nightly dream (dream.py): when, and on which tier.
     dream_at: str = "04:00"
     dream_tier: str = "pro"
+    dream_deadline: float = 3600.0
     # Seconds a wake may run before huvu stops its Hermes run (wake.py).
     wake_deadline: float = 900.0
     # Speech to text on Groq (hearing.py). No key, no hearing.
@@ -226,6 +231,7 @@ def load(path: Path | None = None) -> Config:
         dev_user=auth.get("dev_user"),
         mcp_token=secret("HUVU_MCP_TOKEN"),
         hermes_url=hermes.get("url", "http://localhost:8642"),
+        hermes_home=Path(os.environ.get("HERMES_HOME") or hermes.get("home") or "~/.hermes").expanduser(),
         hermes_api_key=secret("HERMES_API_KEY"),
         fcm_credentials=Path(fcm).expanduser() if fcm else None,
         policy=dict(raw.get("policy", {})),
@@ -234,6 +240,7 @@ def load(path: Path | None = None) -> Config:
         models={t: _choice(t, m) for t, m in {**DEFAULT_MODELS, **raw.get("models", {})}.items()},
         dream_at=str(dream.get("at", "04:00")),
         dream_tier=str(dream.get("tier", "pro")),
+        dream_deadline=float(dream.get("deadline", 3600.0)),
         wake_deadline=float(raw.get("wakes", {}).get("deadline", 900.0)),
         speech_voice=speech.get("voice", "en-US-AvaNeural"),
         speech_speed=float(speech.get("speed", 1.0)),
@@ -257,6 +264,8 @@ def load(path: Path | None = None) -> Config:
         raise ValueError(f"dream.tier must be one of {', '.join(DEFAULT_MODELS)}")
     if config.wake_deadline <= 0:
         raise ValueError(f"wakes.deadline must be above 0 seconds, not {config.wake_deadline}")
+    if config.dream_deadline <= 0:
+        raise ValueError(f"dream.deadline must be above 0 seconds, not {config.dream_deadline}")
     if not 0 < config.router_escalate_at <= 1:
         raise ValueError(f"router.escalate_at must be above 0 and at most 1, not {config.router_escalate_at}")
     if config.auth_mode not in ("on", "off"):

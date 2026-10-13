@@ -425,6 +425,22 @@ class TriggerEngine:
     def get(self, trigger_id: str) -> Trigger | None:
         return self._triggers.get(trigger_id)
 
+    async def restate(self, trigger_id: str, spec: TriggerSpec) -> None:
+        """The kernel rewrites one of its own live triggers in place, such
+        as a dream after the code changed it. Its status, history and
+        counts stay."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None:
+            return
+        spec = self.validate(spec)
+        trigger.spec = spec
+        self._db.execute("UPDATE triggers SET spec = ? WHERE id = ?", (dumps(spec.model_dump()), trigger.id))
+        self._kernel.scripts.remove(trigger.id)
+        if trigger.status == "active":
+            trigger.compiled = await self._compile(spec, self._viewer(trigger))
+        self._kernel.huvu.publish_triggers()
+        await self._kernel.kernel_event("trigger.restated", f"trigger {trigger.id} was brought up to date: {spec.note}", entity=trigger.id, **_owner(trigger))
+
     def live(self, trigger_id: str) -> Trigger | None:
         return self._triggers.get(trigger_id)
 

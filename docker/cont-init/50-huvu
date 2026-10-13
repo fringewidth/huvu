@@ -1,7 +1,7 @@
 #!/command/with-contenv sh
 # On every start, after Hermes's own setup (01-hermes-setup): huvu's config
-# and data folder on the volume, its skills, and setup.sh for the default
-# profile. A user's profile is set up with
+# and data folder on the volume, its skills, and setup.sh, which sets up the
+# default profile and every user's again. A new user's profile is set up with
 #   docker compose exec -u hermes huvu /opt/huvu/setup.sh <username> <password> [name]
 set -e
 export HOME=/opt/data

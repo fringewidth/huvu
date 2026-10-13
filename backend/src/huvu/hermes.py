@@ -13,6 +13,12 @@ The stream is `POST /api/sessions/{id}/chat/stream`, Server-Sent Events:
 `tool.started`, `tool.completed`, `tool.failed`, `assistant.completed`, then
 `run.completed`, `run.failed` or `run.cancelled`, an `error` on a crash, and
 `done`. Every payload carries `session_id`, `run_id`, `seq` and `ts`.
+
+A wake runs through `POST /v1/runs` instead (`run`), with the history huvu
+gives. Hermes takes a turn whose caller brings the history as finished when
+it ends, so it runs subagents (`delegate_task`) inline and returns their
+results in the same turn. On a session's chat it would keep them for a next
+turn, and a wake never has one.
 """
 
 from __future__ import annotations
@@ -98,6 +104,50 @@ class HermesClient:
                 raise HermesError(f"chat in {session_id}: {res.status_code} {body[:300]}")
             async for event in parse_sse(res.aiter_lines()):
                 yield event
+
+    async def run(
+        self,
+        profile: Profile,
+        session_id: str,
+        history: list[dict[str, str]],
+        message: str,
+        *,
+        model: str | None = None,
+        provider: str | None = None,
+    ) -> AsyncIterator[HermesEvent]:
+        """Runs one turn through /v1/runs, after `history` (role and content
+        per message, at least one), and yields its events under chat's
+        names: run.started with its run_id, assistant.delta,
+        assistant.completed, then run.completed, run.failed or
+        run.cancelled."""
+        body: dict[str, Any] = {
+            "session_id": session_id,
+            "input": [*history, {"role": "user", "content": message}],
+            **({"model": model} if model else {}),
+            **({"provider": provider} if provider else {}),
+        }
+        res = await self._http.post(f"{profile.prefix}/v1/runs", json=body, headers=profile.headers)
+        if res.status_code not in (200, 201, 202):
+            raise HermesError(f"run in {session_id}: {res.status_code} {res.text[:300]}")
+        run_id = res.json()["run_id"]
+        yield HermesEvent("run.started", {"run_id": run_id})
+        async with self._http.stream("GET", f"{profile.prefix}/v1/runs/{run_id}/events", headers=profile.headers) as res:
+            if res.status_code != 200:
+                text = (await res.aread()).decode(errors="replace")
+                raise HermesError(f"events of run {run_id}: {res.status_code} {text[:300]}")
+            async for event in parse_sse(res.aiter_lines()):
+                name = str(event.data.get("event") or event.name)
+                if name == "message.delta":
+                    yield HermesEvent("assistant.delta", {"delta": event.data.get("delta", "")})
+                elif name == "run.completed":
+                    yield HermesEvent("assistant.completed", {"content": event.data.get("output", "")})
+                    yield HermesEvent(name, event.data)
+                    return
+                elif name in ("run.failed", "run.cancelled"):
+                    yield HermesEvent(name, event.data)
+                    return
+                else:
+                    yield HermesEvent(name, event.data)
 
     async def delete_session(self, profile: Profile, session_id: str) -> None:
         """Deletes a session. One that is already gone counts as deleted."""

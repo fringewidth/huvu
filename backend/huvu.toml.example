@@ -24,6 +24,8 @@ mode = "on"
 
 [hermes]
 url = "http://localhost:8642"
+# Hermes's own folder. Each profile keeps its wiki there. HERMES_HOME wins.
+# home = "~/.hermes"
 
 # Autonomy per action, over each driver's default: silent, notify or ask.
 # An action a driver marks requires_human always asks, whatever this says.
@@ -86,10 +88,12 @@ effort = "none"      # the reasoning effort of an ask sent to basic
 escalate_at = 0.30   # Clef-flash's probability that an ask needs context, at which it runs on pro
 timeout = 1.0        # seconds Clef-flash may take; slower, and the ask runs on pro
 
-# Each person's nightly dream, ending with a brief of notes to them.
+# Each person's nightly dream, ending with a brief of notes to them. It
+# may run for `deadline` seconds, in place of the wakes' deadline.
 [dream]
 at = "04:00"
 tier = "pro"
+deadline = 3600
 
 # A trigger's wake runs apart from its script, which has 30 s. Past this many
 # seconds, huvu stops the wake's run.

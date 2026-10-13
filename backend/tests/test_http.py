@@ -39,7 +39,7 @@ class Server:
 @pytest.fixture
 def server(tmp_path):
     hermes = FakeHermes()
-    config = Config(data_dir=tmp_path, public_url="http://test", mcp_token=HOUSEHOLD_MCP_TOKEN)
+    config = Config(data_dir=tmp_path, hermes_home=tmp_path / "hermes", public_url="http://test", mcp_token=HOUSEHOLD_MCP_TOKEN)
     kernel = Kernel(config, hermes=hermes, sources={"home": HomeSource()})
     me_token = kernel.accounts.add_user("me", "Me", "correct horse", "key-me")
     kernel.accounts.add_user("mom", "Mom", "battery staple", "key-mom")
@@ -195,6 +195,44 @@ def test_the_situation_names_the_profiles_user(server):
     household = httpx.post(f"{server.base}/api/situation", json={}, headers={"Authorization": f"Bearer {HOUSEHOLD_MCP_TOKEN}"})
     assert "Home from a shared device" in household.json()["text"]
     assert httpx.post(f"{server.base}/api/situation", json={}).status_code == 401
+    # Each profile's wiki is in its own folder; the household's in Hermes's.
+    hermes_home = server.kernel.config.hermes_home
+    assert f"Your wiki: {hermes_home / 'profiles' / 'me' / 'wiki'}" in mine.json()["text"]
+    assert f"Your wiki: {hermes_home / 'wiki'}" in household.json()["text"]
+
+
+def test_a_person_reads_and_edits_their_wiki(server):
+    me = server.login("web")
+    home = server.kernel.config.hermes_home / "profiles" / "me"
+    assert httpx.get(f"{server.base}/api/wiki", headers=me).json() == {"pages": [], "index": []}
+    (home / "wiki" / "people").mkdir(parents=True)
+    (home / "wiki" / "people" / "mom.md").write_text("# Mom\n\nLikes filter coffee.\n")
+    (home / "memories").mkdir()
+    (home / "memories" / "MEMORY.md").write_text("people/mom.md: what Mom likes\n§\nhabits.md: daily rhythms")
+    listing = httpx.get(f"{server.base}/api/wiki", headers=me).json()
+    assert [(p["path"], p["title"]) for p in listing["pages"]] == [("people/mom.md", "Mom")]
+    assert listing["index"] == ["people/mom.md: what Mom likes", "habits.md: daily rhythms"]
+
+    page = httpx.get(f"{server.base}/api/wiki/page", params={"path": "people/mom.md"}, headers=me).json()
+    assert page["text"].startswith("# Mom")
+    saved = httpx.put(f"{server.base}/api/wiki/page", json={"path": "people/mom.md", "text": "# Mom\n\nLikes tea now.\n", "version": page["version"]}, headers=me)
+    assert saved.status_code == 200 and saved.json()["version"] != page["version"]
+    # The agent changed it meanwhile: the old version can't write over it.
+    stale = httpx.put(f"{server.base}/api/wiki/page", json={"path": "people/mom.md", "text": "mine", "version": page["version"]}, headers=me)
+    assert stale.status_code == 409
+    assert (home / "wiki" / "people" / "mom.md").read_text() == "# Mom\n\nLikes tea now.\n"
+
+    made = httpx.put(f"{server.base}/api/wiki/page", json={"path": "trips.md", "text": "# Trips\n"}, headers=me)
+    assert made.status_code == 200
+    assert httpx.put(f"{server.base}/api/wiki/page", json={"path": "trips.md", "text": "again"}, headers=me).status_code == 409
+    for path in ("../memories/MEMORY.md", "/etc/passwd", "notes.txt", ".hidden.md"):
+        assert httpx.put(f"{server.base}/api/wiki/page", json={"path": path, "text": "x"}, headers=me).status_code == 400
+    assert httpx.get(f"{server.base}/api/wiki/page", params={"path": "../memories/MEMORY.md"}, headers=me).status_code == 404
+    gone = httpx.delete(f"{server.base}/api/wiki/page", params={"path": "trips.md", "version": made.json()["version"]}, headers=me)
+    assert gone.json() == {"deleted": True} and not (home / "wiki" / "trips.md").exists()
+
+    # Mom's wiki is hers.
+    assert httpx.get(f"{server.base}/api/wiki", headers=server.login("web", "mom", "battery staple")).json()["pages"] == []
 
 
 def test_a_shared_device_asks_who_is_there(server):

@@ -140,7 +140,19 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. Log in as the other person. Your triggers should not appear in their menu.
 1. Ask huvu to set up something that needs its strongest thinking, and say it should use the advanced model. On your phone, a card should ask you to allow it. In the menu it should say it waits for your yes. Tap "allow" (or yes on the phone). It should say watching, with "advanced" after how often.
 1. Ask for another advanced trigger, and tap no on the phone. It should leave the menu.
-1. In the menu, your dream should be listed: "Your dream...", every time, on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs.
+1. In the menu, your dream should be listed: "Your dream...", every time, on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs. If huvu set up a trigger on its own that night, the notes should name it and say why, and it should be in your menu.
+
+## The wiki (phone and laptop)
+
+huvu keeps what it learns about you in a wiki of its own. It writes most of it at night.
+
+1. Open the menu. Under "wiki", tap "open". The wiki should cover the whole screen, with an index (huvu's list of its pages, each with what it holds) and every page, newest first.
+1. Tap an index line or a page. The page should open as huvu's writing, with its headings, lists and tables. A link to another page should open that page in place. A link to a page that doesn't exist yet should look faded and do nothing.
+1. Press back (the back button on the phone, Escape on the laptop). It should go back one step: from a page to the list, then out of the wiki.
+1. On a page, tap "edit". The page's text should appear for editing. Change a word and tap "save". The page should show your change.
+1. Edit a page, and before saving, ask huvu in another tab to change the same page. Then save. It should say huvu changed the page while you edited, and let you keep yours or take huvu's.
+1. Tap "new page", type a name, write something and save. The page should appear in the list.
+1. On the TV, there should be no wiki.
 
 ## The menu (phone and laptop)
 
