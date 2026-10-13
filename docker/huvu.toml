@@ -23,6 +23,7 @@ timeout = 1.0
 [dream]
 at = "04:00"
 tier = "pro"
+deadline = 3600
 
 [wakes]
 deadline = 900

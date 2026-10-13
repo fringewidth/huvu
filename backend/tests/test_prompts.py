@@ -9,6 +9,8 @@ from huvu import prompts
 def test_the_situation_block_for_a_person_and_for_a_shared_device():
     mine = prompts.situation("Thu 2026-10-08 09:00", "Hrishik", None, "normal", 0)
     assert mine == "Now: Thu 2026-10-08 09:00\nYou are helping: Hrishik\nFamily mode: normal\nPending approvals: none"
+    with_wiki = prompts.situation("Thu 2026-10-08 09:00", "Hrishik", None, "normal", 0, "/opt/data/profiles/hrishik/wiki")
+    assert with_wiki == mine + "\nYour wiki: /opt/data/profiles/hrishik/wiki"
     tv = prompts.situation("Thu 2026-10-08 09:00", None, ("Home", "Me (me), Mom (mom)"), "away", 2)
     assert tv == (
         "Now: Thu 2026-10-08 09:00\n"

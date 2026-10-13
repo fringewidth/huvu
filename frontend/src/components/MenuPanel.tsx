@@ -5,6 +5,7 @@ import { UNREACHABLE } from "../net/http";
 import { release, useWaiting } from "../account/waiting";
 import { turnOnWebPush, useWebPush } from "../account/webPush";
 import { capsClass } from "../stage/style";
+import { setWikiOpen } from "../wiki/wiki";
 import type { MenuSection } from "./Menu";
 
 const buttonClass = `${capsClass} -mx-2 min-h-11 shrink-0 px-2 outline-none transition-colors duration-500 focus-visible:ring-1 focus-visible:ring-sindoor/60`;
@@ -27,6 +28,7 @@ export function MenuPanel({ section }: { section: MenuSection }) {
   return (
     <div ref={ref} className="flex flex-col gap-7">
       <You />
+      <Wiki />
       <Triggers />
       <Devices />
     </div>
@@ -116,6 +118,23 @@ function Notifications() {
       </div>
       {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
     </>
+  );
+}
+
+// huvu's wiki of you, its memory, which opens over the stage. A shared
+// device has none of its own.
+function Wiki() {
+  const { me } = useSession();
+  if (!me?.user) return null;
+  return (
+    <Section title="wiki">
+      <div className="flex items-baseline gap-3">
+        <p className="m-0 font-bodoni text-[19px] italic leading-[1.3] text-ivory/70">What huvu has learned about you.</p>
+        <button type="button" onClick={() => setWikiOpen(true)} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
+          open
+        </button>
+      </div>
+    </Section>
   );
 }
 

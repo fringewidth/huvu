@@ -5,6 +5,13 @@ trigger's user, with the trigger's note and the rows that fired it. The
 session's reply text goes to the kernel's log and nowhere else; if the agent wants to reach the user, it calls `huvu_notify`
 or another action.
 
+A wake runs through Hermes's /v1/runs (HermesClient.run), with the situation
+block as the history before it. A turn whose caller brings the history is
+one Hermes takes as finished when it ends, so subagents the wake starts run
+inline and their results come back within it. The situation goes in the
+history since the plugin adds it only to a session's first turn, and with a
+history this isn't one.
+
 A trigger may wake the model at most WAKE_LIMIT times in WAKE_WINDOW (since
 it was last resumed, if later). From the WAKE_WARN-th wake on, the wake
 tells the model and asks it to deal with the repeats; one more past the
@@ -107,19 +114,23 @@ class Waker:
         self._kernel.sessions.record(session, "wake", user=user, trigger_id=trigger)
         reply = ""
         run_id: str | None = None
-        deadline = self._kernel.config.wake_deadline
+        deadline = self._kernel.config.dream_deadline if self._kernel.dreams.is_dream(trigger) else self._kernel.config.wake_deadline
         stopped = False
+        live = self._kernel.triggers.get(trigger)
+        situation = self._kernel.situation(user, live.group if live else None)
+        history = [{"role": "user", "content": f"{prompts.SITUATION_HEADER}\n{situation}"}]
         try:
-            live = self._kernel.triggers.get(trigger)
             choice = self._kernel.config.model(live.spec.tier if live else "basic")
             async with asyncio.timeout(deadline):
-                async for event in self._kernel.hermes.chat(profile, session, render(payload, now), model=choice.model, provider=choice.provider):
+                async for event in self._kernel.hermes.run(profile, session, history, render(payload, now), model=choice.model, provider=choice.provider):
                     if event.name == "run.started":
                         run_id = event.data.get("run_id")
                     elif event.name == "assistant.delta":
                         reply += event.data.get("delta", "")
                     elif event.name == "assistant.completed" and not reply:
                         reply = event.data.get("content", "")
+                    elif event.name == "run.failed":
+                        raise HermesError(str(event.data.get("error") or "the run failed"))
         except TimeoutError:
             stopped = True
             # Closing the stream may not end the run, so it is stopped by name.

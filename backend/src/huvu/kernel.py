@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from . import skills
+from . import prompts, skills, wiki
 from .accounts import Accounts
 from .attendance import Attendance
 from .builtin.chat import ChatSource
@@ -115,6 +115,22 @@ class Kernel:
 
     def now(self) -> datetime:
         return self._clock().astimezone(self.tz) if self._clock else datetime.now(self.tz)
+
+    def situation(self, user: str | None, group: str | None) -> str:
+        """The situation block for a session acting for a user, or for a
+        group's shared devices: the time, who huvu helps, the family mode,
+        what waits on them, and where their profile's wiki is."""
+        helping = shared = None
+        if user:
+            named = self.accounts.user(user)
+            helping = named.name if named else user
+        else:
+            group_named = self.accounts.group(group)
+            people = ", ".join(f"{u.name} ({u.id})" for u in self.accounts.people(group or self.accounts.default_group()))
+            shared = (group_named.name if group_named else group, people)
+        pending = self.policy.pending_for(self.accounts.scope(user, group))
+        folder = wiki.folder(self.config.hermes_home, self.accounts.profile(user, group))
+        return prompts.situation(f"{self.now():%a %Y-%m-%d %H:%M}", helping, shared, self.huvu.mode(), len(pending), str(folder))
 
     async def start(self) -> None:
         # Turns that were running when the kernel last stopped never ended.

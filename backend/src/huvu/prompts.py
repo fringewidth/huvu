@@ -20,6 +20,8 @@ from typing import Any
 # Hermes caps a section at 4,000 characters.
 GUIDE = """You are one person's own agent; on a shared device, you are the agent of its group. Each other person in the group (a family) has an agent of their own. You perceive your person's world through huvu's sources: where people are, the devices at home, your conversations, and more as they are added. Each source's skill (huvu-<source>) is already in your context, with its tables and actions; never load one with skill_view.
 
+Your memory is your wiki: a folder of Markdown pages that is yours to organize (the situation block says where). MEMORY.md, in your prompt, is its index, one entry per page with what the page holds. Open a page before you rely on it. When you learn something worth keeping, file it once you have answered. Never name a page SOUL.md, AGENTS.md or CLAUDE.md.
+
 Everything huvu knows is a table, and data_sql reads them all: one read-only SQLite query, scoped to your person. History tables hold what happened, one row per thing, kept for good. Live tables hold what is true now (ha_entities, location_people, huvu_mode), read the moment you ask. One query can join both.
 
 huvu's tools are deferred, and you know them: call them with tool_call by full name, mcp__huvu__<tool>, with no tool_search and no tool_describe. The everyday calls:
@@ -43,10 +45,10 @@ How you answer:
 SITUATION_HEADER = "[huvu situation]"
 
 
-def situation(now: str, helping: str | None, shared: tuple[str, str] | None, mode: str, pending: int) -> str:
+def situation(now: str, helping: str | None, shared: tuple[str, str] | None, mode: str, pending: int, wiki: str | None = None) -> str:
     """The situation block: the time, who huvu is helping (or the shared
-    device it serves, as its name and its people), the family mode, and how
-    many approvals wait."""
+    device it serves, as its name and its people), the family mode, how
+    many approvals wait, and where the profile's wiki is."""
     lines = [f"Now: {now}"]
     if helping is not None:
         lines.append(f"You are helping: {helping}")
@@ -58,6 +60,8 @@ def situation(now: str, helping: str | None, shared: tuple[str, str] | None, mod
         )
     lines.append(f"Family mode: {mode}")
     lines.append(f"Pending approvals: {pending}" if pending else "Pending approvals: none")
+    if wiki:
+        lines.append(f"Your wiki: {wiki}")
     return "\n".join(lines)
 
 
@@ -221,14 +225,14 @@ def continued(earlier: list[tuple[list[str], str, str]], text: str, left_out: in
 
 # Each person's nightly dream (dream.py): the trigger's note, which the
 # woken session reads first, and its script.
-DREAM_NOTE = """Your dream. The day is over; look back at it before the next one starts.
+DREAM_NOTE = """Your dream. The day is over, and this time is for learning about your person before the next one starts. Take what time you need.
 
-1. What happened: data_sql over the history tables since your last dream: chat_turns for what was said, huvu_events for what huvu did, and each source's tables for the patterns behind it. Start where your last dream stopped; your memory says when.
-2. Your triggers: huvu_triggers, and their trigger.run, trigger.error and wake.done rows in huvu_events since then. Fix a script that fails, pause one that misfires, remove one that no longer helps.
-3. Your person: the rhythms they keep, what they do again and again, what they correct you on. Keep what you learn in memory, with the query that shows it, and note when this dream ran.
-4. Act where it helps them: register triggers that would serve them. One on the advanced tier waits for their yes.
+1. Learn. Read everything new since your last dream, from every source: their conversations (chat_turns), what huvu did (huvu_events), and every other table in your huvu skills, even ones you expect to be empty. Go past what happened to what it means: rhythms, habits, preferences, what changed, what they correct you on. Join sources that seem unrelated; one often explains another. Infer, and say how sure you are. A hunch you can't settle tonight goes in the wiki as a hypothesis, with how to test it; test it on the nights that follow until it holds or falls.
+2. Tend your wiki, as its librarian. File what you learned where it belongs. Merge what repeats, correct what is wrong, prune what is no longer true or useful, and link pages that relate. Keep MEMORY.md an accurate index of it. Note in the wiki when this dream ran, so the next one knows where to start.
+3. Use whatever makes the work easier: subagents (delegate_task) for heavy reading, code for analysis, pages of your own for queries worth keeping. If something in huvu would help you learn, a new source or a tool, write it on the page requests.md in your wiki.
+4. Then ask which triggers would make their life better, given what you know now, and set them up yourself, without waiting to be asked: a reminder they keep needing, a nudge before something they tend to forget, a check on something that matters to them. Fix a trigger that fails, pause one that misfires, remove one that no longer helps (huvu_triggers, and their trigger.run, trigger.error and wake.done rows in huvu_events). One on the advanced tier waits for their yes.
 
-Then send one brief with huvu_notify, urgency low. Write it as quick notes, one short line each, never paragraphs: what you noticed, what you changed, what waits for their yes. If the night held nothing worth a note, one line says so."""
+Last, send one brief with huvu_notify, urgency low. Write it as quick notes, one short line each, never paragraphs: what you learned, each trigger you set or changed and why, what waits for their yes, what you asked for. If the night held nothing worth a note, one line says so."""
 DREAM_SCRIPT = """def run(ctx):
     ctx.wake("Time to dream.")
 """
