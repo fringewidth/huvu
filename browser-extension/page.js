@@ -2,9 +2,6 @@
 // address is read here, to skip what isn't a web page and the sites kept
 // out, and goes nowhere.
 
-// The huvu the extension posts to, unless the options name another.
-export const DEFAULT_ADDRESS = "https://huvu.hrishik.me";
-
 // The sites that never leave the browser, unless the options say otherwise.
 export const DEFAULT_BLOCKED = [
   "mail.google.com",

@@ -10,7 +10,7 @@
 // The history is read, not watched with history.onVisited: a page has no
 // title yet when the visit happens, and a sync a minute later finds both.
 
-import { DEFAULT_ADDRESS, DEFAULT_BLOCKED, sendable } from "./page.js";
+import { DEFAULT_BLOCKED, sendable } from "./page.js";
 import { current, paused, pauses } from "./pause.js";
 
 // A visit younger than this waits for the next sync, so its page has a title.
@@ -77,13 +77,14 @@ async function run() {
   const settings = await chrome.storage.local.get(["address", "token", "blocked", "cursor", "pauses"]);
   const until = Date.now() - SETTLE_MS;
   try {
+    if (!settings.address) throw new Error("No address yet: set your huvu's in the options.");
     if (!settings.token) throw new Error("No token yet: set one in the options.");
     // The first sync with a token starts here, and sends nothing older.
     const cursor = settings.cursor ?? until;
     const visits = await visitsBetween(cursor, until, settings.blocked ?? DEFAULT_BLOCKED, settings.pauses ?? []);
     for (let i = 0; i < visits.length; i += BATCH) {
       const batch = visits.slice(i, i + BATCH);
-      await post(settings.address || DEFAULT_ADDRESS, settings.token, batch);
+      await post(settings.address, settings.token, batch);
       await chrome.storage.local.set({ cursor: batch[batch.length - 1].at });
       await count(batch.length);
     }

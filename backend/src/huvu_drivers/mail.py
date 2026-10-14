@@ -2,7 +2,7 @@
 
 huvu has no access to anyone's inbox. A person sets a filter in their mail
 to forward what they want huvu to have to an address of huvu's own, such
-as bills@mail.hrishik.me. Cloudflare Email Routing hands that address's
+as bills@mail.example.com. Cloudflare Email Routing hands that address's
 mail to an Email Worker (mail-worker/ at the repo root), which posts each
 mail as it came to POST /api/ingest/mail, with a tracker's token (`huvu
 tracker add <user> --mail`). So huvu sees only what passed the filter,

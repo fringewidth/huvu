@@ -10,9 +10,10 @@ import android.webkit.WebViewClient;
 
 // The TV's page, in a full-screen WebView. The page is the frontend built
 // for the firetv target, served by the host, so a frontend change reaches
-// the TV on its next launch with no new APK.
+// the TV on its next launch with no new APK. The host's address comes from
+// HUVU_PUBLIC_URL at build time (tv/build.gradle).
 public class MainActivity extends Activity {
-    private static final String PAGE = "https://huvu.hrishik.me/tv/";
+    private static final String PAGE = BuildConfig.PAGE;
     // How long to wait before loading the page again after it failed.
     private static final long RETRY_MS = 5000;
 

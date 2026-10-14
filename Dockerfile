@@ -14,7 +14,7 @@
 # See compose.yaml for how to run it, and hrishik.md for the first start.
 #
 # The backend also serves the web client, built in the first stage, so
-# https://huvu.hrishik.me is both the app and its backend. The same stage
+# the host's one address is both the app and its backend. The same stage
 # builds the phone app's web bundle, which the backend serves to the
 # installed apps as their live update (backend/src/huvu/bundles.py), and
 # the TV's page at /tv/, which the Fire TV app (frontend/android/tv) loads.
@@ -24,6 +24,9 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN VITE_TARGET=web npm run build:web
+# The phone's bundle carries the host's address, since the app serves it
+# from the APK (vite.config.ts); compose.yaml passes it from .env.
+ARG HUVU_PUBLIC_URL
 RUN VITE_TARGET=phone npx vite build --mode phone --outDir dist-phone
 RUN VITE_TARGET=firetv npx vite build --mode firetv --base /tv/ --outDir dist-firetv
 

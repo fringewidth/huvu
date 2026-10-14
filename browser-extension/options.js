@@ -1,25 +1,28 @@
-import { DEFAULT_ADDRESS, DEFAULT_BLOCKED } from "./page.js";
+import { DEFAULT_BLOCKED } from "./page.js";
 import { current } from "./pause.js";
 
 const $ = (id) => document.getElementById(id);
 
 async function load() {
   const s = await chrome.storage.local.get(["address", "token", "blocked"]);
-  $("address").value = s.address || DEFAULT_ADDRESS;
+  $("address").value = s.address || "";
   $("token").value = s.token || "";
   $("blocked").value = (s.blocked ?? DEFAULT_BLOCKED).join("\n");
   await showStatus();
 }
 
 async function save() {
-  const address = $("address").value.trim().replace(/\/+$/, "") || DEFAULT_ADDRESS;
-  // Another huvu than the default needs Chrome's leave to reach it.
-  if (address !== DEFAULT_ADDRESS) {
-    const granted = await chrome.permissions.request({ origins: [`${new URL(address).origin}/*`] });
-    if (!granted) {
-      $("status").textContent = `Chrome didn't allow posting to ${address}.`;
-      return;
-    }
+  const address = $("address").value.trim().replace(/\/+$/, "");
+  if (!address) {
+    $("status").textContent = "Set the address of your huvu.";
+    return;
+  }
+  // The extension names no huvu of its own, so Chrome must allow the one
+  // the person sets.
+  const granted = await chrome.permissions.request({ origins: [`${new URL(address).origin}/*`] });
+  if (!granted) {
+    $("status").textContent = `Chrome didn't allow posting to ${address}.`;
+    return;
   }
   const blocked = $("blocked")
     .value.split("\n")
