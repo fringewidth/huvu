@@ -1,13 +1,17 @@
 // The one way to call the backend. Every request carries this device's
 // token, and a 401 means the device was logged out: the session hears it
 // and sends the user back to login, or the TV back to pairing.
-// Every build (web, phone, Fire TV) talks to the host, huvu.hrishik.me,
-// which also serves the web build. Only Vite's dev server and a garden
-// bench build (VITE_BENCH) read VITE_BACKEND_URL, for a backend on this
-// machine.
-export const BACKEND = import.meta.env.DEV || import.meta.env.VITE_BENCH === "1"
-  ? (import.meta.env.VITE_BACKEND_URL || "http://localhost:3001").replace(/\/$/, "")
-  : "https://huvu.hrishik.me";
+// Every build talks to the host. The web build and the TV's page are
+// served by the host itself, so they use their own origin. The phone's
+// build is served from the APK, so it carries the host's address
+// (VITE_PUBLIC_URL, which vite.config.ts takes from HUVU_PUBLIC_URL). Only
+// Vite's dev server and a garden bench build (VITE_BENCH) read
+// VITE_BACKEND_URL, for a backend on this machine.
+export const BACKEND = (
+  import.meta.env.DEV || import.meta.env.VITE_BENCH === "1"
+    ? import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
+    : import.meta.env.VITE_PUBLIC_URL || location.origin
+).replace(/\/$/, "");
 
 let token: string | null = null;
 let onUnauthorized: () => void = () => {};

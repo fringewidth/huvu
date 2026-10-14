@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import * as palette from './src/config/palette.ts'
 
 // Fills each %NAME% placeholder with that color from config/palette.ts.
@@ -98,7 +98,23 @@ function stamp(): Plugin {
   }
 }
 
+// The host's address, for the phone's build alone: Capacitor serves that
+// build from the APK, so it can't use its page's own origin as the web and
+// TV builds do. It is HUVU_PUBLIC_URL, from the environment or the repo's
+// .env (gitignored), the setting compose.yaml reads too, so no address is
+// written in the code.
+function publicUrl(mode: string, command: string): string | undefined {
+  if (mode !== 'phone' || command !== 'build') return undefined
+  const url = process.env.HUVU_PUBLIC_URL || loadEnv(mode, resolve(import.meta.dirname, '..'), 'HUVU_').HUVU_PUBLIC_URL
+  if (!url) throw new Error("the phone's build needs the host's address: set HUVU_PUBLIC_URL in the repo's .env")
+  return url.replace(/\/$/, '')
+}
+
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), tailwindcss(), colors(), manifest(), stamp()],
+export default defineConfig(({ mode, command }) => {
+  const url = publicUrl(mode, command)
+  return {
+    plugins: [react(), tailwindcss(), colors(), manifest(), stamp()],
+    define: url ? { 'import.meta.env.VITE_PUBLIC_URL': JSON.stringify(url) } : {},
+  }
 })

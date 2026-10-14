@@ -4,6 +4,17 @@ apply plugin: 'com.android.application'
 // Capacitor app, since Capacitor 8 needs Android 7 (API 24) and the
 // family's Fire TV Stick (2nd gen, Fire OS 5) is Android 5.1 (API 22).
 // No libraries at all, so nothing here raises the floor.
+
+// The TV's page on the host: HUVU_PUBLIC_URL, from the environment or the
+// repo's .env (gitignored), the setting compose.yaml reads too, so no
+// address is written in the code. Only this app's build needs it.
+def publicUrl = System.getenv("HUVU_PUBLIC_URL") ?: {
+    def env = rootProject.file("../../.env")
+    def line = env.exists() ? env.readLines().find { it.trim().startsWith("HUVU_PUBLIC_URL=") } : null
+    line ? line.trim().substring("HUVU_PUBLIC_URL=".length()).replaceAll(/^["']|["']$/, "") : ""
+}()
+publicUrl = publicUrl.replaceAll(/\/+$/, "")
+
 android {
     namespace = "com.huvu.tv"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -13,6 +24,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1"
+        buildConfigField "String", "PAGE", "\"${publicUrl}/tv/\""
     }
     buildFeatures {
         buildConfig = true
@@ -20,6 +32,14 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    doFirst {
+        if (!publicUrl) {
+            throw new GradleException("the TV app needs the host's address: set HUVU_PUBLIC_URL in the repo's .env")
         }
     }
 }

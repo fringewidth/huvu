@@ -3,14 +3,15 @@
 #   docker compose up -d
 #
 # It listens on the host only (127.0.0.1), on HUVU_PORT, 27613 by default,
-# picked at random so it collides with nothing. The host's own cloudflared
-# publishes it at https://huvu.hrishik.me, which serves the web client and
-# the backend both. That cloudflared runs in a container of its own (the
-# immich project's), so the tunnel's service is
-# http://host.docker.internal:27613: localhost there is cloudflared's own
-# container.
+# picked at random so it collides with nothing. A tunnel on the host
+# publishes it at HUVU_PUBLIC_URL, which serves the web client and the
+# backend both. When cloudflared runs in a container of its own, the
+# tunnel's service is http://host.docker.internal:27613: localhost there
+# is cloudflared's own container.
 #
-# Next to this file, a .env with:
+# Next to this file, a .env (gitignored, so the address stays out of the
+# repo) with:
+#   HUVU_PUBLIC_URL=https://...  the address phones reach huvu at; required
 #   GROQ_API_KEY=gsk_...        speech to text; optional
 #   CLOUDFLARE_ACCOUNT_ID=...   the router's Clef-flash, for asks that aren't
 #   CLOUDFLARE_AI_TOKEN=...     house commands; optional, without them those run on pro
@@ -20,10 +21,14 @@
 services:
   huvu:
     image: ghcr.io/fringewidth/huvu:latest
-    build: .
+    build:
+      context: .
+      # The phone's live update bundle carries the address (Dockerfile).
+      args:
+        HUVU_PUBLIC_URL: ${HUVU_PUBLIC_URL:?set HUVU_PUBLIC_URL in .env, the address phones reach huvu at}
     restart: unless-stopped
     environment:
-      - HUVU_PUBLIC_URL=${HUVU_PUBLIC_URL:-https://huvu.hrishik.me}
+      - HUVU_PUBLIC_URL=${HUVU_PUBLIC_URL:?set HUVU_PUBLIC_URL in .env, the address phones reach huvu at}
       # The Alexa skill that asks for the Fire TV (backend/src/huvu/alexa.py).
       # Not a secret: Amazon signs every request, and this only names the skill.
       - HUVU_ALEXA_SKILL_ID=${HUVU_ALEXA_SKILL_ID:-amzn1.ask.skill.49627247-f5d1-4980-997f-5a8a9039ebe5}

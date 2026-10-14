@@ -633,7 +633,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(401, "unauthorized")
         return {"text": kernel.situation(user, group)}
 
-    # The web client, so huvu.hrishik.me is both the app and its backend.
+    # The web client, so the host's one address is both the app and its backend.
     # Mounted last, so every route above wins over a file of the same path.
     if config.web_dir:
         if not (config.web_dir / "index.html").exists():

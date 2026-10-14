@@ -4,12 +4,10 @@
 
 huvu is a proactive agent harness that learns your behaviours and cares for you.
 
-features:
+tldr:
 - every action of your life is a data point stored in sqlite.
-- exposed mcp to query this data.
-- trigger engine that runs a script and/or invokes an agent when a certain condition on this data is met.
-- nightly dreams that find patterns in this data and suggest triggers that will work for you.
-- a wiki it maintains on your behaviours and preferences, that you can read and edit
+- agent can query this data, invoke itself or a script when a certain condition is met via triggers
+- dreams every night to learn your behaviours and preferences from this data, sets triggers proactively and maintains a wiki about you that you can read and edit
 
 huvu supports user groups, comes with a full fledged android app, and an iPhone home screen app that's equally capable. it runs hermes internally, so whatever works with hermes (e.g. plugins, MCPs), works with huvu.
 
@@ -21,7 +19,7 @@ you only pay for hermes inference. everything else runs either locally or comfor
 - home assistant for home automation
 - owntracks for private location tracking
 - generic mail your agent can receive
-- browser history
+- browser history via a chrome extension
 
 ## features
 - approval and transparency. every action exposed by the mcp is either silent, notify, or ask.
