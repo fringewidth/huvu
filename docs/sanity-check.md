@@ -243,6 +243,22 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 1. From another family member's phone, ask huvu what you watched. It should say it can't tell, since your browsing is yours alone.
 1. Stop the backend for a few minutes, browse, and start it again. Within a minute of the start, huvu should know the pages from while it was down.
 
+## Mail (bills you forward)
+
+1. In Gmail, add a filter for the mail you want huvu to have, set to forward to `bills@mail.hrishik.me`. Gmail sends a code to that address first. Ask huvu "what's the code in the mail Gmail just sent?" and enter it in Gmail. The filter should then save.
+1. Wait for a bill that the filter forwards, or forward an old one by hand. Within a minute, ask huvu "what was my last bill for?". It should say the shop, the items and the total, read from the PDF.
+1. Ask huvu where the PDF is. It should give a path on the host. Ask it to upload the bill somewhere in its browser. It should be able to.
+1. From another email account, send a mail to `bills@mail.hrishik.me` that claims to be from the shop. Ask huvu about it. It should say it can't trust that the shop sent it.
+1. From another family member's phone, ask huvu about your bills. It should say it can't see them.
+1. Stop the backend and forward a mail. Gmail should get a bounce saying huvu is unreachable. Start the backend and forward it again. huvu should have it once.
+
+## Swiggy (food and Instamart)
+
+1. Ask huvu to find you something for lunch on Swiggy and add it to your cart. Open the Swiggy app. The cart should hold what huvu picked.
+1. Ask huvu to place the order, then to pay for it, and then to order cash on delivery. Each time it should say only you can place an order, and the Swiggy app should show no new order.
+1. Ask huvu what your last Swiggy order was. It should name it, with the total.
+1. Ask huvu, in a chat, to order food on swiggy.com in its browser. It should stop before placing the order and hand the screen to you.
+
 ## What doesn't work yet (don't test)
 
 1. Voice on the phone: it works only while Groq answers. When Groq's rate limit hits, an ask on the phone is lost, and the flower says huvu couldn't hear it.

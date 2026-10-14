@@ -320,6 +320,17 @@ The extension runs in a person's desktop Chrome. About once a minute it reads Ch
 1. **Privacy and provenance.** Browsing is private to its person, like location: every row is theirs. A page's title is written by whoever made the page, so the table is labelled `external`, and a wake from a trigger that reads it says so.
 1. **YouTube.** Watch history leaves Google only through Takeout (manual, every two months at best) or, for accounts in the EEA, the Data Portability API; the YouTube Data API hasn't returned it since 2016. So YouTube comes from the extension, as titles, for what is watched in desktop Chrome. The phone app and the TV are not covered.
 
+## Mail
+
+Decided on 2026-10-14. The driver is `huvu_drivers/mail.py`, and the Cloudflare Email Worker that feeds it is `mail-worker/` at the repo root.
+
+huvu has no access to anyone's inbox. A person forwards what they want huvu to have, with a filter in their own mail, to an address of huvu's own: the owner's is `bills@mail.hrishik.me`. Cloudflare Email Routing on `mail.hrishik.me` hands that address's mail to the Email Worker, which posts each mail as it came (base64 of the raw message, and the envelope sender) to `POST /api/ingest/mail` with the person's tracker token (`uv run huvu tracker add <user> --mail`). One worker serves one address and one person. A Gmail MCP server, Hermes's `google-workspace` skill and IMAP with an App Password were weighed the same day and left out: each hands the model the whole mailbox, OTPs and reset links included, for the same reason page addresses never leave the browser (see Browsing).
+
+1. **Storage.** Each mail is a row of `mail_messages`: sender, subject, the sender's date, its text (the HTML made plain, cut at 20,000 characters), and how many files came with it. Each file is a row of `mail_attachments`, with its name, type, size, its absolute path in the source's folder (`<data>/sources/mail/<user>/<message id>/`), and a PDF's text. The path is for Hermes: its browser uploads the file (`upload_file` in the browser-use harness), and its file tools read it. The pictures a mail's own layout shows are not kept. A mail is kept once per person, by its Message-ID, so a retried post adds nothing.
+1. **Forgery.** Anyone can mail the address and claim any sender. The driver checks every DKIM signature on the mail (`dkimpy`), and `signed_by` names the domains whose signature checked out. A Gmail filter forwards the message as it came, and the headers Gmail and Cloudflare add on the way are signed by nobody, so the original sender's signature still checks out. The mail guide tells the model to trust a mail as its sender's only when the sender's domain is in `signed_by`, and never to use another's files as genuine records.
+1. **When huvu is down.** The worker rejects the mail, so Gmail gets a bounce. The original stays in the inbox, and the person forwards it again.
+1. **Privacy and provenance.** Mail is private to its person, like location: every row is theirs. Mail is written by strangers, so both tables are labelled `external`.
+
 ## Actions and the policy
 
 Every write goes through one policy check in the backend, whoever asks: Hermes, a script, or a frontend button.
@@ -353,6 +364,8 @@ Hermes stays the harness for its ecosystem and extensibility, and because its pl
 ### The huvu plugin
 
 Hermes connects to an MCP server once, with fixed headers. The profile's token says which user is calling, and the huvu Hermes plugin (`hermes-plugin/huvu/`) carries the session across the boundary. Its `pre_tool_call` hook adds `_session` to every huvu tool call. The backend strips it and looks the session up in `hermes_sessions`, which names its device. A session that belongs to another user than the calling profile's is ignored. The plugin also adds the situation block, see [What Hermes owns](#what-hermes-owns), and a system prompt section with huvu's guidance (`GUIDE`): who the agent is among its group's agents, that everything is a table `data_sql` reads, the exact `tool_call` shapes of the everyday calls (find, act, notify, a reminder trigger with its script), and how to answer: one short line saying it's on it before any tool call, then the outcome, plus provenance, approvals, privacy and telling the person about changes. Hermes never shows the model an MCP server's own instructions (it keeps the initialize result only for capabilities), so the plugin's section is the one place huvu can say these things.
+
+The plugin also keeps huvu from paying. On a Swiggy MCP server (a server whose name starts with `swiggy`), only the tools in `SWIGGY_ALLOWED` run: finding food, filling the cart, reading orders. Everything else is blocked with `SWIGGY_BLOCKED`, which tells the model to leave the cart ready for its person: placing an order, every payment tool, the address writes, and any tool Swiggy adds later. Swiggy's MCP takes cash-on-delivery orders with no payment step at all, so a payment gate alone would not be enough. In the browser the same rule is only a line of `BROWSER_HANDOFF`: nothing enforces it there.
 
 Session taint was removed on 2026-10-04. It followed OpenClaw's taint gate: a session that had read `external` content got stricter policy, its triggers waited for the owner's tap, and its memory and skill writes went to Hermes's approval gate. It was judged more complexity than current models need. Two guards stay without it. Provenance labels still mark outside content for the model, and `requires_human` actions always need a person's tap.
 
@@ -446,6 +459,7 @@ backend/
                       history.py (who caused a change, sensor buckets), source.py (the driver)
     location.py       where each person is, from OwnTracks
     browser.py        what each person browses, as page titles, from huvu's Chrome extension
+    mail.py           the mail each person forwards to huvu, its files and their text, checked for DKIM
   tests/              fakes.py (a fake house and Hermes), fake_ha.py (a fake Home Assistant)
 hermes-plugin/huvu/   the Hermes plugin
 ```

@@ -20,6 +20,12 @@ can't tell which session a tool call came from. This plugin fills that in:
    browser call, the backend says whether the session may
    (`POST /api/browsing`); a no, or no answer, blocks the call, and the
    model reads why.
+6. huvu never pays. On a Swiggy MCP server (any server whose name starts
+   with `swiggy`), only the tools in SWIGGY_ALLOWED run: finding food,
+   filling the cart, and reading orders. Every other one is blocked,
+   placing an order and every payment tool among them, and so is any tool
+   Swiggy adds later, until it is listed here. A cash-on-delivery order has
+   no payment step at all, so the order tools are blocked too.
 
 Settings come from the environment Hermes runs in:
     HUVU_URL              the backend, default http://localhost:3001
@@ -67,13 +73,60 @@ PREFIX = f"mcp__{SERVER}__"
 # Hermes's own browser tools all start with this.
 BROWSER = "browser_"
 
+# Hermes names an MCP tool mcp__<server>__<tool>, with every character
+# outside [A-Za-z0-9_] in either part made an underscore.
+SWIGGY = "mcp__swiggy"
+# The Swiggy tools that can't place an order, pay, or change the account,
+# from Swiggy's Food and Instamart references (mcp.swiggy.com/builders).
+SWIGGY_ALLOWED = frozenset(
+    {
+        "get_addresses",
+        "recommend_address",
+        "search_restaurants",
+        "get_restaurant_menu",
+        "search_menu",
+        "search_products",
+        "your_go_to_items",
+        "get_food_cart",
+        "update_food_cart",
+        "flush_food_cart",
+        "fetch_food_coupons",
+        "apply_food_coupon",
+        "get_cart",
+        "update_cart",
+        "clear_cart",
+        "list_coupons",
+        "apply_coupon",
+        "get_food_orders",
+        "get_food_order_details",
+        "get_food_delivery_status",
+        "track_food_order",
+        "get_orders",
+        "get_order_details",
+        "get_delivery_status",
+        "track_order",
+    }
+)
+
 
 def _on_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "", **_: Any) -> dict[str, Any] | None:
     if tool_name.startswith(BROWSER):
         return _browsing(session_id)
+    if tool_name.startswith(SWIGGY):
+        return _swiggy(tool_name)
     if not tool_name.startswith(PREFIX):
         return None
     return {"action": "modify", "args": {"_session": session_id}}
+
+
+def _swiggy(tool_name: str) -> dict[str, Any] | None:
+    """None lets a Swiggy call through; a block carries why. A name Hermes
+    shortened past 64 characters matches nothing listed, so it is blocked."""
+    tool = tool_name.split("__", 2)[-1]
+    if tool in SWIGGY_ALLOWED:
+        return None
+    logger.warning("huvu: blocked Swiggy's %s", tool_name)
+    return {"action": "block", "message": prompts.SWIGGY_BLOCKED}
 
 
 def _browsing(session_id: str) -> dict[str, Any] | None:

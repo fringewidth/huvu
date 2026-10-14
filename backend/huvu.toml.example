@@ -61,6 +61,14 @@ url = "http://localhost:8642"
 # name = "browser"
 # driver = "huvu_drivers.browser:BrowserSource"
 
+# The mail each person forwards to an address of huvu's own, such as their
+# bills, through Cloudflare's Email Routing and huvu's Email Worker
+# (mail-worker/ at the repo root). `uv run huvu tracker add <username>
+# --mail` prints the token for the worker of each person's address.
+# [[sources]]
+# name = "mail"
+# driver = "huvu_drivers.mail:MailSource"
+
 # The model behind each tier. An ask runs on the tier the router picks, pro
 # when it can't; a trigger's wakes on its own tier, basic by default;
 # advanced needs the person's yes.

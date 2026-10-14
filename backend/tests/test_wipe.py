@@ -33,7 +33,11 @@ async def test_a_wipe_takes_one_persons_rows_and_leaves_the_rest(kernel, home, f
     await home.press()
     scripts = kernel.config.data_dir / "scripts"
     (scripts / f"{mine.id}.py").write_text(WAKE)
-    counts = wipe(kernel.db, kernel.data.path, scripts, user="me")
+    sources = kernel.config.data_dir / "sources"
+    for person in ("me", "mom"):
+        (sources / "mail" / person / "1").mkdir(parents=True)
+        (sources / "mail" / person / "1" / "bill.pdf").write_bytes(b"%PDF")
+    counts = wipe(kernel.db, kernel.data.path, scripts, sources=sources, user="me")
 
     assert counts["triggers"] == 1 and counts["turns"] == 1 and counts["notifications"] == 1
     assert counts["chat_turns"] == 1 and counts["home_unlocks"] == 1 and counts["huvu_events"] > 0
@@ -45,6 +49,8 @@ async def test_a_wipe_takes_one_persons_rows_and_leaves_the_rest(kernel, home, f
     assert history(kernel, "home_unlocks", "mom") == 1 and kernel.data.count("home", "doorbell", "1 = 1", ()) == 1
     assert count(kernel, "triggers", "mom") == 1 and count(kernel, "conversations", "mom") == 1
     assert not (scripts / f"{mine.id}.py").exists()
+    # The files a source keeps for them go too, and only theirs.
+    assert not (sources / "mail" / "me").exists() and (sources / "mail" / "mom" / "1" / "bill.pdf").exists()
     # The account stays.
     assert kernel.accounts.user("me") is not None and kernel.accounts.devices()
 

@@ -91,3 +91,18 @@ def test_the_browser_is_blocked_when_the_backend_is_down(monkeypatch):
     monkeypatch.setattr(plugin, "_post", down)
     out = plugin._on_pre_tool_call(tool_name="browser_snapshot", args={}, session_id="w1")
     assert out == {"action": "block", "message": plugin.prompts.BROWSER_BLOCKED}
+
+
+def test_swiggy_never_places_an_order_or_pays():
+    plugin = load()
+    blocked = {"action": "block", "message": plugin.prompts.SWIGGY_BLOCKED}
+    for tool in ("place_food_order", "checkout", "confirm_order", "get_payment_options", "check_payment_status", "delete_address", "create_address"):
+        assert plugin._on_pre_tool_call(tool_name=f"mcp__swiggy_food__{tool}", args={}, session_id="s1") == blocked
+        assert plugin._on_pre_tool_call(tool_name=f"mcp__swiggy_instamart__{tool}", args={}, session_id="s1") == blocked
+    # A tool Swiggy adds later stays blocked until it is listed.
+    assert plugin._on_pre_tool_call(tool_name="mcp__swiggy_food__pay_with_wallet", args={}, session_id="s1") == blocked
+    # A name Hermes shortened past 64 characters matches nothing listed.
+    assert plugin._on_pre_tool_call(tool_name="mcp__swiggy_food__get_food_cart_0123abcd", args={}, session_id="s1") == blocked
+    for tool in ("update_food_cart", "get_food_orders", "search_restaurants"):
+        assert plugin._on_pre_tool_call(tool_name=f"mcp__swiggy_food__{tool}", args={}, session_id="s1") is None
+    assert plugin._on_pre_tool_call(tool_name="mcp__swiggy_instamart__update_cart", args={}, session_id="s1") is None

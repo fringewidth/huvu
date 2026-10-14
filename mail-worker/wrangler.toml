@@ -1,0 +1,6 @@
+# huvu's Email Worker. Deploy with `npx wrangler deploy` from this folder,
+# then set its secrets (`npx wrangler secret put HUVU_URL`, and the same for
+# HUVU_TOKEN), and route an address of Email Routing to it.
+name = "huvu-mail"
+main = "worker.js"
+compatibility_date = "2026-09-01"
