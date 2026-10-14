@@ -1,0 +1,16 @@
+#!/command/with-contenv sh
+# PulseAudio for the browser's sound. Each Hermes profile's Chromium plays
+# into a null sink of its own (PULSE_SINK, from setup.sh), and the backend
+# reads that sink's monitor while the profile's person holds the screen
+# (screen.py). There is no sound card: the sinks only carry sound to the app.
+# A profile added later gets its sink on the restart that follows setup.sh.
+dir=/run/huvu-pulse
+mkdir -p "$dir" && chown hermes:hermes "$dir" && chmod 700 "$dir"
+{
+  echo "load-module module-native-protocol-unix socket=$dir/native auth-anonymous=1"
+  for p in default $(ls /opt/data/profiles 2>/dev/null); do
+    echo "load-module module-null-sink sink_name=huvu_$p"
+  done
+} > "$dir/huvu.pa"
+export HOME=/opt/data XDG_RUNTIME_DIR="$dir"
+exec s6-setuidgid hermes pulseaudio -n --daemonize=no --exit-idle-time=-1 --disallow-exit --use-pid-file=no --log-target=stderr -F "$dir/huvu.pa"

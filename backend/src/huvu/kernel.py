@@ -102,6 +102,7 @@ class Kernel:
         self.huvu = HuvuSource(self)
         self._ticker: asyncio.Task[None] | None = None
         self._warming: asyncio.Task[None] | None = None
+        self._sweeping: asyncio.Task[None] | None = None
 
         self.registry.add("huvu", self.huvu)
         self.registry.add("chat", ChatSource())
@@ -155,6 +156,7 @@ class Kernel:
             log.info("native push is off: HUVU_FCM_CREDENTIALS is not set")
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
         self._warming = asyncio.create_task(self.router.warm(), name="router:warm")
+        self._sweeping = asyncio.create_task(self.screen.sweep(), name="screen:sweep")
         await self.kernel_event("started", f"kernel started with sources {', '.join(self.registry.names)}")
 
     def write_skills(self) -> None:
@@ -190,6 +192,8 @@ class Kernel:
             self._ticker.cancel()
         if self._warming:
             self._warming.cancel()
+        if self._sweeping:
+            self._sweeping.cancel()
         await self.conversations.close()
         await self.triggers.stop()
         await self.waker.stop()

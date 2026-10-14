@@ -50,10 +50,12 @@ A wake is a model instance a trigger started for its person. Each is a conversat
 
 ### The browser's screen
 
-Only a session on pro or advanced may use Hermes's browser: a conversation's main session, or a wake on either tier. The browser draws on its profile's own screen. The app watches it, and can't act on it. A turn's `browser_*` tool parts are the browser's steps: the stage shows a run of them as one note, with "watch" on a device that has input of its own.
+Only a session on pro or advanced may use Hermes's browser: a conversation's main session, or a wake on either tier. The browser draws on its profile's own screen. The app watches it, and its person can take it over to click, type and hear it, then hand it back. A turn's `browser_*` tool parts are the browser's steps: the stage shows a run of them as one note, with "watch" on a device that has input of its own.
 
 1. `POST /api/screen/ticket` (a personal device) answers `{"ticket"}`, single use, for 30 s. `503` without Hermes's dashboard, `403` on a shared device.
 1. `WebSocket /api/screen?ticket=<ticket>` carries the user's screen as raw RFB, binary frames both ways, for noVNC. It closes with `4401` for a ticket missing, used or expired, `4001` when the screen isn't running (watching never starts it), and `4503` when the dashboard can't be reached.
+1. `POST /api/screen/lease` `{"ticket", "take"}` (a personal device) takes the screen over for the view that ticket opened, or hands it back, and answers `{"holding"}`. `404` when that view isn't open or isn't the device user's, `409` when the dashboard refuses. While the person holds it, Hermes's browser tools wait, and the view's input reaches the browser. Closing the view hands it back.
+1. `GET /api/screen/audio?ticket=<ticket>` is the browser's sound as an MP3 stream (`audio/mpeg`) while that view holds the screen, for an audio element; the ticket stands in for the token, which an audio element can't send. The request waits up to 10 s for the view to take the screen, so the app can start it inside the tap that takes over; `404` otherwise. It ends when the view hands back or closes.
 
 ### Speech
 

@@ -156,6 +156,11 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. On the TV, there should be no wakes.
 1. In the chat, ask huvu to look something up in its browser. It should open the browser in the same turn, with no trigger and no card on your phone. The turn should show one "used the browser" note with "watch", however many steps huvu takes.
 1. Tap "watch" while it works. huvu's browser should show, live, as huvu clicks through. Tapping or typing on it should do nothing. Tap "close".
+1. Watch again and tap "take over". A red edge should show around the screen, and the top should say you're driving. Click and type in the browser. It should respond to you. On the phone, tap "keyboard" to type.
+1. While you drive, open a page that plays sound. You should hear it, a second or two behind the picture.
+1. Tap "hand back". The red edge and the sound should go, and huvu should carry on in the browser when you ask it to.
+1. Take over, then tap "close" without handing back. Ask huvu to use the browser again. It should work, since closing hands it back.
+1. Ask huvu to log in somewhere that asks for a captcha or a code. It should stop at that step and ask you to take over. In a wake, a notification should come.
 1. If huvu says it handed a browser task to the background, a wake should show under "at work" at once, with no card on your phone. Open it and tap "watch". The browser should show the same way.
 1. Log in to a site in that browser through huvu once (it asks you for the OTP). Ask for a second task on the same site a day later. It should still be logged in.
 1. On the TV, a turn where huvu used the browser should show "used the browser" with no "watch".

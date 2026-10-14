@@ -126,6 +126,11 @@ configure() {
   if [ "$(uname)" = Linux ]; then
     hermes $p config set browser.headed true >/dev/null
     hermes $p config set bot_desktop.auto_start true >/dev/null
+    # Its sound goes to the profile's own sink on huvu's PulseAudio
+    # (docker/s6/pulse), which the app hears while its person holds the
+    # screen.
+    hermes $p config set PULSE_SERVER unix:/run/huvu-pulse/native >/dev/null
+    hermes $p config set PULSE_SINK "huvu_${1:-default}" >/dev/null
   fi
   # Every huvu-* skill is pinned fully loaded, so the model never spends a
   # round trip on skill_view before acting. The list is what the backend

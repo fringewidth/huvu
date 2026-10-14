@@ -193,6 +193,9 @@ class Config:
     # (screen.py), and its session token. No token, no screen.
     dashboard_url: str = "http://127.0.0.1:9119"
     dashboard_token: str | None = None
+    # huvu's PulseAudio (docker/s6/pulse), where each profile's browser
+    # plays, for the screen's sound while its person holds it.
+    pulse_server: str = "unix:/run/huvu-pulse/native"
 
     def model(self, tier: str) -> ModelChoice:
         return self.models.get(tier) or ModelChoice(DEFAULT_MODELS[tier])
@@ -261,6 +264,7 @@ def load(path: Path | None = None) -> Config:
         alexa_skill_id=os.environ.get("HUVU_ALEXA_SKILL_ID") or raw.get("alexa", {}).get("skill_id"),
         dashboard_url=str(raw.get("screen", {}).get("dashboard", "http://127.0.0.1:9119")),
         dashboard_token=secret("HERMES_DASHBOARD_SESSION_TOKEN"),
+        pulse_server=str(raw.get("screen", {}).get("pulse", "unix:/run/huvu-pulse/native")),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
     for tier in config.models:

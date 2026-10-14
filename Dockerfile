@@ -45,6 +45,12 @@ RUN apt-get -o Acquire::Retries=3 update && \
         tigervnc-standalone-server xfce4-panel xfwm4 xfdesktop4 xfce4-settings xfce4-terminal \
         dbus-x11 x11-xserver-utils x11-utils x11-xkb-utils xauth fonts-dejavu-core chromium && \
     rm -rf /var/lib/apt/lists/*
+# The browser's sound: huvu's PulseAudio (docker/s6/pulse) gives each
+# profile's Chromium a null sink of its own, which the backend streams to the
+# app while its person holds the screen (screen.py).
+RUN apt-get -o Acquire::Retries=3 update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends pulseaudio && \
+    rm -rf /var/lib/apt/lists/*
 
 ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
     HUVU_ENV_FILE=/opt/data/huvu/.env \
@@ -71,7 +77,7 @@ COPY --from=web /web/dist-phone bundles/phone/
 COPY --from=web /web/dist-firetv web/tv/
 COPY docker/s6/ /etc/s6-overlay/s6-rc.d/
 COPY docker/cont-init/ /etc/cont-init.d/
-RUN chmod +x setup.sh wipe.sh /etc/cont-init.d/50-huvu /etc/s6-overlay/s6-rc.d/huvu/run && \
+RUN chmod +x setup.sh wipe.sh /etc/cont-init.d/50-huvu /etc/s6-overlay/s6-rc.d/huvu/run /etc/s6-overlay/s6-rc.d/pulse/run && \
     install -d -o hermes -g hermes hermes-skills
 
 EXPOSE 3001
