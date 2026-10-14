@@ -11,11 +11,14 @@ export interface Geometry {
 
 // Where the flower's composer slot is, and how tall the composer is.
 // Offsets, not bounding rects: they ignore the composer's own fade and
-// lower transform in voice mode.
+// lower transform in voice mode. `composerShown` says whether the composer
+// is mounted: it comes and goes (an ended wake has none), and a composer
+// that mounts later has to be measured and watched too.
 export function useSlotGeometry(
   rootRef: RefObject<HTMLElement | null>,
   slotRef: RefObject<HTMLElement | null>,
   composerRef: RefObject<HTMLElement | null>,
+  composerShown: boolean,
 ): Geometry | null {
   const [geo, setGeo] = useState<Geometry | null>(null);
   useLayoutEffect(() => {
@@ -46,6 +49,6 @@ export function useSlotGeometry(
     ro.observe(root);
     if (composerRef.current) ro.observe(composerRef.current);
     return () => ro.disconnect();
-  }, [rootRef, slotRef, composerRef]);
+  }, [rootRef, slotRef, composerRef, composerShown]);
   return geo;
 }

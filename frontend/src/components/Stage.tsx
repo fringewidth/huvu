@@ -132,7 +132,7 @@ export function Stage() {
   // Turns that took the stage once. They keep it after they end, even if
   // they began before this launch.
   const [staged, setStaged] = useState<ReadonlySet<string>>(() => new Set());
-  const geo = useSlotGeometry(rootRef, slotRef, composerRef);
+  const geo = useSlotGeometry(rootRef, slotRef, composerRef, canAsk);
 
   // Another conversation took the stage: it starts on its latest turn,
   // with nothing half done from the one before.
