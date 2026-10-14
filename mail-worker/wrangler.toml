@@ -4,3 +4,5 @@
 name = "huvu-mail"
 main = "worker.js"
 compatibility_date = "2026-09-01"
+# It only takes mail, so it has no address on the web.
+workers_dev = false

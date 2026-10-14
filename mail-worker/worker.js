@@ -5,13 +5,26 @@
 //
 // HUVU_URL is the source's ingest address and HUVU_TOKEN the person's
 // tracker token, both printed by `huvu tracker add <user> --mail`.
+// FORWARD_TO, when set, is the person's own inbox: every mail goes there
+// too, unchanged, so they read it as before. It must be a destination
+// address verified in Email Routing. Never set it to an inbox that
+// forwards to this address, or each mail goes round for good.
 
 export default {
   async email(message, env) {
     const raw = new Uint8Array(await new Response(message.raw).arrayBuffer());
-    let reply;
+    let kept = false;
+    if (env.FORWARD_TO) {
+      try {
+        await message.forward(env.FORWARD_TO);
+        kept = true;
+      } catch (err) {
+        console.error(`couldn't forward to the inbox: ${err}`);
+      }
+    }
+    let why;
     try {
-      reply = await fetch(env.HUVU_URL, {
+      const reply = await fetch(env.HUVU_URL, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${env.HUVU_TOKEN}`,
@@ -19,14 +32,18 @@ export default {
         },
         body: JSON.stringify({ raw: base64(raw), from: message.from }),
       });
+      why = reply.ok ? null : `huvu refused the mail: ${reply.status} ${await reply.text()}`;
     } catch (err) {
-      // The mail stays in the inbox it was forwarded from, so a bounce
-      // loses nothing; the person forwards it again once huvu is back.
-      message.setReject(`huvu is unreachable: ${err}`);
+      why = `huvu is unreachable: ${err}`;
+    }
+    if (!why) {
       return;
     }
-    if (!reply.ok) {
-      message.setReject(`huvu refused the mail: ${reply.status} ${await reply.text()}`);
+    console.error(why);
+    // With a copy in the person's inbox, nothing is lost: they can forward
+    // it here again once huvu is back. With none, the sender gets a bounce.
+    if (!kept) {
+      message.setReject(why);
     }
   },
 };
