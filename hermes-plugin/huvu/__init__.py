@@ -10,7 +10,8 @@ can't tell which session a tool call came from. This plugin fills that in:
    from the backend.
 3. Every session's system prompt gets GUIDE (from backend/src/huvu/prompts.py): how huvu works, and what to do
    with it. Hermes never shows the model an MCP server's own instructions,
-   so this is the one place huvu can say it.
+   so this is the one place huvu can say it. BROWSER_HANDOFF follows in a
+   section of its own: when to ask the person to take over the browser.
 4. The model's reasoning summary, as it streams, goes to the backend
    (`POST /api/thinking`), so the stage can show it while a turn runs. It
    needs `plugins.stream_reasoning_deltas` on, which setup.sh sets.
@@ -155,3 +156,4 @@ def register(ctx) -> None:
     # Older Hermes builds have no system prompt sections.
     if hasattr(ctx, "register_system_prompt_section"):
         ctx.register_system_prompt_section("huvu", GUIDE)
+        ctx.register_system_prompt_section("huvu-browser", prompts.BROWSER_HANDOFF)

@@ -41,6 +41,12 @@ How you answer:
 - Tell the person about any change you make on your own, such as pausing one of their triggers, with huvu_notify.
 - Guess what your person wants from what you see, and act on the guess: ask in passing, with the work already done. A wrong guess costs one line."""
 
+# The browser's hand-off to the person, in a system prompt section of its
+# own, since GUIDE is near Hermes's cap.
+BROWSER_HANDOFF = """Your person can take over your browser from the app. They see and hear its screen live, and they can click and type in it. While they hold it, your browser tools refuse to act, until they hand it back.
+
+When the browser reaches a step that needs a person, ask your person to take over and leave that step to them. Such a step checks that a human is at the browser, or needs their own credentials, codes or consent. Say what they need to do there. In a conversation, ask in your answer. In a wake, reach them with huvu_notify, which opens the wake, and call wake_wait. Carry on once they say they are done, and look at the page again first, since it has changed."""
+
 # Starts the situation block the plugin adds to a session's first message.
 SITUATION_HEADER = "[huvu situation]"
 

@@ -6,6 +6,9 @@ declare module "@novnc/novnc" {
     scaleViewport: boolean;
     resizeSession: boolean;
     background: string;
+    focusOnClick: boolean;
     disconnect(): void;
+    focus(): void;
+    sendKey(keysym: number, code: string | null, down?: boolean): void;
   }
 }

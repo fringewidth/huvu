@@ -30,6 +30,7 @@ from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, inge
 from .config import Config
 from .conversations import Action
 from .prompts import BROWSER_BLOCKED
+from .screen import ScreenError
 from .hearing import HearingError
 from .kernel import Kernel
 from .push import api_json, sse
@@ -118,6 +119,11 @@ class WebPushSubscription(BaseModel):
 
 class Browsing(BaseModel):
     session: str
+
+
+class ScreenLease(BaseModel):
+    ticket: str
+    take: bool
 
 
 class Thinking(BaseModel):
@@ -371,6 +377,31 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     async def screen(ws: WebSocket, ticket: str = "") -> None:
         """The browser's screen as raw RFB, for noVNC in the app."""
         await kernel.screen.watch(ws, ticket)
+
+    @app.post("/api/screen/lease")
+    async def screen_lease(body: ScreenLease, me: Device = device) -> dict[str, bool]:
+        """Takes over the browser's screen in the device's open view, the one
+        its ticket opened, or hands it back to the agent (screen.py)."""
+        if me.user is None:
+            raise HTTPException(403, "a shared device has no screen of its own")
+        try:
+            await kernel.screen.lease(me.user, body.ticket, body.take)
+        except KeyError as err:
+            raise HTTPException(404, str(err)) from err
+        except ScreenError as err:
+            raise HTTPException(409, err.reason) from err
+        return {"holding": body.take}
+
+    @app.get("/api/screen/audio")
+    async def screen_audio(ticket: str = "") -> StreamingResponse:
+        """The browser's sound as an MP3 stream while the view the ticket
+        opened holds the screen. The ticket stands in for the device's token,
+        which an audio element can't send."""
+        try:
+            chunks = await kernel.screen.sound(ticket)
+        except KeyError as err:
+            raise HTTPException(404, str(err)) from err
+        return StreamingResponse(chunks, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 
     @app.get("/api/push")
     async def push(me: Device = device) -> StreamingResponse:
