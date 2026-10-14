@@ -120,8 +120,8 @@ configure() {
   hermes $p tools disable --platform api_server cronjob >/dev/null
   # The browser draws on its profile's own screen (Hermes's Bot Desktop,
   # Xvnc), which its first call starts, and keeps one persistent profile, so
-  # a login made once stays. The app watches that screen from a wake. Only
-  # an advanced wake may browse (the huvu plugin). On Linux only: the
+  # a login made once stays. The app watches that screen. Only a session on
+  # pro or advanced may browse (the huvu plugin). On Linux only: the
   # container has the screen, and on a Mac a headed browser opens a window.
   if [ "$(uname)" = Linux ]; then
     hermes $p config set browser.headed true >/dev/null

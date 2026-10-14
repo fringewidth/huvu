@@ -50,7 +50,7 @@ A wake is a model instance a trigger started for its person. Each is a conversat
 
 ### The browser's screen
 
-Only an advanced wake may use Hermes's browser, which draws on its profile's own screen. The app watches it, and can't act on it.
+Only a session on pro or advanced may use Hermes's browser: a conversation's main session, or a wake on either tier. The browser draws on its profile's own screen. The app watches it, and can't act on it. A turn's `browser_*` tool parts are the browser's steps: the stage shows a run of them as one note, with "watch" on a device that has input of its own.
 
 1. `POST /api/screen/ticket` (a personal device) answers `{"ticket"}`, single use, for 30 s. `503` without Hermes's dashboard, `403` on a shared device.
 1. `WebSocket /api/screen?ticket=<ticket>` carries the user's screen as raw RFB, binary frames both ways, for noVNC. It closes with `4401` for a ticket missing, used or expired, `4001` when the screen isn't running (watching never starts it), and `4503` when the dashboard can't be reached.

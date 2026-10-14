@@ -1,5 +1,5 @@
 import type { FC } from "react";
-import { Choices, GenericNote, VideoFeed, WebSearchNote } from "./partViews";
+import { BrowserNote, Choices, GenericNote, VideoFeed, WebSearchNote } from "./partViews";
 import type { RichPart, ToolPart } from "../chat/thread";
 
 // Everything in a turn that isn't plain text: images, tool calls, and
@@ -15,7 +15,7 @@ export type Slot = "note" | "panel" | "choices";
 interface ToolKind {
   chip: string;
   slot: Slot;
-  Hero: FC<{ part: ToolPart; onChoose: (text: string) => void }>;
+  Hero: FC<{ part: ToolPart; onChoose: (text: string) => void; onWatch: () => void }>;
 }
 
 const TOOL_KINDS: Record<string, ToolKind> = {
@@ -24,7 +24,16 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   choices: { chip: "choices", slot: "choices", Hero: Choices },
 };
 
+// Hermes's browser tools are all steps of the same thing, so they share a
+// kind, and a run of them shows as one note.
+const BROWSER: ToolKind = { chip: "browser", slot: "note", Hero: BrowserNote };
+
+export function isBrowser(part: ToolPart): boolean {
+  return part.toolName.startsWith("browser_");
+}
+
 export function kindOf(toolName: string): ToolKind {
+  if (toolName.startsWith("browser_")) return BROWSER;
   return TOOL_KINDS[toolName] ?? { chip: toolName.replace(/[_-]+/g, " "), slot: "note", Hero: GenericNote };
 }
 

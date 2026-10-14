@@ -64,6 +64,8 @@ async def test_a_one_off_runs_on_basic_alone_without_thinking(talk, hermes: Fake
     session = live.turn.hermes_session
     assert (hermes.models[session], hermes.efforts[session]) == ("gpt-6-luna", "none")
     assert await routes(talk) == [{"tier": "basic", "model": "gpt-6-luna", "effort": "none", "why": "one_off", "p": 0.1}]
+    # Only pro and advanced may use the browser.
+    assert not talk.may_browse(session, "me", None)
 
 
 async def test_an_ask_that_needs_context_runs_on_pro(talk, hermes: FakeHermes):

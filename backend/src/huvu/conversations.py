@@ -336,6 +336,11 @@ class ConversationHub:
         live.task = asyncio.create_task(self._relay(live, events), name=f"turn:{live.turn.id}")
         return live
 
+    def is_main(self, session: str) -> bool:
+        """Whether `session` is a conversation's main session, the one its
+        asks on pro continue."""
+        return self._db.execute("SELECT 1 FROM conversations WHERE hermes_session = ?", (session,)).fetchone() is not None
+
     def _conversation(self, conversation_id: str, user: str | None):
         row = self._db.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         if row is None:

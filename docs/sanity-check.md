@@ -154,9 +154,11 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. Leave a wake waiting for a day. It should leave the menu by itself.
 1. Send mom a message from a wake. Her notification should open nothing special.
 1. On the TV, there should be no wakes.
-1. Ask huvu to do something in its browser for you, such as checking a page that needs your login. It should say the browser works only in an advanced wake, and offer to set one up. A card should ask you to allow it on your phone. Tap yes.
-1. When the wake runs, open it from the menu and tap "watch". huvu's browser should show, live, as huvu clicks through. Tapping or typing on it should do nothing. Tap "close".
-1. Log in to a site in that browser through huvu once (it asks you for the OTP in the wake). Ask for a second task on the same site a day later. It should still be logged in.
+1. In the chat, ask huvu to look something up in its browser. It should open the browser in the same turn, with no trigger and no card on your phone. The turn should show one "used the browser" note with "watch", however many steps huvu takes.
+1. Tap "watch" while it works. huvu's browser should show, live, as huvu clicks through. Tapping or typing on it should do nothing. Tap "close".
+1. If huvu says it handed a browser task to the background, a wake should show under "at work" at once, with no card on your phone. Open it and tap "watch". The browser should show the same way.
+1. Log in to a site in that browser through huvu once (it asks you for the OTP). Ask for a second task on the same site a day later. It should still be logged in.
+1. On the TV, a turn where huvu used the browser should show "used the browser" with no "watch".
 1. Tap "watch" on a wake that isn't using the browser. It should say the browser isn't open right now.
 
 ## The wiki (phone and laptop)

@@ -137,9 +137,10 @@ class ScriptRunner:
         wake = {"text": message["wake"], "data": message.get("data")}
         report["wakes"].append(wake)
         # The script gets its answer at once, so a long wake doesn't count
-        # against its TIMEOUT.
+        # against its TIMEOUT. The wake takes its tier and group from here: a
+        # once trigger has ended by the time its wake starts.
         if not dry:
-            started.append(self._kernel.waker.start({**payload, "script": wake}, trigger.user))
+            started.append(self._kernel.waker.start({**payload, "script": wake, "tier": trigger.spec.tier, "group": trigger.group}, trigger.user))
         return {"result": {"woke": not dry}}
 
     async def _call(self, message: dict[str, Any], trigger: Trigger, caller: Caller, dry: bool, report: dict[str, Any]) -> dict[str, Any]:

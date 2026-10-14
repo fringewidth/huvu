@@ -43,7 +43,7 @@ after the script ends. Each run in a wake has a deadline of its own
 (`[wakes] deadline`): past it, huvu stops the Hermes run, and for the
 trigger's own run logs a trigger.error, which the next dream reads.
 
-The browser runs only in a wake on the advanced tier (`may_browse`): the
+A wake on pro or advanced may use the browser (`Kernel.may_browse`): the
 huvu Hermes plugin asks before every browser tool call.
 """
 
@@ -150,9 +150,8 @@ class Waker:
     async def _wake(self, payload: dict[str, Any], user: str | None) -> None:
         now = self._kernel.now()
         trigger = payload.get("trigger", "manual")
-        live_trigger = self._kernel.triggers.get(trigger)
-        group = live_trigger.group if live_trigger else None
-        tier = live_trigger.spec.tier if live_trigger else "basic"
+        group = payload.get("group")
+        tier = payload.get("tier", "basic")
         profile = self._kernel.accounts.profile(user)
         session = await self._new_session(trigger, user, payload.get("note", ""))
         self._db.execute(
@@ -357,13 +356,10 @@ class Waker:
         row = self._db.execute("SELECT id, user_id FROM wakes WHERE session = ?", (caller.session,)).fetchone() if caller.session else None
         return f"wake:{row['id']}" if row and row["user_id"] is not None and row["user_id"] == caller.user else None
 
-    def may_browse(self, session: str, user: str | None, group: str | None) -> bool:
-        """Whether a Hermes session may use the browser: only a wake on the
-        advanced tier, of the profile that asks."""
-        owner = self._kernel.sessions.owner(session)
-        ours = owner is not None and (owner.user, owner.group) == (user, group)
-        row = self._db.execute("SELECT tier FROM wakes WHERE session = ?", (session,)).fetchone() if ours else None
-        return bool(row and row["tier"] == "advanced")
+    def tier(self, session: str) -> str | None:
+        """The tier of the wake running in `session`, or None when it isn't one."""
+        row = self._db.execute("SELECT tier FROM wakes WHERE session = ?", (session,)).fetchone()
+        return row["tier"] if row else None
 
     def _row(self, wake_id: str | None):
         return self._db.execute("SELECT * FROM wakes WHERE id = ?", (wake_id,)).fetchone() if wake_id else None

@@ -134,6 +134,16 @@ class Kernel:
         folder = wiki.folder(self.config.hermes_home, self.accounts.profile(user, group))
         return prompts.situation(f"{self.now():%a %Y-%m-%d %H:%M}", helping, shared, self.huvu.mode(), len(pending), str(folder))
 
+    def may_browse(self, session: str, user: str | None, group: str | None) -> bool:
+        """Whether a Hermes session may use the browser: one of the asking
+        profile's that runs on pro or advanced. A conversation's main session
+        always runs on pro; a quick turn runs on basic in a session of its
+        own; a wake runs on its trigger's tier."""
+        owner = self.sessions.owner(session)
+        if owner is None or (owner.user, owner.group) != (user, group):
+            return False
+        return self.conversations.is_main(session) or self.waker.tier(session) in ("pro", "advanced")
+
     async def start(self) -> None:
         # Turns that were running when the kernel last stopped never ended.
         self.db.execute("UPDATE turns SET running = 0, ending = 'failed' WHERE running = 1")
