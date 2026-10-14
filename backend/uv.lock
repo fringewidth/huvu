@@ -448,6 +448,24 @@ wheels = [
 ]
 
 [[package]]
+name = "dkimpy"
+version = "1.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dnspython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f0/6f/84e91828186bbfcedd7f9385ef5e0d369632444195c20e08951b7ffe0481/dkimpy-1.1.8.tar.gz", hash = "sha256:b5f60fb47bbf5d8d762f134bcea0c388eba6b498342a682a21f1686545094b77", size = 66979, upload-time = "2024-07-04T22:16:38.321Z" }
+
+[[package]]
+name = "dnspython"
+version = "2.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/4a/50822184bd67cc6493f0fb6a880749158fcd31ab3fa07409acfd91f9fc85/dnspython-2.9.0.tar.gz", hash = "sha256:b44dc6b18f07a8b1c56676a19fbfdb5209415b046a9cece286baafa87ff3f7f1", size = 423560, upload-time = "2026-10-09T00:07:24.352Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/02/cdcc9b7c051786a103c3b09e1003a82fa0c66bcb91ffbdabcfbf7b4163b9/dnspython-2.9.0-py3-none-any.whl", hash = "sha256:9a4aedb833c3c1b49214d04d44d3032ab7a9135f7c1d29a549b4ff78fd82fda9", size = 354822, upload-time = "2026-10-09T00:07:22.622Z" },
+]
+
+[[package]]
 name = "edge-tts"
 version = "7.2.8"
 source = { registry = "https://pypi.org/simple" }
@@ -697,6 +715,8 @@ dependencies = [
     { name = "apsw" },
     { name = "certifi" },
     { name = "cryptography" },
+    { name = "dkimpy" },
+    { name = "dnspython" },
     { name = "edge-tts" },
     { name = "fastapi" },
     { name = "http-ece" },
@@ -704,6 +724,7 @@ dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "pypdf" },
     { name = "segno" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
@@ -721,6 +742,8 @@ requires-dist = [
     { name = "apsw", specifier = ">=3.53.4.0" },
     { name = "certifi", specifier = ">=2026.7.22" },
     { name = "cryptography", specifier = ">=50.0.2" },
+    { name = "dkimpy", specifier = ">=1.1.8" },
+    { name = "dnspython", specifier = ">=2.9.0" },
     { name = "edge-tts", specifier = ">=7.2.8" },
     { name = "fastapi" },
     { name = "http-ece", specifier = ">=1.2.1" },
@@ -728,6 +751,7 @@ requires-dist = [
     { name = "mcp" },
     { name = "pydantic" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
+    { name = "pypdf", specifier = ">=6.20.1" },
     { name = "segno", specifier = ">=1.6.6" },
     { name = "tzdata", specifier = ">=2026.5" },
     { name = "uvicorn", extras = ["standard"] },
@@ -1222,6 +1246,15 @@ wheels = [
 [package.optional-dependencies]
 crypto = [
     { name = "cryptography" },
+]
+
+[[package]]
+name = "pypdf"
+version = "6.20.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/c1/da25a099164cf4b210d63b957c902ad687139f4b8c12c20aec7953a4a266/pypdf-6.20.1.tar.gz", hash = "sha256:28f5a9d2fdc2749264612d94e6a58de54c11d730d9f0cabf8ad34117c4942b45", size = 7075352, upload-time = "2026-10-12T16:14:24.784Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/f8/4cbd09988b4b158260b7e0df38bf16f19e998bf0e257a18661a8da04280e/pypdf-6.20.1-py3-none-any.whl", hash = "sha256:aa5a55ddcffdc5e5ab291d5decb23f6383f4e56f8e3263dc39af41fff03885ad", size = 402665, upload-time = "2026-10-12T16:14:22.556Z" },
 ]
 
 [[package]]

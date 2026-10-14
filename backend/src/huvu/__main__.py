@@ -19,6 +19,7 @@ Users and devices are managed from here too:
     uv run huvu device revoke d_1a2b3c4d5e
     uv run huvu tracker add mom              prints a QR code and link that set up OwnTracks on her phone
     uv run huvu tracker add me --browser     prints the address and token for huvu's Chrome extension
+    uv run huvu tracker add me --mail        prints the address and token for huvu's Email Worker
     uv run huvu wipe mom                     deletes her triggers, conversations and history (see wipe.py)
     uv run huvu wipe --group home            the same for a group's shared devices
     uv run huvu skills                       writes every source's Hermes skill and exits (setup.sh
@@ -89,8 +90,10 @@ def main() -> None:
     tracker = commands.add_parser("tracker", help="manage location trackers (OwnTracks)").add_subparsers(dest="action", required=True)
     add_tracker = tracker.add_parser("add", help="add OwnTracks on a user's phone, and print the link that sets it up")
     add_tracker.add_argument("user")
-    add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone, or <user>'s Chrome)")
-    add_tracker.add_argument("--browser", action="store_true", help="for huvu's Chrome extension (browser-extension/), not OwnTracks")
+    add_tracker.add_argument("--name", help="what to call the phone (default: <user>'s phone, <user>'s Chrome, or <user>'s mail)")
+    poster = add_tracker.add_mutually_exclusive_group()
+    poster.add_argument("--browser", action="store_true", help="for huvu's Chrome extension (browser-extension/), not OwnTracks")
+    poster.add_argument("--mail", action="store_true", help="for huvu's Email Worker (mail-worker/), not OwnTracks")
 
     commands.add_parser("skills", help="write every source's Hermes skill, then exit")
 
@@ -189,6 +192,8 @@ def _manage(config, args) -> None:
             accounts.revoke(args.id)
         case ("tracker", "add") if args.browser:
             _add_browser(config, accounts, args.user, args.name or f"{args.user}'s Chrome")
+        case ("tracker", "add") if args.mail:
+            _add_mail(config, accounts, args.user, args.name or f"{args.user}'s mail")
         case ("tracker", "add"):
             _add_tracker(config, accounts, args.user, args.name or f"{args.user}'s phone")
         case ("wipe", _):
@@ -211,7 +216,7 @@ def _wipe(config, conn, accounts: Accounts, user: str | None, group: str | None)
         sys.exit(f"huvu: no group {group!r}")
     from .data import FILE
 
-    counts = wipe(conn, config.data_dir / FILE, config.data_dir / "scripts", user=user, group=group, default_group=group == accounts.default_group())
+    counts = wipe(conn, config.data_dir / FILE, config.data_dir / "scripts", sources=config.data_dir / "sources", user=user, group=group, default_group=group == accounts.default_group())
     print(", ".join(f"{n} {table}" for table, n in counts.items()))
 
 
@@ -244,6 +249,19 @@ def _add_browser(config, accounts: Accounts, user: str, name: str) -> None:
     print(f"Added tracker {device.id} for {user}. In the huvu extension's options in their Chrome, set (the token is shown once):")
     print(f"  address  {config.public_url}")
     print(f"  token    {token}")
+
+
+def _add_mail(config, accounts: Accounts, user: str, name: str) -> None:
+    """Adds a tracker for huvu's Email Worker, and prints what goes in its
+    settings. One worker serves one address, so each person who forwards
+    mail gets an address and a worker of their own."""
+    source = next((s.name for s in config.sources if s.driver.endswith("mail:MailSource")), None)
+    if source is None:
+        raise AuthError("no mail source in huvu.toml; add one first (see huvu_drivers/mail.py)")
+    device, token = accounts.add_tracker(user, name)
+    print(f"Added tracker {device.id} for {user}. Set these on the Email Worker (mail-worker/; the token is shown once):")
+    print(f"  HUVU_URL    {config.public_url}/api/ingest/{source}")
+    print(f"  HUVU_TOKEN  {token}  (a secret: wrangler secret put HUVU_TOKEN)")
 
 
 def _new_password() -> str:

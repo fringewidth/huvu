@@ -1,7 +1,9 @@
 """Wipes what huvu keeps for one person, or for one group's shared devices:
 their triggers, conversations, wakes, Hermes session records, notifications,
 approvals and attendance, and their rows in every history table (their
-chat turns, the kernel's log about them, every source's history). `uv run
+chat turns, the kernel's log about them, every source's history), and the
+files a source keeps for them, in a folder of its own named for them (the
+mail they forwarded). `uv run
 huvu wipe <user>` or `uv run huvu wipe --group home`; `wipe.sh` at the repo
 root also clears the Hermes profile. Wiping the default group also takes
 the rows that belong to nobody, such as doorbell presses.
@@ -15,6 +17,7 @@ would write them back.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import apsw
@@ -55,12 +58,14 @@ def wipe(
     history: Path,
     scripts: Path,
     *,
+    sources: Path | None = None,
     user: str | None = None,
     group: str | None = None,
     default_group: bool = False,
 ) -> dict[str, int]:
     """Deletes the rows from the kernel's database (`conn`) and the history
-    database at `history`, and returns how many went from each table."""
+    database at `history`, and a user's folder in each source's folder under
+    `sources`, and returns how many went from each table."""
     if (user is None) == (group is None):
         raise ValueError("wipe one user or one group")
     where = FOR_USER if user else FOR_GROUP
@@ -92,4 +97,9 @@ def wipe(
         db.close()
     for trigger in triggers:
         (scripts / f"{trigger}.py").unlink(missing_ok=True)
+    if user is not None and sources is not None:
+        for folder in sources.glob(f"*/{user}"):
+            if folder.is_dir():
+                shutil.rmtree(folder)
+                counts[f"{folder.parent.name} files"] = 1
     return counts
