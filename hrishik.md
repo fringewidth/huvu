@@ -123,6 +123,7 @@ nothing behind; one that moves the pin leaves the old image, about 3 GB.
 Is it up:
 
 ```sh
+ssh laptop "docker exec huvu-huvu-1 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9119/"   # Hermes's dashboard, for the browser's screen
 curl -s https://huvu.hrishik.me/health
 ssh laptop "docker logs --tail 50 huvu-huvu-1"
 ssh laptop "docker exec huvu-huvu-1 curl -s http://127.0.0.1:8642/health"   # Hermes's API server

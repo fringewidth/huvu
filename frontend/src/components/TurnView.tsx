@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect, useRef, useState, type Ref } from "react";
 import * as m from "motion/react-m";
 import { AnimatePresence, type Variants } from "motion/react";
+import { openedWake } from "../account/opens";
 import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
 import { chipsFor, interleave, kindOf, partsInSlot, type Slot } from "../stage/parts";
@@ -26,6 +27,8 @@ export interface TurnActions {
   retry(turn: Turn): void;
   // Opens the menu at the section a notice is about.
   show(section: MenuSection): void;
+  // Puts the wake a notice came from on the stage.
+  openWake(id: string): void;
   // Fire TV moves focus between history rows by hand.
   registerFocus(id: string, el: HTMLButtonElement | null): void;
 }
@@ -39,6 +42,9 @@ interface TurnViewProps {
   // the thinking thread fade out, and the ask, the parts and how the
   // answer ended stay.
   answerShown: boolean;
+  // Offers edit and retry. A wake has neither: Hermes keeps everything its
+  // run did.
+  rewindable: boolean;
   actions: TurnActions;
 }
 
@@ -59,6 +65,11 @@ function answerSize(answer: string, variant: TurnVariant, wide: boolean): { key:
 // `custom` is old size / new size. The entering copy starts at that scale
 // (so it looks old-sized) and settles to 1; the leaving copy, old-sized,
 // shrinks or grows by the inverse toward the new size.
+// The wake a notice came from, which it opens.
+function wakeOf(notice: Notice | null): string | null {
+  return openedWake(notice?.opens ?? null);
+}
+
 // A notice's cue: who sent it, and "urgent" first when it is.
 function noticeCue(notice: Notice): string {
   const urgent = notice.urgency === "high";
@@ -77,7 +88,7 @@ const fade = {
   exit: { opacity: 0, transition: { duration: 0.25, ease: EASE } },
 };
 
-export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answerShown, actions }: TurnViewProps) {
+export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answerShown, rewindable, actions }: TurnViewProps) {
   const cueRef = useRef<HTMLSpanElement>(null);
   const hero = variant === "hero";
   const chips = chipsFor(turn.parts);
@@ -139,7 +150,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
           >
             {turn.ask}
           </span>
-          {ui.hasInput && (
+          {ui.hasInput && rewindable && (
             <button
               type="button"
               onClick={() => cueRef.current && actions.edit(turn, snapshot(cueRef.current))}
@@ -165,6 +176,15 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
               className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
             >
               see triggers
+            </button>
+          )}
+          {hero && wakeOf(turn.notice) && (
+            <button
+              type="button"
+              onClick={() => actions.openWake(wakeOf(turn.notice) ?? "")}
+              className={`${capsClass} pointer-events-auto -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-ivory focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+            >
+              open
             </button>
           )}
         </div>
@@ -225,7 +245,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
         {turn.ending && !turn.running && (
           <div className="mt-3 flex items-center gap-4">
             <span className={`${capsClass} text-sindoor`}>{turn.ending === "failed" ? "huvu couldn't answer" : "stopped"}</span>
-            {turn.ending === "failed" && hero && ui.hasInput && (
+            {turn.ending === "failed" && hero && ui.hasInput && rewindable && (
               <button
                 type="button"
                 onClick={() => actions.retry(turn)}

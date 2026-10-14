@@ -1,4 +1,5 @@
 import * as thread from "../chat/thread";
+import * as wakes from "../chat/wakes";
 import { TURN_EVENTS, type TurnEventData } from "../chat/backend";
 import { call, HttpError, onReach, sse } from "../net/http";
 import * as household from "./household";
@@ -6,8 +7,8 @@ import * as waiting from "./waiting";
 
 // The push stream: one long-lived `GET /api/push` that carries what the
 // backend sends this device unasked. Its own turns (again, and the ones it
-// didn't start), notifications, approvals, "is it you?" questions, and who
-// is recognized where. It is a fetch, not an EventSource, so the token goes
+// didn't start), its user's wakes and their turns, notifications,
+// approvals, "is it you?" questions, and who is recognized where. It is a fetch, not an EventSource, so the token goes
 // in a header and a 401 can be seen.
 //
 // The backend replays nothing a device missed, so every connect catches up
@@ -119,7 +120,7 @@ function catchUp(): Promise<void> {
   catching = (async () => {
     do {
       catchAgain = false;
-      await Promise.all([thread.sync(), waiting.refresh(), household.refresh()]);
+      await Promise.all([thread.sync(), waiting.refresh(), household.refresh(), wakes.refreshWakes()]);
     } while (catchAgain);
   })().finally(() => {
     catching = null;
@@ -129,7 +130,10 @@ function catchUp(): Promise<void> {
 
 function dispatch(name: string, data: Record<string, unknown>): void {
   if (TURN_EVENTS.has(name)) {
-    thread.heard((data as unknown as TurnEventData).turn);
+    const event = data as unknown as TurnEventData;
+    thread.heard(event.turn, event.wake ?? null);
+  } else if (name === "wake") {
+    wakes.wakeChanged(data as unknown as wakes.WakeInfo);
   } else if (name === "notify") {
     const notice = data as unknown as thread.NoticeData;
     thread.notify(notice);

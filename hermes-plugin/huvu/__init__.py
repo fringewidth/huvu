@@ -14,6 +14,10 @@ can't tell which session a tool call came from. This plugin fills that in:
 4. The model's reasoning summary, as it streams, goes to the backend
    (`POST /api/thinking`), so the stage can show it while a turn runs. It
    needs `plugins.stream_reasoning_deltas` on, which setup.sh sets.
+5. Hermes's browser tools run only in a wake on the advanced tier. Before
+   each browser call, the backend says whether the session may
+   (`POST /api/browsing`); a no, or no answer, blocks the call, and the
+   model reads why.
 
 Settings come from the environment Hermes runs in:
     HUVU_URL              the backend, default http://localhost:3001
@@ -58,10 +62,27 @@ SERVER = os.environ.get("HUVU_MCP_SERVER", "huvu")
 PREFIX = f"mcp__{SERVER}__"
 
 
+# Hermes's own browser tools all start with this.
+BROWSER = "browser_"
+
+
 def _on_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "", **_: Any) -> dict[str, Any] | None:
+    if tool_name.startswith(BROWSER):
+        return _browsing(session_id)
     if not tool_name.startswith(PREFIX):
         return None
     return {"action": "modify", "args": {"_session": session_id}}
+
+
+def _browsing(session_id: str) -> dict[str, Any] | None:
+    """None lets a browser call through; a block carries why. Without an
+    answer from the backend, the call is blocked."""
+    try:
+        answer = _post("/api/browsing", {"session": session_id})
+    except Exception as err:
+        logger.warning("huvu: browser call blocked, the backend didn't answer: %s", err)
+        answer = {"allowed": False, "why": prompts.BROWSER_BLOCKED}
+    return None if answer.get("allowed") else {"action": "block", "message": answer.get("why") or prompts.BROWSER_BLOCKED}
 
 
 # The model response each session's reasoning last came from, so the first

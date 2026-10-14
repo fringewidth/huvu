@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SecureStorage } from "@aparajita/capacitor-secure-storage";
 import * as thread from "../chat/thread";
+import * as wakes from "../chat/wakes";
 import { PHONE, TV, ui } from "../config/interaction";
 import { call, getJson, getReach, onReach, postJson, setToken, whenUnauthorized, type Reach } from "../net/http";
 import * as household from "./household";
@@ -116,6 +117,7 @@ async function adopt(token: string): Promise<void> {
   await SecureStorage.setItem(TOKEN_KEY, token);
   setToken(token);
   thread.reset();
+  wakes.resetWakes();
   enter();
 }
 
@@ -134,6 +136,7 @@ export async function signOut(reason: string | null): Promise<void> {
   if (PHONE) stopWebPush();
   setToken(null);
   thread.reset();
+  wakes.resetWakes();
   waiting.reset();
   household.reset();
   set({ status: "out", me: null, reason });

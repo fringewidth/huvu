@@ -100,6 +100,12 @@ deadline = 3600
 [wakes]
 deadline = 900
 
+# Hermes's dashboard, which serves each profile's browser screen for the
+# app to watch (screen.py). Its session token is HERMES_DASHBOARD_SESSION_TOKEN;
+# without it there is no screen. The container sets both up.
+# [screen]
+# dashboard = "http://127.0.0.1:9119"
+
 # huvu's voice (an Edge voice) and speech to text (Groq, GROQ_API_KEY).
 # Voices: en-US-AvaNeural, en-IN-NeerjaExpressiveNeural, en-IN-PrabhatNeural
 # and more (`uv run edge-tts --list-voices`).

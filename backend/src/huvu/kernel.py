@@ -43,6 +43,7 @@ from .spec import Feed, Label
 from .speech import Voice
 from .tools import ToolBox
 from .triggers import TriggerEngine
+from .screen import Screen
 from .wake import Waker
 
 log = logging.getLogger("huvu.kernel")
@@ -87,6 +88,7 @@ class Kernel:
         self.sessions = SessionBook(self.db, self.now)
         self.conversations = ConversationHub(self)
         self.waker = Waker(self)
+        self.screen = Screen(self)
         self.attendance = Attendance(self)
         fcm = FcmClient(config.fcm_credentials) if config.fcm_credentials else None
         web_push = WebPushClient(load_key(config.data_dir / "vapid.pem"), config.public_url)
@@ -190,12 +192,14 @@ class Kernel:
         self.db.close()
 
     async def _tick(self) -> None:
-        """Expires triggers, approvals and attendance once a minute."""
+        """Expires triggers, approvals and attendance, and ends or compacts
+        waiting wakes, once a minute."""
         while True:
             await asyncio.sleep(TICK)
             try:
                 await self.triggers.expire()
                 await self.policy.expire()
+                await self.waker.sweep()
                 await self.attendance.expire()
                 await self._sweep_if_due()
                 # A user added while the backend runs gets their dream.

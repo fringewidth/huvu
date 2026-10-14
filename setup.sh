@@ -118,6 +118,15 @@ configure() {
   # does. A Hermes cron job made from the API server has nowhere to deliver,
   # costs a model turn per run, and never shows in the app.
   hermes $p tools disable --platform api_server cronjob >/dev/null
+  # The browser draws on its profile's own screen (Hermes's Bot Desktop,
+  # Xvnc), which its first call starts, and keeps one persistent profile, so
+  # a login made once stays. The app watches that screen from a wake. Only
+  # an advanced wake may browse (the huvu plugin). On Linux only: the
+  # container has the screen, and on a Mac a headed browser opens a window.
+  if [ "$(uname)" = Linux ]; then
+    hermes $p config set browser.headed true >/dev/null
+    hermes $p config set bot_desktop.auto_start true >/dev/null
+  fi
   # Every huvu-* skill is pinned fully loaded, so the model never spends a
   # round trip on skill_view before acting. The list is what the backend
   # wrote at its last start. The container runs this for every profile on

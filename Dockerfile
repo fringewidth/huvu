@@ -35,6 +35,17 @@ FROM nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0
 
 USER root
 
+# Hermes's Bot Desktop: a screen per profile (Xvnc and Xfce) that its browser
+# draws on, and that the app watches through the dashboard. The pinned build
+# has the code; its `-desktop` image differs only by this layer, and has no
+# tag left to pin, since main's builds move `main-desktop`. The same
+# packages as Hermes's own HERMES_BOT_DESKTOP=1 build.
+RUN apt-get -o Acquire::Retries=3 update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+        tigervnc-standalone-server xfce4-panel xfwm4 xfdesktop4 xfce4-settings xfce4-terminal \
+        dbus-x11 x11-xserver-utils x11-utils x11-xkb-utils xauth fonts-dejavu-core chromium && \
+    rm -rf /var/lib/apt/lists/*
+
 ENV HUVU_CONFIG=/opt/data/huvu/huvu.toml \
     HUVU_ENV_FILE=/opt/data/huvu/.env \
     HUVU_WEB_DIR=/opt/huvu/web \

@@ -14,11 +14,13 @@ The stream is `POST /api/sessions/{id}/chat/stream`, Server-Sent Events:
 `run.completed`, `run.failed` or `run.cancelled`, an `error` on a crash, and
 `done`. Every payload carries `session_id`, `run_id`, `seq` and `ts`.
 
-A wake runs through `POST /v1/runs` instead (`run`), with the history huvu
-gives. Hermes takes a turn whose caller brings the history as finished when
-it ends, so it runs subagents (`delegate_task`) inline and returns their
-results in the same turn. On a session's chat it would keep them for a next
-turn, and a wake never has one.
+A wake runs through `POST /v1/runs` instead (`run`). Its first turn brings
+its own history, the situation block. Hermes takes a turn whose caller
+brings the history as finished when it ends, so it runs subagents
+(`delegate_task`) inline and returns their results in the same turn. On a
+session's chat it would keep them for a next turn, which a wake may never
+have. A later turn in the wake, its person's reply, brings no history, and
+Hermes loads the session's own.
 """
 
 from __future__ import annotations
@@ -116,10 +118,11 @@ class HermesClient:
         provider: str | None = None,
     ) -> AsyncIterator[HermesEvent]:
         """Runs one turn through /v1/runs, after `history` (role and content
-        per message, at least one), and yields its events under chat's
-        names: run.started with its run_id, assistant.delta,
-        assistant.completed, then run.completed, run.failed or
-        run.cancelled."""
+        per message), and yields its events under chat's names: run.started
+        with its run_id, assistant.delta, assistant.completed, then
+        run.completed, run.failed or run.cancelled. With no history, Hermes
+        loads the session's own, tool calls included, so the turn carries
+        on from where the session stopped."""
         body: dict[str, Any] = {
             "session_id": session_id,
             "input": [*history, {"role": "user", "content": message}],

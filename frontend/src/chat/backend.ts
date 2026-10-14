@@ -1,4 +1,4 @@
-import { call, sse } from "../net/http";
+import { call, getJson, sse } from "../net/http";
 import type { Ending, Reply, RichPart } from "./thread";
 
 // Something the owner did in the app since their last ask, such as opening
@@ -22,12 +22,17 @@ export interface AskBody {
   // How the ask was made: spoken in voice mode, or typed. huvu writes a
   // spoken answer to be heard.
   mode: "voice" | "text";
+  // The wake it is asked in, not the device's own conversation. A wake
+  // takes no `replaces`.
+  wake?: string;
 }
 
 // What a turn event's data can carry. Which fields are there depends on
 // the event; the contract is in docs/frontend-contract.md.
 export interface TurnEventData {
   turn: string;
+  // Set on a wake's turn: the wake it belongs to.
+  wake?: string;
   ask?: string;
   at?: string;
   text?: string;
@@ -111,6 +116,8 @@ export async function stopTurn(id: string): Promise<void> {
   }
 }
 
-export async function keptTurns(): Promise<KeptTurn[]> {
-  return (await call("/api/conversation")).json() as Promise<KeptTurn[]>;
+// The device's own turns, or a wake's.
+export async function keptTurns(wake: string | null = null): Promise<KeptTurn[]> {
+  const kept = wake === null ? await getJson<KeptTurn[]>("/api/conversation") : (await getJson<{ turns: KeptTurn[] }>(`/api/wakes/${wake}`)).turns;
+  return kept;
 }

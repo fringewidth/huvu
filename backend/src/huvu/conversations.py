@@ -38,7 +38,7 @@ import asyncio
 import logging
 import re
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Literal
@@ -53,6 +53,7 @@ from .source import SourceError
 from .spec import Caller
 
 if TYPE_CHECKING:
+    from .accounts import Device
     from .kernel import Kernel
 
 log = logging.getLogger("huvu.conversations")
@@ -61,7 +62,7 @@ Ending = Literal["failed", "stopped"] | None
 
 HUVU_PREFIX = "mcp__huvu__"
 # How long the provider keeps a session's prompt cached after its last use.
-CACHE_TTL = timedelta(minutes=5)
+CACHE_TTL = timedelta(hours=1)
 # How much of the conversation a fresh session reads: the latest turns that
 # fit, about 12,000 tokens at four characters a token. Older turns are left
 # out, so a long conversation doesn't cost more on every cold start; the
@@ -145,13 +146,26 @@ class Turn:
 class LiveTurn:
     turn: Turn
     profile: Profile
-    # The model it runs on, and why (routing.py).
-    route: Route
+    # The model it runs on, and why (routing.py). None in a wake, which
+    # runs on its trigger's tier.
+    route: Route | None
     # Whose turn it is in chat_turns: the device's user, or whoever is
     # recognized at a shared device.
     user: str | None = None
     # The shared device's group, if it is one.
     group: str | None = None
+    # The devices its events go to: the asking device, or every device of
+    # a wake's person.
+    audience: list[str] = field(default_factory=list)
+    # The wake it runs in (wake.py), if it does.
+    wake: str | None = None
+    # Seconds the Hermes run may take before huvu stops it.
+    deadline: float | None = None
+    timed_out: bool = False
+    # Why Hermes failed it, when it did.
+    error: str | None = None
+    # Called once it has ended and been saved.
+    on_end: Callable[[LiveTurn], None] | None = None
     run_id: str | None = None
     task: asyncio.Task[None] | None = None
     history: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
@@ -200,9 +214,14 @@ class ConversationHub:
         rows = self._db.execute("SELECT * FROM turns WHERE conversation_id = ? ORDER BY seq", (conversation_id,)).fetchall()
         return [self._live[r["id"]].turn if r["id"] in self._live else _turn(r) for r in rows]
 
-    def owns(self, conversation_id: str, turn_id: str) -> bool:
+    def visible(self, device: Device, turn_id: str) -> bool:
+        """Whether a device may see a turn: one of its own conversation, or
+        of a wake of its user's."""
         row = self._db.execute("SELECT conversation_id FROM turns WHERE id = ?", (turn_id,)).fetchone()
-        return bool(row and row["conversation_id"] == conversation_id)
+        if row is None:
+            return False
+        conversation = row["conversation_id"]
+        return conversation == device.id or (device.user is not None and self._kernel.waker.owner(conversation) == device.user)
 
     async def ask(
         self,
@@ -270,11 +289,51 @@ class ConversationHub:
             actions=actions,
             replaces=replaces,
         )
-        self._save(turn, insert=True)
-        live = LiveTurn(turn, profile, route, user=user or self._kernel.attendance.holder(conversation_id), group=group)
-        self._live[turn.id] = live
-        self._emit(live, "turn.started", {"ask": text, "at": turn.at})
-        live.task = asyncio.create_task(self._relay(live, route, message), name=f"turn:{turn.id}")
+        live = LiveTurn(turn, profile, route, user=user or self._kernel.attendance.holder(conversation_id), group=group, audience=[conversation_id])
+        events = self._kernel.hermes.chat(profile, session, message, model=route.choice.model, provider=route.choice.provider, effort=route.effort)
+        return self._begin(live, events)
+
+    async def wake_turn(
+        self,
+        wake: str,
+        session: str,
+        profile: Profile,
+        events: AsyncIterator[HermesEvent],
+        *,
+        user: str | None,
+        group: str | None,
+        ask: str,
+        deadline: float,
+        on_end: Callable[[LiveTurn], None],
+        actions: list[Action] | None = None,
+        turn_id: str | None = None,
+    ) -> LiveTurn:
+        """A turn in a wake (wake.py): the run a trigger started, with no
+        ask, or its person's ask in it. `events` is the Hermes run. Its
+        events go to every device of the wake's person."""
+        if turn_id is not None and self._db.execute("SELECT 1 FROM turns WHERE id = ?", (turn_id,)).fetchone():
+            raise ValueError(f"turn {turn_id!r} already exists")
+        for live in [l for l in self._live.values() if l.turn.conversation_id == wake]:
+            await self.stop(live.turn.id, wait=True)
+        kept = self.turns(wake)
+        turn = Turn(
+            id=turn_id or f"t_{secrets.token_hex(5)}",
+            conversation_id=wake,
+            seq=(kept[-1].seq + 1) if kept else 0,
+            at=self._kernel.now(),
+            ask=ask,
+            hermes_session=session,
+            actions=actions or [],
+        )
+        audience = [d.id for d in self._kernel.accounts.devices_for(user) if d.user == user] if user else []
+        live = LiveTurn(turn, profile, None, user=user, group=group, audience=audience, wake=wake, deadline=deadline, on_end=on_end)
+        return self._begin(live, events)
+
+    def _begin(self, live: LiveTurn, events: AsyncIterator[HermesEvent]) -> LiveTurn:
+        self._save(live.turn, insert=True)
+        self._live[live.turn.id] = live
+        self._emit(live, "turn.started", {"ask": live.turn.ask, "at": live.turn.at})
+        live.task = asyncio.create_task(self._relay(live, events), name=f"turn:{live.turn.id}")
         return live
 
     def _conversation(self, conversation_id: str, user: str | None):
@@ -416,22 +475,23 @@ class ConversationHub:
             self._emit(target, "part", {"part": part})
         return target is not None
 
-    async def _relay(self, live: LiveTurn, route: Route, message: str) -> None:
+    async def _relay(self, live: LiveTurn, events: AsyncIterator[HermesEvent]) -> None:
         ending: Ending = "failed"
         try:
-            async for event in self._kernel.hermes.chat(
-                live.profile,
-                live.turn.hermes_session or "",
-                message,
-                model=route.choice.model,
-                provider=route.choice.provider,
-                effort=route.effort,
-            ):
-                ending = self._translate(live, event, ending)
+            async with asyncio.timeout(live.deadline):
+                async for event in events:
+                    ending = self._translate(live, event, ending)
+        except TimeoutError:
+            live.timed_out = True
+            ending = "stopped"
+            # Closing the stream may not end the run, so it is stopped by name.
+            if live.run_id:
+                await self._kernel.hermes.stop(live.profile, live.run_id)
         except asyncio.CancelledError:
             ending = "stopped"
         except HermesError as err:
             log.error("turn %s: %s", live.turn.id, err)
+            live.error = str(err)
             ending = "failed"
         except Exception:
             log.exception("turn %s failed", live.turn.id)
@@ -476,6 +536,8 @@ class ConversationHub:
             # the stage says "stopped" itself.
             live.turn.answer = data["content"]
             self._emit(live, "answer.delta", {"text": data["content"]})
+        if name == "run.failed":
+            live.error = str(data.get("error") or "the run failed")
         if name in ("run.completed", "run.cancelled", "run.failed") and isinstance(data.get("usage"), dict):
             live.usage = data["usage"]
         # Hermes says how the turn ended. A turn stopped after Hermes had
@@ -584,11 +646,11 @@ class ConversationHub:
         self._emit(live, "answer.delta", {"text": text})
 
     def _emit(self, live: LiveTurn, name: str, data: dict[str, Any]) -> None:
-        payload = {"turn": live.turn.id, "conversation": live.turn.conversation_id, **data}
+        payload = {"turn": live.turn.id, "conversation": live.turn.conversation_id, **({"wake": live.wake} if live.wake else {}), **data}
         live.history.append((name, payload))
         for queue in live.subscribers:
             queue.put_nowait((name, payload))
-        self._kernel.push.send(name, payload, [live.turn.conversation_id])
+        self._kernel.push.send(name, payload, live.audience)
 
     def _end(self, live: LiveTurn, ending: Ending) -> None:
         if live.ended:
@@ -602,13 +664,18 @@ class ConversationHub:
         if live.turn.hermes_session:
             self._kernel.sessions.touch(live.turn.hermes_session)
         self._emit(live, "turn.ended", {"ending": ending, "answer": live.turn.answer})
-        self._log(live)
+        # A wake's runs are in the kernel's log (wake.py); chat_turns is
+        # what was said in the conversations.
+        if live.route is not None:
+            self._log(live, live.route)
         live.ended = True
         for queue in live.subscribers:
             queue.put_nowait(None)
         self._live.pop(live.turn.id, None)
+        if live.on_end is not None:
+            live.on_end(live)
 
-    def _log(self, live: LiveTurn) -> None:
+    def _log(self, live: LiveTurn, route: Route) -> None:
         """The turn as a `chat_turns` row, its user's, so their dream can
         read what was said, even at a household device whose Hermes session
         lives in the household's profile."""
@@ -625,7 +692,7 @@ class ConversationHub:
             "actions": [{"text": a.text, "at": a.at.isoformat()} for a in turn.actions] or None,
             "replaces": turn.replaces,
             "usage": live.usage,
-            "route": live.route.row(),
+            "route": route.row(),
         }
         self._kernel.data.record("chat", "turns", row, at=turn.at, user=live.user, group=None if live.user else live.group)
 

@@ -168,7 +168,7 @@ async def test_a_cold_main_session_reads_every_turn_in_its_transcript(talk, herm
         await collect(talk, await talk.conversations.ask("c1", ask, user="me"))
     # Each turn is its ask and "ok": room for the last two.
     monkeypatch.setattr(conversations, "TRANSCRIPT_CHARS", 45)
-    clock.advance(minutes=6)
+    clock.advance(minutes=61)
     await collect(talk, await talk.conversations.ask("c1", "what snacks go with it?", user="me"))
     message = hermes.messages[-1][1]
     assert "starts at turn 3, and the turns before it were left out" in message

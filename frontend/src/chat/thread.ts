@@ -3,12 +3,19 @@ import { followTurn, keptTurns, stopTurn, streamTurn, type Action, type KeptTurn
 import { devSeed } from "./devSeed";
 import type { Feed } from "./feeds";
 
-// The one conversation, held as turns: one ask and what huvu did with it.
+// The conversation, held as turns: one ask and what huvu did with it.
 // The stage shows turns, never a chat log, so this is the model itself
 // and not something derived from messages. Every change replaces only the
 // turn it touches, so a streaming reply re-renders only its own turn.
 // `after` is how much of the answer huvu had said when the part came, so a
 // note sits between the words around it. Parts without one go first.
+//
+// There is one store per conversation: the device's own, and the wake on
+// the stage, when one is open (see wakes.ts). A wake is a model instance a
+// trigger started; it has its own turns, the first with no ask, and no
+// edit or retry. What this module exports acts on the conversation on the
+// stage, so the stage, the voice and the spoken answers follow a wake the
+// way they follow the device's own.
 export type RichPart =
   | { kind: "image"; src: string; caption?: string; after?: number }
   | { kind: "tool"; id: string; toolName: string; args: Record<string, unknown>; result: unknown; after?: number };
@@ -23,7 +30,8 @@ export type Ending = "failed" | "stopped" | null;
 export interface Notice {
   id: string;
   urgency: "low" | "normal" | "high";
-  // The app screen that deals with it, such as "triggers".
+  // The app screen that deals with it: "triggers", or "wake:<id>" for the
+  // wake that sent it.
   opens: string | null;
   // Who sent it through huvu, as this user calls them, such as "mom".
   // Null when huvu sent it.
@@ -68,25 +76,44 @@ export interface ThreadState {
   // under feeds opened and notices sent since.
   running: boolean;
   stopping: boolean;
+  // The wake this is, or null for the device's own conversation.
+  wake: string | null;
 }
 
 // A turn someone asked, as opposed to a watched feed or a notification.
+// A wake's first turn, which its trigger started, counts as asked: huvu
+// answered something.
 export function asked(turn: Turn): boolean {
   return !turn.feed && !turn.notice;
 }
 
-let state: ThreadState = { turns: devSeed(), running: false, stopping: false };
+interface Store {
+  state: ThreadState;
+  // The turns this client reads a stream of, each with its own. A new ask
+  // doesn't end the one before: the backend stops it, and its stream goes
+  // on until it says how it ended.
+  streams: Map<string, AbortController>;
+  // Turns the backend has heard of. A turn that never got that far (the
+  // backend was down) isn't there to replace.
+  known: Set<string>;
+  // Turns a rewind dropped. The backend's later events about them, and
+  // any listing that still has them, mean nothing here.
+  dropped: Set<string>;
+}
+
+function newStore(wake: string | null, turns: Turn[] = []): Store {
+  return { state: { turns, running: false, stopping: false, wake }, streams: new Map(), known: new Set(), dropped: new Set() };
+}
+
+const own = newStore(null, devSeed());
+let wakeStore: Store | null = null;
+// The conversation on the stage.
+let active = own;
 const listeners = new Set<() => void>();
-// The turns this client reads a stream of, each with its own. A new ask
-// doesn't end the one before: the backend stops it, and its stream goes
-// on until it says how it ended.
-const streams = new Map<string, AbortController>();
-// Turns the backend has heard of. A turn that never got that far (the
-// backend was down) isn't there to replace.
-const known = new Set<string>();
-// Turns a rewind dropped. The backend's later events about them, and any
-// listing that still has them, mean nothing here.
-const dropped = new Set<string>();
+
+function emit(): void {
+  for (const listener of listeners) listener();
+}
 
 // Turns get their id here and the backend keeps it, so a stop or a rewind
 // can name a turn by an id this side already has.
@@ -98,18 +125,18 @@ function blank(id: string, at: number): Turn {
   return { id, at, ask: "", feed: null, notice: null, answer: "", thinking: "", parts: [], running: false, stopping: false, ending: null };
 }
 
-function set(turns: Turn[]): void {
+function set(store: Store, turns: Turn[]): void {
   const running = turns.filter((t) => t.running);
-  state = { turns, running: running.length > 0, stopping: running.some((t) => t.stopping) };
-  for (const listener of listeners) listener();
+  store.state = { turns, running: running.length > 0, stopping: running.some((t) => t.stopping), wake: store.state.wake };
+  if (store === active) emit();
 }
 
-function patch(id: string, change: Partial<Turn>): void {
-  const i = state.turns.findIndex((t) => t.id === id);
+function patch(store: Store, id: string, change: Partial<Turn>): void {
+  const i = store.state.turns.findIndex((t) => t.id === id);
   if (i < 0) return;
-  const turns = state.turns.slice();
+  const turns = store.state.turns.slice();
   turns[i] = { ...turns[i], ...change };
-  set(turns);
+  set(store, turns);
 }
 
 // Adds turns in time order, after any turn at the same moment.
@@ -131,51 +158,52 @@ function actionsAfterLastAsk(turns: Turn[]): Action[] {
 }
 
 // Reads one turn's stream into the turn, until the backend ends it.
-async function read(id: string, replies: (signal: AbortSignal) => AsyncGenerator<Reply>): Promise<void> {
+async function read(store: Store, id: string, replies: (signal: AbortSignal) => AsyncGenerator<Reply>): Promise<void> {
   const abort = new AbortController();
-  streams.set(id, abort);
+  store.streams.set(id, abort);
   try {
     for await (const reply of replies(abort.signal)) {
-      known.add(id);
-      patch(id, reply);
+      store.known.add(id);
+      patch(store, id, reply);
     }
-    patch(id, { running: false, stopping: false, thinking: "" });
+    patch(store, id, { running: false, stopping: false, thinking: "" });
   } catch (err) {
     if (abort.signal.aborted) return;
     console.error("thread: reply failed", err);
-    patch(id, { running: false, stopping: false, thinking: "", ending: "failed" });
+    patch(store, id, { running: false, stopping: false, thinking: "", ending: "failed" });
   } finally {
-    if (streams.get(id) === abort) streams.delete(id);
+    if (store.streams.get(id) === abort) store.streams.delete(id);
   }
 }
 
 // Follows a turn this client has no stream of: one it didn't start, or
 // one running since before a restart. Unknown here, it is added first.
-function follow(id: string, at = Date.now()): void {
-  if (streams.has(id) || dropped.has(id)) return;
-  if (!state.turns.some((t) => t.id === id)) set(insert(state.turns, [{ ...blank(id, at), running: true }]));
-  else patch(id, { running: true });
-  void read(id, (signal) => followTurn(id, signal));
+function follow(store: Store, id: string, at = Date.now()): void {
+  if (store.streams.has(id) || store.dropped.has(id)) return;
+  if (!store.state.turns.some((t) => t.id === id)) set(store, insert(store.state.turns, [{ ...blank(id, at), running: true }]));
+  else patch(store, id, { running: true });
+  void read(store, id, (signal) => followTurn(id, signal));
 }
 
 // Drops the turns from `keep` on, asks `ask` in their place, and streams
-// the answer into the new turn.
-function answer(keep: number, ask: string, mode: InputMode): void {
-  const kept = state.turns.slice(0, keep);
-  const gone = state.turns.slice(keep);
+// the answer into the new turn. A wake only ever asks at its end.
+function answer(store: Store, keep: number, ask: string, mode: InputMode): void {
+  const kept = store.state.turns.slice(0, keep);
+  const gone = store.state.turns.slice(keep);
   // The backend replaces from the first dropped turn it knows of.
-  const replaces = gone.find((t) => known.has(t.id))?.id;
+  const replaces = gone.find((t) => store.known.has(t.id))?.id;
   for (const t of gone) {
-    dropped.add(t.id);
-    streams.get(t.id)?.abort();
+    store.dropped.add(t.id);
+    store.streams.get(t.id)?.abort();
   }
   const turn: Turn = { ...blank(newTurnId(), Date.now()), ask, running: true };
-  set([...kept, turn]);
-  void read(turn.id, (signal) => streamTurn({ id: turn.id, ask, replaces, actions: actionsAfterLastAsk(kept), mode }, signal));
+  set(store, [...kept, turn]);
+  const wake = store.state.wake ?? undefined;
+  void read(store, turn.id, (signal) => streamTurn({ id: turn.id, ask, replaces, actions: actionsAfterLastAsk(kept), mode, wake }, signal));
 }
 
 function indexOf(id: string): number {
-  const i = state.turns.findIndex((t) => t.id === id);
+  const i = active.state.turns.findIndex((t) => t.id === id);
   if (i < 0) throw new Error(`thread: no turn ${id}`);
   return i;
 }
@@ -184,7 +212,7 @@ function indexOf(id: string): number {
 export type InputMode = "voice" | "text";
 
 export function ask(text: string, mode: InputMode): void {
-  answer(state.turns.length, text, mode);
+  answer(active, active.state.turns.length, text, mode);
 }
 
 // Opens a live feed as a turn of its own, with no call to the backend. A
@@ -200,39 +228,46 @@ export function watch(feed: Feed): void {
     args: { src: feed.src, label: feed.kind },
     result: {},
   };
-  set([...state.turns, { ...blank(id, Date.now()), feed, answer: feed.label, parts: [part] }]);
+  set(active, [...active.state.turns, { ...blank(id, Date.now()), feed, answer: feed.label, parts: [part] }]);
 }
 
-// Rewind: the turn and everything after it are replaced by a new ask.
+// Rewind: the turn and everything after it are replaced by a new ask. A
+// wake has no rewind: Hermes keeps everything its run did.
 export function edit(id: string, text: string, mode: InputMode): void {
-  answer(indexOf(id), text, mode);
+  if (active.state.wake) return;
+  answer(active, indexOf(id), text, mode);
 }
 
 // Asks the same thing again. Turns after it are dropped.
 export function retry(id: string, mode: InputMode): void {
+  if (active.state.wake) return;
   const i = indexOf(id);
-  answer(i, state.turns[i].ask, mode);
+  answer(active, i, active.state.turns[i].ask, mode);
 }
 
 // Asks the backend to stop every reply still coming in. Each keeps
 // streaming until the backend ends it, and its `turn.ended` says whether
 // Hermes stopped or finished anyway.
 export function stop(): void {
-  for (const turn of state.turns) {
+  const store = active;
+  for (const turn of store.state.turns) {
     if (!turn.running || turn.stopping) continue;
-    patch(turn.id, { stopping: true });
+    patch(store, turn.id, { stopping: true });
     void stopTurn(turn.id);
   }
 }
 
-// The push stream carries this device's turn events too. A turn this
-// client streams already, or one that is over, needs nothing. Any other
-// (an ask that reached this device some other way, or one running since
-// before the stream dropped) is followed from its start.
-export function heard(id: string): void {
-  const mine = state.turns.find((t) => t.id === id);
-  if (streams.has(id) || dropped.has(id) || (mine && !mine.running)) return;
-  follow(id);
+// The push stream carries this device's turn events too, and those of
+// its user's wakes. A turn this client streams already, or one that is
+// over, needs nothing. Any other (an ask that reached this device some
+// other way, or one running since before the stream dropped) is followed
+// from its start. A wake's turn matters only while that wake is open.
+export function heard(id: string, wake: string | null): void {
+  const store = wake === null ? own : wakeStore?.state.wake === wake ? wakeStore : null;
+  if (!store) return;
+  const mine = store.state.turns.find((t) => t.id === id);
+  if (store.streams.has(id) || store.dropped.has(id) || (mine && !mine.running)) return;
+  follow(store, id);
 }
 
 export interface NoticeData {
@@ -245,14 +280,14 @@ export interface NoticeData {
   from?: string | null;
 }
 
-// Adds notifications as turns of their own, once each. Those from before
-// `seenUntil` were shown already; later ones from before this launch take
-// the stage the way a fresh turn would.
+// Adds notifications as turns of their own, once each, to the device's own
+// conversation. Those from before `seenUntil` were shown already; later
+// ones from before this launch take the stage the way a fresh turn would.
 export function notices(sent: NoticeData[], seenUntil: number | null): void {
-  const have = new Set(state.turns.map((t) => t.id));
+  const have = new Set(own.state.turns.map((t) => t.id));
   const now = Date.now();
   const more = sent
-    .filter((n) => !have.has(n.id) && !dropped.has(n.id))
+    .filter((n) => !have.has(n.id) && !own.dropped.has(n.id))
     .map((n): Turn => {
       const at = n.at ? Date.parse(n.at) : now;
       const urgency = n.urgency === "low" || n.urgency === "high" ? n.urgency : "normal";
@@ -262,8 +297,9 @@ export function notices(sent: NoticeData[], seenUntil: number | null): void {
   if (more.length === 0) return;
   // A reply still coming in keeps the stage. The notice goes in under it,
   // and waits in history.
-  const reply = state.turns.findIndex((t) => t.running && asked(t));
-  set(reply < 0 ? insert(state.turns, more) : [...insert(state.turns.slice(0, reply), more), ...state.turns.slice(reply)]);
+  const turns = own.state.turns;
+  const reply = turns.findIndex((t) => t.running && asked(t));
+  set(own, reply < 0 ? insert(turns, more) : [...insert(turns.slice(0, reply), more), ...turns.slice(reply)]);
 }
 
 // One notification, as the push stream brings it: it is shown now, so its
@@ -272,41 +308,77 @@ export function notify(n: NoticeData): void {
   notices([{ ...n, at: undefined }], null);
 }
 
-// Catches up with the backend: at launch, and each time the push stream
-// connects again. Turns this client doesn't have are added, one that ended
-// while nobody here listened takes the backend's ending, and one still
-// running is followed from its start.
-export async function sync(): Promise<void> {
-  let kept: KeptTurn[];
-  try {
-    kept = await keptTurns();
-  } catch (err) {
-    console.error("thread: could not load the conversation", err);
-    return;
-  }
-  const local = new Map(state.turns.map((t) => [t.id, t]));
+// Merges what the backend keeps into a store: turns this client doesn't
+// have are added, one that ended while nobody here listened takes the
+// backend's ending, and one still running is followed from its start.
+function merge(store: Store, kept: KeptTurn[]): void {
+  const local = new Map(store.state.turns.map((t) => [t.id, t]));
   const added: Turn[] = [];
-  let turns = state.turns;
+  let turns = store.state.turns;
   for (const k of kept) {
-    known.add(k.id);
+    store.known.add(k.id);
     const mine = local.get(k.id);
-    if (dropped.has(k.id) || streams.has(k.id)) continue;
+    if (store.dropped.has(k.id) || store.streams.has(k.id)) continue;
     const turn: Turn = { ...blank(k.id, Date.parse(k.at)), ask: k.ask, answer: k.answer.trim(), parts: k.parts, running: k.running, ending: k.ending };
     if (!mine) added.push(turn);
     else if (mine.running && !k.running) turns = turns.map((t) => (t.id === k.id ? turn : t));
   }
-  set(insert(turns, added));
-  for (const k of kept) if (k.running) follow(k.id);
+  set(store, insert(turns, added));
+  for (const k of kept) if (k.running) follow(store, k.id);
+}
+
+// Catches up with the backend: at launch, and each time the push stream
+// connects again. The wake on the stage catches up too.
+export async function sync(): Promise<void> {
+  const wake = wakeStore;
+  try {
+    const [mine, theirs] = await Promise.all([keptTurns(), wake ? keptTurns(wake.state.wake) : Promise.resolve(null)]);
+    merge(own, mine);
+    if (theirs && wake === wakeStore && wake) merge(wake, theirs);
+  } catch (err) {
+    console.error("thread: could not load the conversation", err);
+  }
+}
+
+// Puts a wake's conversation on the stage, and loads its turns.
+export async function showWake(id: string): Promise<void> {
+  if (wakeStore?.state.wake !== id) {
+    leaveWakeStore();
+    wakeStore = newStore(id);
+  }
+  const store = wakeStore;
+  active = store;
+  emit();
+  try {
+    merge(store, await keptTurns(id));
+  } catch (err) {
+    console.error("thread: could not load the wake", err);
+  }
+}
+
+// Puts the device's own conversation back on the stage.
+export function showOwn(): void {
+  leaveWakeStore();
+  active = own;
+  emit();
+}
+
+function leaveWakeStore(): void {
+  if (!wakeStore) return;
+  for (const abort of wakeStore.streams.values()) abort.abort();
+  wakeStore = null;
 }
 
 // Forgets everything: the device logged out, and the next one to log in
 // may be someone else.
 export function reset(): void {
-  for (const abort of streams.values()) abort.abort();
-  streams.clear();
-  known.clear();
-  dropped.clear();
-  set([]);
+  leaveWakeStore();
+  for (const abort of own.streams.values()) abort.abort();
+  own.streams.clear();
+  own.known.clear();
+  own.dropped.clear();
+  active = own;
+  set(own, []);
 }
 
 export function subscribe(listener: () => void): () => void {
@@ -315,7 +387,7 @@ export function subscribe(listener: () => void): () => void {
 }
 
 export function getThread(): ThreadState {
-  return state;
+  return active.state;
 }
 
 export function useThread(): ThreadState {

@@ -94,6 +94,7 @@ TOOLS: dict[str, str] = {
     'ui_choices': 'Shows the owner buttons under your answer. Picking one sends its text as their next message.',
     'ui_show_feed': 'Shows a live feed in your answer. `feed` is a feed id from GET /api/feeds; `caption` says what it shows right now.',
     'ui_show_image': "Shows an image in your answer, after what you have written so far. `src` is an image file's absolute path on this machine, an https URL, or a ref from a source, such as an event's snapshot. `caption` goes under it.",
+    'wake_wait': "Keeps this wake open after you finish, for your person, for up to a day. Without it, the wake ends when you finish. Your person opens the wake from a notification you send them with huvu_notify, or from their menu, and what they send there comes back to you as your next message, with everything you did here. Use it when you need their answer or their hand to go on. `waits_for` says in a few words what you need from them; they see it in their menu.",
 }
 
 # Argument descriptions the tool box adds.
@@ -144,8 +145,34 @@ def wake(readable: dict[str, Any], external: bool, wakes: int, warn: int, limit:
             "the repeats itself, or pausing it (triggers_pause) until the person approves. "
             f"After {limit} wakes in {hours} hours it pauses itself."
         )
-    lines.append("Nobody reads your reply. To reach the person this trigger is for, call huvu_notify.")
+    lines.append(
+        "Your person reads this wake only if they open it. To reach them, call huvu_notify: they can open this wake from it. "
+        "The wake ends when you finish, unless you call wake_wait."
+    )
     return "\n".join(lines)
+
+
+# Asked of a wake that waits for its person, in its own session, before the
+# provider's cache of it goes cold (wake.py). Its answer is all a fresh
+# session gets to carry on.
+WAKE_COMPACT = """(huvu: your person hasn't answered yet, and this session is about to be put away. Write the notes a fresh instance of you needs to carry on in your place: what you were asked and why, what you did and found, where things stand now, what you wait for from your person, and what you will need next, with the exact pages, names and references. Write only the notes, and call no tools.)"""
+
+
+def wake_carried(notes: str, message: str) -> str:
+    """The first message of a compacted wake's fresh session: its own
+    notes, then what its person sent."""
+    return f"""You are carrying on a task that an earlier instance of you started and put away while it waited for your person. Its notes are below. Carry on from them as the same assistant, and don't mention this note.
+
+<notes>
+{notes}
+</notes>
+
+{message}"""
+
+
+# The tool result of a browser call outside an advanced wake, from the huvu
+# Hermes plugin.
+BROWSER_BLOCKED = "The browser works only in a wake on the advanced tier. To do this in the browser, register a one-time trigger that fires at once, on tier advanced, whose note says what to do there. Your person approves it on their phone, and it then runs in the background. Tell your person so."
 
 
 # Opens a fresh session that continues a conversation, the way a compacted

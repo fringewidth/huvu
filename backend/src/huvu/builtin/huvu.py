@@ -313,7 +313,9 @@ class HuvuSource(Source):
 
     async def _notify(self, args: dict[str, Any], caller: Caller) -> Result:
         image = self._kernel.media.url_for(args["image"]) if args.get("image") else None
-        await self._kernel.notify(caller.user, caller.group, args["text"], image=image, urgency=args.get("urgency", "normal"))
+        # From a wake, to its own person: the notice opens the wake.
+        opens = self._kernel.waker.opens_for(caller)
+        await self._kernel.notify(caller.user, caller.group, args["text"], image=image, urgency=args.get("urgency", "normal"), opens=opens)
         row = {"text": args["text"], "image": args.get("image"), "urgency": args.get("urgency", "normal")}
         await self.ctx.record("notifications", row, user=caller.user, group=None if caller.user else caller.group)
         return Result(data={"sent": True}, labels=["owner"])

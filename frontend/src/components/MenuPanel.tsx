@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type Reac
 import { allow, confirmPairing, refreshDevices, refreshTriggers, revoke, setPaused, useHousehold, type Trigger } from "../account/household";
 import { canPair, errorText, logOut, useReach, useSession } from "../account/session";
 import { UNREACHABLE } from "../net/http";
+import { showWake, useWakes, type WakeInfo } from "../chat/wakes";
 import { release, useWaiting } from "../account/waiting";
 import { turnOnWebPush, useWebPush } from "../account/webPush";
 import { capsClass } from "../stage/style";
@@ -11,8 +12,9 @@ import type { MenuSection } from "./Menu";
 const buttonClass = `${capsClass} -mx-2 min-h-11 shrink-0 px-2 outline-none transition-colors duration-500 focus-visible:ring-1 focus-visible:ring-sindoor/60`;
 
 // What the menu shows, loaded the first time it opens: who you are and
-// where you're recognized, your triggers, your devices and your groups'
-// shared ones, and pairing a shared device from a phone.
+// where you're recognized, the wakes huvu has open for you, your triggers,
+// your devices and your groups' shared ones, and pairing a shared device
+// from a phone.
 export function MenuPanel({ section }: { section: MenuSection }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -28,6 +30,7 @@ export function MenuPanel({ section }: { section: MenuSection }) {
   return (
     <div ref={ref} className="flex flex-col gap-7">
       <You />
+      <Wakes />
       <Wiki />
       <Triggers />
       <Devices />
@@ -118,6 +121,37 @@ function Notifications() {
       </div>
       {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
     </>
+  );
+}
+
+// What huvu is doing for you in the background, started by a trigger:
+// running now, or waiting for you. Opening one puts it on the stage, where
+// you can talk to it. Only open wakes show, so the section is gone when
+// there are none.
+function Wakes() {
+  const { list } = useWakes();
+  if (list.length === 0) return null;
+  return (
+    <Section title={`at work / ${list.length}`}>
+      {list.map((w) => (
+        <WakeRow key={w.id} wake={w} />
+      ))}
+    </Section>
+  );
+}
+
+function WakeRow({ wake }: { wake: WakeInfo }) {
+  const waiting = wake.status === "waiting";
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline gap-3">
+        <span className="min-w-0 truncate font-display text-[15px] font-medium text-ivory/85">{wake.note}</span>
+        <button type="button" onClick={() => void showWake(wake.id)} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
+          open
+        </button>
+      </div>
+      <span className={`${capsClass} ${waiting ? "text-sindoor" : "text-ivory/45"}`}>{waiting ? `waits for ${wake.waits_for ?? "you"}` : "running"}</span>
+    </div>
   );
 }
 

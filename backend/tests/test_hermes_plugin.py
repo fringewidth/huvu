@@ -66,3 +66,28 @@ def test_reasoning_deltas_go_to_the_backend_in_bursts(monkeypatch):
         ("/api/thinking", {"session": "s1", "text": "a script.", "start": False}),
         ("/api/thinking", {"session": "s1", "text": "Checking.", "start": True}),
     ]
+
+
+def test_the_browser_runs_only_where_the_backend_allows(monkeypatch):
+    plugin = load()
+    asked: list[dict] = []
+
+    def answer(allowed: bool):
+        return lambda path, body: asked.append(body) or {"allowed": allowed, "why": None if allowed else "Only in an advanced wake."}
+
+    monkeypatch.setattr(plugin, "_post", answer(True))
+    assert plugin._on_pre_tool_call(tool_name="browser_navigate", args={"url": "https://example.com"}, session_id="w1") is None
+    assert asked == [{"session": "w1"}]
+    monkeypatch.setattr(plugin, "_post", answer(False))
+    assert plugin._on_pre_tool_call(tool_name="browser_click", args={}, session_id="s1") == {"action": "block", "message": "Only in an advanced wake."}
+
+
+def test_the_browser_is_blocked_when_the_backend_is_down(monkeypatch):
+    plugin = load()
+
+    def down(path, body):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(plugin, "_post", down)
+    out = plugin._on_pre_tool_call(tool_name="browser_snapshot", args={}, session_id="w1")
+    assert out == {"action": "block", "message": plugin.prompts.BROWSER_BLOCKED}

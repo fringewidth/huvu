@@ -1,5 +1,5 @@
 """Wipes what huvu keeps for one person, or for one group's shared devices:
-their triggers, conversations, Hermes session records, notifications,
+their triggers, conversations, wakes, Hermes session records, notifications,
 approvals and attendance, and their rows in every history table (their
 chat turns, the kernel's log about them, every source's history). `uv run
 huvu wipe <user>` or `uv run huvu wipe --group home`; `wipe.sh` at the repo
@@ -30,6 +30,7 @@ FOR_USER = {
     "approvals": "user_id = ?",
     "attendance": "user_id = ?",
     "conversations": "user_id = ?",
+    "wakes": "user_id = ?",
 }
 # A group's own rows have no user. The default group also has the rows that
 # belong to nobody, such as the kernel starting.
@@ -40,6 +41,7 @@ FOR_GROUP = {
     "approvals": "user_id IS NULL AND group_id = ?",
     "attendance": "device_id IN (SELECT id FROM devices WHERE user_id IS NULL AND group_id = ?)",
     "conversations": "user_id IS NULL AND id IN (SELECT id FROM devices WHERE user_id IS NULL AND group_id = ?)",
+    "wakes": "user_id IS NULL AND group_id = ?",
 }
 
 
@@ -68,7 +70,8 @@ def wipe(
     try:
         triggers = [r[0] for r in conn.execute(f"SELECT id FROM triggers WHERE {where['triggers']}", (who,))]
         conversations = f"SELECT id FROM conversations WHERE {where['conversations']}"
-        counts["turns"] = changed(conn, f"DELETE FROM turns WHERE conversation_id IN ({conversations})", (who,))
+        wakes = f"SELECT id FROM wakes WHERE {where['wakes']}"
+        counts["turns"] = changed(conn, f"DELETE FROM turns WHERE conversation_id IN ({conversations}) OR conversation_id IN ({wakes})", (who, who))
         for table, condition in where.items():
             sql = condition.replace(":default", "1" if default_group else "0")
             counts[table] = changed(conn, f"DELETE FROM {table} WHERE {sql}", (who,))
