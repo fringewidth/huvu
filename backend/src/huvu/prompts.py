@@ -170,9 +170,9 @@ def wake_carried(notes: str, message: str) -> str:
 {message}"""
 
 
-# The tool result of a browser call outside an advanced wake, from the huvu
-# Hermes plugin.
-BROWSER_BLOCKED = "The browser works only in a wake on the advanced tier. To do this in the browser, register a one-time trigger that fires at once, on tier advanced, whose note says what to do there. Your person approves it on their phone, and it then runs in the background. Tell your person so."
+# The tool result of a browser call from a session on basic (a quick turn,
+# or a wake on basic), from the huvu Hermes plugin.
+BROWSER_BLOCKED = "The browser works only on the pro and advanced tiers, and this session runs on basic. To do this in the browser, register a one-time trigger that fires at once, on tier pro, whose note says what to do there. It runs at once in the background, as a wake your person can open and watch. Tell your person so."
 
 
 # Opens a fresh session that continues a conversation, the way a compacted

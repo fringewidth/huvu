@@ -14,8 +14,9 @@ can't tell which session a tool call came from. This plugin fills that in:
 4. The model's reasoning summary, as it streams, goes to the backend
    (`POST /api/thinking`), so the stage can show it while a turn runs. It
    needs `plugins.stream_reasoning_deltas` on, which setup.sh sets.
-5. Hermes's browser tools run only in a wake on the advanced tier. Before
-   each browser call, the backend says whether the session may
+5. Hermes's browser tools run only in a session on pro or advanced: a
+   conversation's main session, or a wake on either tier. Before each
+   browser call, the backend says whether the session may
    (`POST /api/browsing`); a no, or no answer, blocks the call, and the
    model reads why.
 

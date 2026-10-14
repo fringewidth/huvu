@@ -584,12 +584,12 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     @app.post("/api/browsing")
     async def browsing(request: Request, body: Browsing) -> dict[str, Any]:
         """Whether a Hermes session may use the browser, for the huvu Hermes
-        plugin: only a wake on the advanced tier may. `why` is what the
+        plugin: only one that runs on pro or advanced may. `why` is what the
         model reads when it may not."""
         known, user, group = mcp_caller(config, accounts, bearer(request))
         if not known:
             raise HTTPException(401, "unauthorized")
-        allowed = kernel.waker.may_browse(body.session, user, group)
+        allowed = kernel.may_browse(body.session, user, group)
         return {"allowed": allowed, "why": None if allowed else BROWSER_BLOCKED}
 
     @app.post("/api/situation")

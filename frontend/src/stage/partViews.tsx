@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ui } from "../config/interaction";
 import { capsClass, NUMERALS } from "./style";
 import { useWhepFeed } from "./useWhepFeed";
 import type { ToolPart } from "../chat/thread";
@@ -17,6 +18,25 @@ export function WebSearchNote({ part }: { part: ToolPart }) {
     <p className={`${capsClass} halo text-ivory/50`}>
       searched the web{query && ` / ${query}`}
       {count !== null && ` / ${count} sources`}
+    </p>
+  );
+}
+
+// huvu at work in its browser. Its screen can be watched from a device of
+// the person's own, which a screen with no input of its own isn't.
+export function BrowserNote({ onWatch }: { part: ToolPart; onWatch: () => void }) {
+  return (
+    <p className={`${capsClass} halo flex items-baseline gap-2 text-ivory/50`}>
+      used the browser
+      {ui.hasInput && (
+        <button
+          type="button"
+          onClick={onWatch}
+          className={`${capsClass} -my-3 min-h-11 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-ivory focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+        >
+          watch
+        </button>
+      )}
     </p>
   );
 }

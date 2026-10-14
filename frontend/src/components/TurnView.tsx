@@ -4,7 +4,7 @@ import { AnimatePresence, type Variants } from "motion/react";
 import { openedWake } from "../account/opens";
 import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
-import { chipsFor, interleave, kindOf, partsInSlot, type Slot } from "../stage/parts";
+import { chipsFor, interleave, isBrowser, kindOf, partsInSlot, type Slot } from "../stage/parts";
 import { capsClass, EASE } from "../stage/style";
 import type { ImagePart, Notice, RichPart, ToolPart, Turn } from "../chat/thread";
 import type { MenuSection } from "./Menu";
@@ -29,6 +29,8 @@ export interface TurnActions {
   show(section: MenuSection): void;
   // Puts the wake a notice came from on the stage.
   openWake(id: string): void;
+  // Opens huvu's browser screen over the stage.
+  watch(): void;
   // Fire TV moves focus between history rows by hand.
   registerFocus(id: string, el: HTMLButtonElement | null): void;
 }
@@ -111,7 +113,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
       <AnimatePresence initial={false} mode="popLayout">
         {here.length > 0 && (
           <m.div key={slot} {...fade}>
-            <HeroParts here={here} onChoose={actions.choose} />
+            <HeroParts here={here} onChoose={actions.choose} onWatch={actions.watch} />
           </m.div>
         )}
       </AnimatePresence>
@@ -198,7 +200,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
           {pieces.map((piece, i) =>
             "notes" in piece ? (
               <m.div key={i} {...fade}>
-                <HeroParts here={piece.notes} onChoose={actions.choose} />
+                <HeroParts here={piece.notes} onChoose={actions.choose} onWatch={actions.watch} />
               </m.div>
             ) : (
               <AnimatePresence key={i} initial={false} mode="popLayout" custom={shape.ratio}>
@@ -276,9 +278,10 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
   );
 });
 
-function HeroParts({ here, onChoose }: { here: RichPart[]; onChoose: (text: string) => void }) {
+function HeroParts({ here, onChoose, onWatch }: { here: RichPart[]; onChoose: (text: string) => void; onWatch: () => void }) {
   const images = here.filter((p): p is ImagePart => p.kind === "image");
-  const tools = here.filter((p): p is ToolPart => p.kind === "tool");
+  // The browser's steps in a row show as one note: its first.
+  const tools = here.filter((p): p is ToolPart => p.kind === "tool").filter((p, i, all) => !isBrowser(p) || all.findIndex(isBrowser) === i);
   return (
     <div className="flex flex-col gap-4">
       {images.length > 0 && (
@@ -298,7 +301,7 @@ function HeroParts({ here, onChoose }: { here: RichPart[]; onChoose: (text: stri
       )}
       {tools.map((p) => {
         const { Hero } = kindOf(p.toolName);
-        return <Hero key={p.id} part={p} onChoose={onChoose} />;
+        return <Hero key={p.id} part={p} onChoose={onChoose} onWatch={onWatch} />;
       })}
     </div>
   );

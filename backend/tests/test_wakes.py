@@ -175,13 +175,23 @@ async def test_a_waiting_wake_is_compacted_before_its_cache_goes_cold(kernel, fa
     assert [t["ask"] for t in kernel.waker.view(wake, family.me_phone)["turns"]] == ["", "it's 482913"]
 
 
-async def test_only_an_advanced_wake_may_browse(kernel, family, hermes):
-    pro = await ring(kernel, tier="pro")
-    assert not kernel.waker.may_browse(pro, "me", None)
-    kernel.db.execute("UPDATE wakes SET tier = 'advanced' WHERE id = ?", (pro,))
-    assert kernel.waker.may_browse(pro, "me", None)
-    # Not from another profile, and never in a conversation.
-    assert not kernel.waker.may_browse(pro, "mom", None)
+async def test_a_wake_runs_on_its_triggers_tier_though_the_trigger_fired_once(kernel, family, hermes):
+    # A once trigger has ended by the time its wake starts.
+    wake = await ring(kernel, tier="pro", once=True)
+    assert kernel.db.execute("SELECT tier FROM wakes WHERE id = ?", (wake,)).fetchone()["tier"] == "pro"
+    assert hermes.models[wake] == "gpt-6-sol"
+
+
+async def test_a_session_on_pro_or_advanced_may_browse(kernel, family, hermes):
+    wake = await ring(kernel, tier="pro")
+    assert kernel.may_browse(wake, "me", None)
+    # Not from another profile.
+    assert not kernel.may_browse(wake, "mom", None)
+    kernel.db.execute("UPDATE wakes SET tier = 'advanced' WHERE id = ?", (wake,))
+    assert kernel.may_browse(wake, "me", None)
+    kernel.db.execute("UPDATE wakes SET tier = 'basic' WHERE id = ?", (wake,))
+    assert not kernel.may_browse(wake, "me", None)
+    # A conversation's main session runs on pro.
     live = await kernel.conversations.ask(family.me_web.id, "hi", user="me")
     await collect(kernel, live)
-    assert not kernel.waker.may_browse(live.turn.hermes_session, "me", None)
+    assert kernel.may_browse(live.turn.hermes_session, "me", None)

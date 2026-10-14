@@ -31,8 +31,8 @@ import { VoiceFlower, type FlowerState } from "./VoiceFlower";
 // The wiki, and its Markdown and editor libraries, load the first time it
 // opens.
 const WikiView = lazy(() => import("./Wiki").then((mod) => ({ default: mod.WikiView })));
-// huvu's browser, live, and noVNC with it, load the first time a wake's
-// screen is watched.
+// huvu's browser, live, and noVNC with it, load the first time its screen
+// is watched.
 const ScreenView = lazy(() => import("./ScreenView").then((mod) => ({ default: mod.ScreenView })));
 
 declare global {
@@ -108,7 +108,7 @@ export function Stage() {
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [menu, setMenu] = useState<MenuSection | null>(null);
   const wikiOpen = useWikiOpen();
-  // A wake's browser screen, over the stage.
+  // huvu's browser screen, over the stage.
   const [screenOpen, setScreenOpen] = useState(false);
   // How tall the card of what waits on this phone is, so the turn stops
   // short of it.
@@ -249,6 +249,7 @@ export function Stage() {
     retry: (turn: thread.Turn) => thread.retry(turn.id, inputMode),
     show: (section: MenuSection) => setMenu(section),
     openWake: (id: string) => void showWake(id),
+    watch: () => setScreenOpen(true),
     registerFocus: (id: string, el: HTMLButtonElement | null) => {
       rowButtons.current.set(id, el);
     },
@@ -782,8 +783,9 @@ export function Stage() {
 }
 
 // Over a wake on the stage: what it is for, whether it waits for the user,
-// and the way back to the device's own conversation. An advanced wake's
-// browser can be watched live. Ending it stops what huvu is doing there.
+// and the way back to the device's own conversation. The browser of a wake
+// on pro or advanced can be watched live. Ending it stops what huvu is
+// doing there.
 function WakeBar({ wake, onWatch }: { wake: WakeInfo; onWatch: () => void }) {
   const [trouble, setTrouble] = useState<string | null>(null);
   const end = () => {
@@ -808,8 +810,8 @@ function WakeBar({ wake, onWatch }: { wake: WakeInfo; onWatch: () => void }) {
         >
           back
         </button>
-        {/* Only an advanced wake may use the browser. */}
-        {wake.tier === "advanced" && wake.status !== "ended" && (
+        {/* Only a wake on pro or advanced may use the browser. */}
+        {(wake.tier === "pro" || wake.tier === "advanced") && wake.status !== "ended" && (
           <button
             type="button"
             onClick={onWatch}
