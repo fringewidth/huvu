@@ -142,6 +142,7 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. Ask huvu to set up something that needs its strongest thinking, and say it should use the advanced model. On your phone, a card should ask you to allow it. In the menu it should say it waits for your yes. Tap "allow" (or yes on the phone). It should say watching, with "advanced" after how often.
 1. Ask for another advanced trigger, and tap no on the phone. It should leave the menu.
 1. In the menu, your dream should be listed: "Your dream...", every time, on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs. If huvu set up a trigger on its own that night, the notes should name it and say why, and it should be in your menu.
+1. Ask huvu to pause your dream, then to remove it. Each time it should say only you can, from the app, and the dream should stay in the menu. Pause it from the menu: that should work. Resume it.
 
 ## Wakes: huvu at work in the background (phone and laptop)
 
@@ -245,12 +246,11 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 
 ## Mail (bills you forward)
 
-1. In Gmail, add a filter for the mail you want huvu to have, set to forward to `bills@mail.hrishik.me`. Gmail sends a code to that address first. Ask huvu "what's the code in the mail Gmail just sent?" and enter it in Gmail. The filter should then save.
-1. Wait for a bill that the filter forwards, or forward an old one by hand. Within a minute, ask huvu "what was my last bill for?". It should say the shop, the items and the total, read from the PDF.
+1. Swiggy's account email is `bills@mail.hrishik.me`. Order something on Swiggy. The bill should reach your Gmail as before, and within a minute huvu should have it too: ask huvu "what was my last bill for?". It should say the shop, the items and the total, read from the PDF.
 1. Ask huvu where the PDF is. It should give a path on the host. Ask it to upload the bill somewhere in its browser. It should be able to.
 1. From another email account, send a mail to `bills@mail.hrishik.me` that claims to be from the shop. Ask huvu about it. It should say it can't trust that the shop sent it.
 1. From another family member's phone, ask huvu about your bills. It should say it can't see them.
-1. Stop the backend and forward a mail. Gmail should get a bounce saying huvu is unreachable. Start the backend and forward it again. huvu should have it once.
+1. Stop the backend and forward a bill from Gmail to `bills@mail.hrishik.me`. No bounce should come back. Start the backend and forward it again. huvu should have it once.
 
 ## Swiggy (food and Instamart)
 

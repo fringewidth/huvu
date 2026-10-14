@@ -419,8 +419,19 @@ class TriggerEngine:
         trigger = self._triggers.get(trigger_id)
         if trigger is None or trigger not in self.list(caller):
             raise TriggerError(f"no live trigger {trigger_id!r}")
+        self._only_its_person(trigger, caller)
         await self._end(trigger, "removed", f"trigger {trigger.id} removed")
         return trigger
+
+    def _only_its_person(self, trigger: Trigger, caller: Caller) -> None:
+        """A dream is the kernel's, and only its person may pause or remove
+        it, from the app. The dream itself audits its person's triggers,
+        and on 2026-10-14 one that fired at an odd hour copied itself into
+        a trigger of its own and removed the real one."""
+        if caller.kind != "frontend" and self._kernel.dreams.is_dream(trigger.id):
+            raise TriggerError(
+                f"{trigger.id} is your person's dream, which huvu runs and keeps up to date itself; only they can pause or remove it, from the app. Leave it as it is."
+            )
 
     def get(self, trigger_id: str) -> Trigger | None:
         return self._triggers.get(trigger_id)
@@ -459,6 +470,7 @@ class TriggerEngine:
         trigger = self._triggers.get(trigger_id)
         if trigger is None or trigger not in self.list(caller) or trigger.status != "active":
             raise TriggerError(f"no live trigger {trigger_id!r} to pause")
+        self._only_its_person(trigger, caller)
         await self._pause(trigger, "user" if caller.kind == "frontend" else "model", reason or "asked to")
         return trigger
 
