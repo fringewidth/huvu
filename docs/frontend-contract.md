@@ -22,9 +22,10 @@ Every device has one conversation, and the token says which device is asking, so
 1. `id` is the turn's own id, minted by the client (`t_` and ten hex digits). The backend keeps it, so a stop or a rewind names the turn by an id the client already has. Left out, the backend picks one. An id already used answers `409`.
 1. `replaces` is for edit and retry: the turn it names is replaced, with everything after it. The frontend names the first dropped turn the backend has heard of, since a turn that never reached the backend is not there to replace. An unknown id answers `404`.
 1. `actions` is what the user did in the app since the last ask. Today that is opening a live feed: the feed turns after the last real turn (`actionsAfterLastAsk` in `chat/thread.ts`). Opening a feed makes no call of its own. Hermes gets each action as a note in front of the ask, marked as context that needs no reply. The turn stores them, and a rewind replays them in its transcript.
+1. `wake` sends the ask to one of the user's wakes (see [Wakes](#wakes)) and not to the device's own conversation. It takes no `replaces`: a wake has no edit or retry (`400`). An ask in a wake that has ended answers `409`.
 1. `mode` is how the ask was made: `"voice"` (spoken in voice mode) or `"text"` (typed, and the default). The backend puts one line in front of the message telling the model which, so a spoken answer is written to be heard, with no emojis or markdown (`VOICE_NOTE` and `TEXT_NOTE` in `prompts.py`). Edit and retry send the mode the app is in when they are made.
 
-The answer is Server-Sent Events. Every event's data carries `turn` and `conversation` (the device's id). A status other than 200 ends the turn as failed, and so does a stream that closes before `turn.ended`.
+The answer is Server-Sent Events. Every event's data carries `turn` and `conversation` (the device's id, or the wake's), and `wake` on a wake's turn. A status other than 200 ends the turn as failed, and so does a stream that closes before `turn.ended`.
 
 | Event | Data, besides `turn` and `conversation` |
 |---|---|
@@ -35,7 +36,24 @@ The answer is Server-Sent Events. Every event's data carries `turn` and `convers
 | `part.update` | `id`, `result`: a tool part's result, once the tool finishes |
 | `turn.ended` | `ending` (`null`, `"failed"` or `"stopped"`) and the whole `answer` |
 
-A comment line (`: keepalive`) comes every 15 s while nothing else does. Dropping this stream doesn't stop the turn; `POST /api/turns/{turn}/stop` does, for a turn of this device's own conversation. A stop asks Hermes to stop, and the stream keeps going until Hermes ends: keep reading it, show what arrives, and take `turn.ended` as the answer to how the turn ended. A turn Hermes finished anyway ends with `ending: null`, not `"stopped"`. A new ask while a turn runs stops that turn the same way, and the new turn starts once it has ended (15 s at most). `GET /api/conversation` returns this device's turns, with `id`, `at`, `ask`, `answer`, `parts`, `actions`, `ending` and `running`, for a client that opens later.
+A comment line (`: keepalive`) comes every 15 s while nothing else does. Dropping this stream doesn't stop the turn; `POST /api/turns/{turn}/stop` does, for a turn of this device's own conversation, or of one of its user's wakes. A stop asks Hermes to stop, and the stream keeps going until Hermes ends: keep reading it, show what arrives, and take `turn.ended` as the answer to how the turn ended. A turn Hermes finished anyway ends with `ending: null`, not `"stopped"`. A new ask while a turn runs stops that turn the same way, and the new turn starts once it has ended (15 s at most). `GET /api/conversation` returns this device's turns, with `id`, `at`, `ask`, `answer`, `parts`, `actions`, `ending` and `running`, for a client that opens later.
+
+### Wakes
+
+A wake is a model instance a trigger started for its person. Each is a conversation of its own: its first turn has no ask and runs the trigger's note, and its person can send it more. A wake ends when its run ends, unless the model calls `wake_wait`: then it waits for its person, for up to a day. What they send runs in the same Hermes session, on the trigger's tier. Ending it from the app stops what runs in it. A waiting wake is compacted 55 minutes after its last run, before the provider's cache of it expires: it writes notes on where it stands, and the next turn starts a fresh session from them. A group's wake has no person, shows nowhere and can't wait. Shared devices see no wakes.
+
+1. `GET /api/wakes` lists the user's open wakes, running or waiting, newest first: `id`, `trigger`, `note`, `tier`, `status` (`running`, `waiting` or `ended`), `waits_for` (what the model said it needs, while it waits), `started_at`, `ran_at` and `until` (when the wait ends by itself).
+1. `GET /api/wakes/{id}` answers `{"wake", "turns"}`, the turns as `GET /api/conversation` gives them, for an ended wake too. Another user's answers `404`.
+1. `POST /api/wakes/{id}/close` ends it.
+1. `wake` on the push stream says one changed: the same fields as the list.
+1. A notification a wake sends its own person has `opens: "wake:<id>"`. A tap opens that wake on the stage.
+
+### The browser's screen
+
+Only an advanced wake may use Hermes's browser, which draws on its profile's own screen. The app watches it, and can't act on it.
+
+1. `POST /api/screen/ticket` (a personal device) answers `{"ticket"}`, single use, for 30 s. `503` without Hermes's dashboard, `403` on a shared device.
+1. `WebSocket /api/screen?ticket=<ticket>` carries the user's screen as raw RFB, binary frames both ways, for noVNC. It closes with `4401` for a ticket missing, used or expired, `4001` when the screen isn't running (watching never starts it), and `4503` when the dashboard can't be reached.
 
 ### Speech
 
@@ -105,8 +123,9 @@ Only the dev seed (`?seed` in a dev build) shows parts without a model sending t
 
 | Event | To | Data |
 |---|---|---|
-| The turn events above | The device whose conversation it is | As above. A client gets its own turns twice and keeps one by turn id. A turn the device didn't start itself (a future Alexa ask shown on the TV) arrives only here. |
-| `notify` | The phones of the user it is for, or the group members' phones for a shared device | `id`, `at`, `text`, `image`, `urgency`, `opens`, `user`, `group`, `from`. `opens` names the app screen that deals with it: `"triggers"` for a trigger the wake limit paused, or for triggers that fire a lot. `from` is set on a message one person sent another through huvu: the sender, as the recipient calls them (such as `"mom"`). It is null when huvu sent it. A message to a group never reaches its sender |
+| The turn events above | The device whose conversation it is, or every personal device of a wake's person | As above. A client gets its own turns twice and keeps one by turn id. A turn the device didn't start itself (an Alexa ask shown on the TV, a wake at work) arrives only here. |
+| `wake` | Every personal device of the wake's person | A wake started, waits, runs again or ended, with the fields of `GET /api/wakes` |
+| `notify` | The phones of the user it is for, or the group members' phones for a shared device | `id`, `at`, `text`, `image`, `urgency`, `opens`, `user`, `group`, `from`. `opens` names the app screen that deals with it: `"triggers"` for a trigger the wake limit paused, or for triggers that fire a lot, and `"wake:<id>"` from a wake to its own person. `from` is set on a message one person sent another through huvu: the sender, as the recipient calls them (such as `"mom"`). It is null when huvu sent it. A message to a group never reaches its sender |
 | `approval` | The same phones | A pending or resolved approval |
 | `identify` | The phones of the person asked | `id`, `device` (`id`, `name`), `user`, `asked_by` (`device`, `model`, `voice` or `trigger`), `reason`, `asked_at`, `expires_at` |
 | `identify.done` | The same phones | `id`, `status` (`confirmed`, `denied`, `expired`, or `withdrawn` when someone else said yes first) |

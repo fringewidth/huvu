@@ -28,6 +28,7 @@
     "@fontsource-variable/dm-sans": "^5.3.0",
     "@fontsource-variable/newsreader": "^5.3.0",
     "@fontsource-variable/syne": "^5.3.0",
+    "@novnc/novnc": "1.7.0",
     "@tailwindcss/vite": "^4.3.3",
     "@uiw/react-codemirror": "^4.25.12",
     "firebase": "^12.19.0",

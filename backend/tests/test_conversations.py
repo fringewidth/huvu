@@ -264,10 +264,10 @@ async def test_a_stop_before_the_run_starts_reaches_it(kernel, hermes):
 
 async def test_a_warm_session_continues_and_a_cold_one_starts_over(kernel, hermes, clock):
     await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
-    clock.advance(minutes=4)
+    clock.advance(minutes=59)
     await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
     assert len(hermes.sessions) == 1 and hermes.messages[-1][1].endswith("\n\ntwo")
-    clock.advance(minutes=6)
+    clock.advance(minutes=61)
     await collect(kernel, await kernel.conversations.ask("c1", "three", user="me"))
     assert len(hermes.sessions) == 2
     session, message = hermes.messages[-1]
@@ -283,7 +283,7 @@ async def test_a_fresh_session_reads_only_the_latest_turns_that_fit(kernel, herm
         await collect(kernel, await kernel.conversations.ask("c1", ask, user="me"))
     # Each turn is its ask and "ok": room for the last two.
     monkeypatch.setattr(conversations, "TRANSCRIPT_CHARS", 12)
-    clock.advance(minutes=6)
+    clock.advance(minutes=61)
     await collect(kernel, await kernel.conversations.ask("c1", "four", user="me"))
     message = hermes.messages[-1][1]
     assert "starts at turn 2, and the turns before it were left out" in message and "`chat_turns`" in message and "device_id = 'c1'" in message

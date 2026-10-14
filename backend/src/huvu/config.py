@@ -189,6 +189,10 @@ class Config:
     # The Alexa skill that asks for the Fire TV (alexa.py), by its id. None
     # turns POST /api/alexa off.
     alexa_skill_id: str | None = None
+    # Hermes's dashboard, which serves each profile's browser screen
+    # (screen.py), and its session token. No token, no screen.
+    dashboard_url: str = "http://127.0.0.1:9119"
+    dashboard_token: str | None = None
 
     def model(self, tier: str) -> ModelChoice:
         return self.models.get(tier) or ModelChoice(DEFAULT_MODELS[tier])
@@ -255,6 +259,8 @@ def load(path: Path | None = None) -> Config:
         # HUVU_ALEXA_SKILL_ID wins, like HUVU_PUBLIC_URL: the volume's
         # huvu.toml is copied once, on the first start.
         alexa_skill_id=os.environ.get("HUVU_ALEXA_SKILL_ID") or raw.get("alexa", {}).get("skill_id"),
+        dashboard_url=str(raw.get("screen", {}).get("dashboard", "http://127.0.0.1:9119")),
+        dashboard_token=secret("HERMES_DASHBOARD_SESSION_TOKEN"),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
     for tier in config.models:

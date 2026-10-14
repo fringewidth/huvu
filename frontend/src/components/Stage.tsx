@@ -4,11 +4,12 @@ import { Capacitor } from "@capacitor/core";
 import * as m from "motion/react-m";
 import { AnimatePresence, LayoutGroup } from "motion/react";
 import { growForWords } from "../canvas/host";
-import { onOpens } from "../account/opens";
+import { onOpens, openedWake } from "../account/opens";
 import { useReach } from "../account/session";
 import { useWaiting } from "../account/waiting";
 import { refreshFeeds, type Feed } from "../chat/feeds";
 import * as thread from "../chat/thread";
+import { endWake, leaveWake, showWake, useWakes, type WakeInfo } from "../chat/wakes";
 import { initialMode, PHONE, TARGET, TV, ui, type Mode } from "../config/interaction";
 import { launch, snapshot, type Snapshot } from "../stage/flight";
 import { capsClass, EASE } from "../stage/style";
@@ -30,6 +31,9 @@ import { VoiceFlower, type FlowerState } from "./VoiceFlower";
 // The wiki, and its Markdown and editor libraries, load the first time it
 // opens.
 const WikiView = lazy(() => import("./Wiki").then((mod) => ({ default: mod.WikiView })));
+// huvu's browser, live, and noVNC with it, load the first time a wake's
+// screen is watched.
+const ScreenView = lazy(() => import("./ScreenView").then((mod) => ({ default: mod.ScreenView })));
 
 declare global {
   interface Window {
@@ -79,6 +83,11 @@ const PHASE_FLOWER: Record<VoicePhase, FlowerState> = {
 
 export function Stage() {
   const { turns: allTurns, running, stopping } = thread.useThread();
+  // A wake on the stage (chat/wakes.ts): the thread is its turns, and what
+  // the user sends goes to it. An ended one can still be read.
+  const { shown: wake } = useWakes();
+  const wakeEnded = wake?.status === "ended";
+  const canAsk = ui.hasInput && !wakeEnded;
   const wide = useWide();
 
   const [rewindId, setRewindId] = useState<string | null>(null);
@@ -99,6 +108,8 @@ export function Stage() {
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [menu, setMenu] = useState<MenuSection | null>(null);
   const wikiOpen = useWikiOpen();
+  // A wake's browser screen, over the stage.
+  const [screenOpen, setScreenOpen] = useState(false);
   // How tall the card of what waits on this phone is, so the turn stops
   // short of it.
   const [waitingH, setWaitingH] = useState(0);
@@ -122,8 +133,21 @@ export function Stage() {
   const [staged, setStaged] = useState<ReadonlySet<string>>(() => new Set());
   const geo = useSlotGeometry(rootRef, slotRef, composerRef);
 
+  // Another conversation took the stage: it starts on its latest turn,
+  // with nothing half done from the one before.
+  const wakeId = wake?.id ?? null;
+  const [stagedWake, setStagedWake] = useState<string | null>(null);
+  if (stagedWake !== wakeId) {
+    setStagedWake(wakeId);
+    setScreenOpen(false);
+    setMenu(null);
+    setRewindId(null);
+    setView({ kind: "stage", focus: null });
+  }
+
   const latest = turns.at(-1) ?? null;
-  if (latest && !staged.has(latest.id) && (latest.at >= sessionStart || latest.running || latest.notice?.unseen)) setStaged(new Set([...staged, latest.id]));
+  // A wake opens on its latest turn, however old.
+  if (latest && !staged.has(latest.id) && (latest.at >= sessionStart || latest.running || latest.notice?.unseen || wake)) setStaged(new Set([...staged, latest.id]));
   const latestStaged = latest && staged.has(latest.id) ? latest.id : null;
   const heroId = view.kind === "stage" ? (turns.some((t) => t.id === view.focus) ? view.focus : latestStaged) : null;
   const shown = view.kind === "history" ? turns : turns.filter((t) => t.id === heroId);
@@ -194,6 +218,7 @@ export function Stage() {
   // nothing left to undo (the hardware back button then leaves the app).
   const goBack = (): boolean => {
     if (isWikiOpen()) wikiBack();
+    else if (screenOpen) setScreenOpen(false);
     else if (menu) setMenu(null);
     else if (feedsOpen) setFeedsOpen(false);
     // A screen that says every answer: back quiets huvu, and stops the
@@ -204,6 +229,7 @@ export function Stage() {
     } else if (running && !stopping && mode === "text") stop();
     else if (rewindId) cancelRewind();
     else if (view.kind === "history" || view.focus) toStage(null);
+    else if (wake) leaveWake();
     else if (mode === "voice" && ui.modeSwitchable) leaveVoice();
     else return false;
     return true;
@@ -222,6 +248,7 @@ export function Stage() {
     },
     retry: (turn: thread.Turn) => thread.retry(turn.id, inputMode),
     show: (section: MenuSection) => setMenu(section),
+    openWake: (id: string) => void showWake(id),
     registerFocus: (id: string, el: HTMLButtonElement | null) => {
       rowButtons.current.set(id, el);
     },
@@ -475,8 +502,19 @@ export function Stage() {
     };
   }, []);
 
-  // A tapped notification that names a screen opens the menu there.
-  useEffect(() => onOpens((section) => setMenu(section)), []);
+  // A tapped notification that names a screen opens it: a wake takes the
+  // stage, and anything else opens the menu there.
+  useEffect(
+    () =>
+      onOpens((opens) => {
+        const id = openedWake(opens);
+        if (id) void showWake(id);
+        else setMenu(opens as MenuSection);
+      }),
+    [],
+  );
+
+
 
   // The menu opens the wiki, which takes its place.
   useEffect(
@@ -585,10 +623,11 @@ export function Stage() {
                 variant={view.kind === "history" ? "row" : "hero"}
                 wide={wide}
                 answerShown={ui.voiceAnswerText || !voiceStage}
+                rewindable={!wake}
                 actions={turnActions}
               />
             ))}
-            {view.kind === "stage" && heroId === null && (
+            {view.kind === "stage" && heroId === null && !wake && (
               <m.li
                 key="empty"
                 initial={{ opacity: 0 }}
@@ -619,6 +658,16 @@ export function Stage() {
       </p>
 
       {ui.hasInput ? <Menu open={menu} onToggle={menuActions.toggle} onClose={menuActions.close} /> : <TvWordmark />}
+
+      <AnimatePresence>{wake && <WakeBar key="wake" wake={wake} onWatch={() => setScreenOpen(true)} />}</AnimatePresence>
+
+      <AnimatePresence>
+        {screenOpen && (
+          <Suspense key="screen" fallback={<div className="absolute inset-0 z-40 bg-paper" />}>
+            <ScreenView onClose={() => setScreenOpen(false)} />
+          </Suspense>
+        )}
+      </AnimatePresence>
 
       <Feeds open={feedsOpen} onToggle={feedsActions.toggle} onPick={feedsActions.pick} listRef={feedsRef} />
 
@@ -685,7 +734,7 @@ export function Stage() {
         </m.button>
       )}
 
-      {ui.hasInput && (
+      {canAsk && (
         <Composer
           ref={composerRef}
           slotRef={slotRef}
@@ -707,7 +756,7 @@ export function Stage() {
       {/* One flower for the whole app, above everything. Switching modes
           glides it between the composer and the middle of the screen with
           a transform; it never unmounts, so it never blinks. */}
-      {ui.hasInput && flowerAt && (
+      {canAsk && flowerAt && (
         <m.div
           initial={false}
           animate={flowerAt}
@@ -729,6 +778,58 @@ export function Stage() {
         </m.div>
       )}
     </div>
+  );
+}
+
+// Over a wake on the stage: what it is for, whether it waits for the user,
+// and the way back to the device's own conversation. An advanced wake's
+// browser can be watched live. Ending it stops what huvu is doing there.
+function WakeBar({ wake, onWatch }: { wake: WakeInfo; onWatch: () => void }) {
+  const [trouble, setTrouble] = useState<string | null>(null);
+  const end = () => {
+    setTrouble(null);
+    endWake(wake.id).catch(() => setTrouble("couldn't end it"));
+  };
+  const status = trouble ?? (wake.status === "waiting" ? `waits for ${wake.waits_for ?? "you"}` : wake.status === "ended" ? "ended" : "at work");
+  return (
+    <m.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5, ease: EASE }}
+      className="absolute inset-x-0 top-16 z-20 mx-auto flex w-full max-w-[52rem] flex-col gap-1 px-6 sm:top-20 sm:px-12"
+    >
+      <div className="flex items-baseline gap-4">
+        <span className={`${capsClass} halo shrink-0 ${wake.status === "waiting" || trouble ? "text-sindoor" : "text-ivory/55"}`}>{status}</span>
+        <button
+          type="button"
+          onClick={leaveWake}
+          className={`${capsClass} -my-3 ml-auto min-h-11 shrink-0 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-ivory focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+        >
+          back
+        </button>
+        {/* Only an advanced wake may use the browser. */}
+        {wake.tier === "advanced" && wake.status !== "ended" && (
+          <button
+            type="button"
+            onClick={onWatch}
+            className={`${capsClass} -my-3 min-h-11 shrink-0 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-ivory focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+          >
+            watch
+          </button>
+        )}
+        {wake.status !== "ended" && (
+          <button
+            type="button"
+            onClick={end}
+            className={`${capsClass} -my-3 min-h-11 shrink-0 px-2 text-ivory/70 outline-none transition-colors duration-500 hover:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+          >
+            end
+          </button>
+        )}
+      </div>
+      <p className="halo m-0 truncate font-display text-[13px] font-medium text-ivory/60">{wake.note}</p>
+    </m.div>
   );
 }
 

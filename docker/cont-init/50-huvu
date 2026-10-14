@@ -7,6 +7,11 @@ set -e
 export HOME=/opt/data
 mkdir -p /opt/data/huvu
 [ -f /opt/data/huvu/huvu.toml ] || cp /opt/huvu/docker/huvu.toml /opt/data/huvu/huvu.toml
+# The dashboard's session token, shared by the dashboard and the backend
+# through the services' environment. Made once and kept, so a restart of one
+# never leaves the other with an old token.
+[ -s /opt/data/huvu/dashboard.token ] || (umask 077 && head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /opt/data/huvu/dashboard.token)
+cp /opt/data/huvu/dashboard.token /run/s6/container_environment/HERMES_DASHBOARD_SESSION_TOKEN
 chown -R hermes:hermes /opt/data/huvu /opt/huvu/hermes-skills
 s6-setuidgid hermes /opt/huvu/backend/.venv/bin/huvu skills
 s6-setuidgid hermes /opt/huvu/setup.sh >/dev/null

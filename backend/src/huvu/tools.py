@@ -31,6 +31,7 @@ from .scripts import ScriptError
 from .source import SourceError
 from .spec import Caller, Label, Result
 from .triggers import TriggerError, TriggerSpec
+from .wake import WakeEnded
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -40,7 +41,7 @@ log = logging.getLogger("huvu.tools")
 Handler = Callable[[dict[str, Any], Caller], Awaitable[Result]]
 
 # Source names that would collide with kernel tool names.
-RESERVED = {"triggers", "ui", "kernel", "people", "act", "data"}
+RESERVED = {"triggers", "ui", "kernel", "people", "act", "data", "wake"}
 
 
 class ToolError(Exception):
@@ -112,7 +113,7 @@ class ToolBox:
             raise ToolError(f"{name} needs {', '.join(missing)}")
         try:
             result = await tool.handler(args, caller)
-        except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError, AuthError, DataError) as err:
+        except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError, AuthError, DataError, WakeEnded) as err:
             raise ToolError(str(err)) from err
         return result
 
@@ -194,6 +195,13 @@ class ToolBox:
                 self._ui_show_feed,
             ),
             Tool(
+                "wake_wait",
+                TOOLS["wake_wait"],
+                _schema({"waits_for": {"type": "string"}}, ["waits_for"]),
+                self._wake_wait,
+                writes=True,
+            ),
+            Tool(
                 "ui_show_image",
                 TOOLS["ui_show_image"],
                 _schema({"src": {"type": "string"}, "caption": {"type": "string"}}, ["src"]),
@@ -256,6 +264,10 @@ class ToolBox:
     async def _triggers_remove(self, args: dict[str, Any], caller: Caller) -> Result:
         trigger = await self._kernel.triggers.remove(args["id"], caller)
         return Result(data=trigger.public(), labels=["house"])
+
+    async def _wake_wait(self, args: dict[str, Any], caller: Caller) -> Result:
+        until = self._kernel.waker.wait(caller.session, str(args["waits_for"]))
+        return Result(data={"waits_until": until}, labels=["house"])
 
     async def _people_group(self, args: dict[str, Any], caller: Caller) -> Result:
         """The caller's groups, or one of them, and who is in each, by what

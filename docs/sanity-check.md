@@ -143,6 +143,22 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. Ask for another advanced trigger, and tap no on the phone. It should leave the menu.
 1. In the menu, your dream should be listed: "Your dream...", every time, on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs. If huvu set up a trigger on its own that night, the notes should name it and say why, and it should be in your menu.
 
+## Wakes: huvu at work in the background (phone and laptop)
+
+1. Ask huvu to set up a trigger that, in two minutes, looks something up and asks you a question about it before it goes on. When it fires, a notification should come. Tap it. The app should open on that wake: a line at the top says what it waits for, with "back" and "end", and the turn under it is what huvu did.
+1. Type your answer there. huvu should carry on in the same wake, and not in your main conversation. There should be no "edit" on what you typed.
+1. Open the menu. Under "at work", the wake should be listed while it runs or waits for you. Once it is done, it should leave the list.
+1. Tap "back". Your main conversation should come back as you left it.
+1. Open a waiting wake and tap "end". It should say ended, the text field should go, and it should leave the menu.
+1. Leave a wake waiting for over an hour, then answer it. huvu should still know what it was doing.
+1. Leave a wake waiting for a day. It should leave the menu by itself.
+1. Send mom a message from a wake. Her notification should open nothing special.
+1. On the TV, there should be no wakes.
+1. Ask huvu to do something in its browser for you, such as checking a page that needs your login. It should say the browser works only in an advanced wake, and offer to set one up. A card should ask you to allow it on your phone. Tap yes.
+1. When the wake runs, open it from the menu and tap "watch". huvu's browser should show, live, as huvu clicks through. Tapping or typing on it should do nothing. Tap "close".
+1. Log in to a site in that browser through huvu once (it asks you for the OTP in the wake). Ask for a second task on the same site a day later. It should still be logged in.
+1. Tap "watch" on a wake that isn't using the browser. It should say the browser isn't open right now.
+
 ## The wiki (phone and laptop)
 
 huvu keeps what it learns about you in a wiki of its own. It writes most of it at night.

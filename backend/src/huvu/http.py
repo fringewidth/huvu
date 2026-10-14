@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,7 @@ from .bundles import BundleError, Bundles
 from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
+from .prompts import BROWSER_BLOCKED
 from .hearing import HearingError
 from .kernel import Kernel
 from .push import api_json, sse
@@ -37,6 +38,7 @@ from .spec import Caller
 from .speech import MEDIA_TYPE as SPEECH
 from .tools import ToolError
 from .triggers import TriggerError
+from .wake import WakeEnded
 
 log = logging.getLogger("huvu.http")
 
@@ -57,6 +59,9 @@ class Ask(BaseModel):
     id: str | None = Field(default=None, pattern=r"^[\w-]{1,64}$")
     # The turn this ask replaces, with everything after it (edit and retry).
     replaces: str | None = None
+    # The wake it is asked in (wake.py), not the device's own conversation.
+    # A wake has no edit or retry.
+    wake: str | None = None
     # What the user did in the app since the last ask. Context for the
     # model, never a request.
     actions: list[Action] = Field(default_factory=list)
@@ -109,6 +114,10 @@ class WebPushSubscription(BaseModel):
 
     endpoint: str = Field(pattern=r"^https://")
     keys: WebPushKeys
+
+
+class Browsing(BaseModel):
+    session: str
 
 
 class Thinking(BaseModel):
@@ -281,7 +290,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.post("/api/turns/{turn_id}/stop")
     async def stop(turn_id: str, me: Device = device) -> dict[str, bool]:
-        if not kernel.conversations.owns(me.id, turn_id):
+        if not kernel.conversations.visible(me, turn_id):
             raise HTTPException(404, f"no turn {turn_id!r}")
         await kernel.conversations.stop(turn_id)
         return {"ok": True}
@@ -290,7 +299,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     async def turn_events(turn_id: str, me: Device = device) -> StreamingResponse:
         """One turn's events from its start, then live until it ends, for a
         client that opens while it runs."""
-        if not kernel.conversations.owns(me.id, turn_id):
+        if not kernel.conversations.visible(me, turn_id):
             raise HTTPException(404, f"no turn {turn_id!r}")
         events = kernel.conversations.replay(turn_id)
         return StreamingResponse(_sse_stream(events), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
@@ -318,7 +327,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         """huvu saying a turn's answer while it writes it: one framed MP3
         clip per sentence, a sentence at a time (see
         speech.py). Works for a running turn and an ended one."""
-        if not kernel.conversations.owns(me.id, turn_id):
+        if not kernel.conversations.visible(me, turn_id):
             raise HTTPException(404, f"no turn {turn_id!r}")
         audio = kernel.voice.speak(kernel.conversations.replay(turn_id))
         return StreamingResponse(audio, media_type=SPEECH, headers={"Cache-Control": "no-cache"})
@@ -326,6 +335,42 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     @app.get("/api/conversation")
     async def conversation(me: Device = device) -> JSONResponse:
         return JSONResponse(api_json([t.public() for t in kernel.conversations.turns(me.id)]))
+
+    @app.get("/api/wakes")
+    async def wakes(me: Device = device) -> JSONResponse:
+        """The open wakes of the device's user: running, or waiting for
+        them. None on a shared device."""
+        return JSONResponse(api_json(kernel.waker.open_for(me.user)))
+
+    @app.get("/api/wakes/{wake_id}")
+    async def wake(wake_id: str, me: Device = device) -> JSONResponse:
+        try:
+            return JSONResponse(api_json(kernel.waker.view(wake_id, me)))
+        except KeyError as err:
+            raise HTTPException(404, str(err)) from err
+
+    @app.post("/api/wakes/{wake_id}/close")
+    async def close_wake(wake_id: str, me: Device = device) -> dict[str, bool]:
+        try:
+            await kernel.waker.close(wake_id, me)
+        except KeyError as err:
+            raise HTTPException(404, str(err)) from err
+        return {"ok": True}
+
+    @app.post("/api/screen/ticket")
+    async def screen_ticket(me: Device = device) -> dict[str, str]:
+        """A one-time ticket to watch the browser's screen of the device's
+        user (screen.py), for `/api/screen`. A shared device has none."""
+        if me.user is None:
+            raise HTTPException(403, "a shared device has no screen of its own")
+        if not kernel.screen.available:
+            raise HTTPException(503, "huvu has no screen to show: Hermes's dashboard isn't set up")
+        return {"ticket": kernel.screen.ticket(me.user)}
+
+    @app.websocket("/api/screen")
+    async def screen(ws: WebSocket, ticket: str = "") -> None:
+        """The browser's screen as raw RFB, for noVNC in the app."""
+        await kernel.screen.watch(ws, ticket)
 
     @app.get("/api/push")
     async def push(me: Device = device) -> StreamingResponse:
@@ -536,6 +581,17 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(401, "unauthorized")
         return {"shown": kernel.conversations.think(body.session, body.text, body.start, user, group)}
 
+    @app.post("/api/browsing")
+    async def browsing(request: Request, body: Browsing) -> dict[str, Any]:
+        """Whether a Hermes session may use the browser, for the huvu Hermes
+        plugin: only a wake on the advanced tier may. `why` is what the
+        model reads when it may not."""
+        known, user, group = mcp_caller(config, accounts, bearer(request))
+        if not known:
+            raise HTTPException(401, "unauthorized")
+        allowed = kernel.waker.may_browse(body.session, user, group)
+        return {"allowed": allowed, "why": None if allowed else BROWSER_BLOCKED}
+
     @app.post("/api/situation")
     async def situation(request: Request) -> dict[str, str]:
         """The situation block for the huvu Hermes plugin: the time, who
@@ -557,11 +613,16 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
 
 async def _ask(kernel: Kernel, ask: Ask, me: Device):
+    if ask.wake is not None and ask.replaces is not None:
+        raise HTTPException(400, "a wake has no edit or retry")
     try:
-        live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, group=me.group, actions=ask.actions, turn_id=ask.id, mode=ask.mode)
+        if ask.wake is not None:
+            live = await kernel.waker.ask(ask.wake, ask.ask, me, actions=ask.actions, turn_id=ask.id, mode=ask.mode)
+        else:
+            live = await kernel.conversations.ask(me.id, ask.ask, ask.replaces, user=me.user, group=me.group, actions=ask.actions, turn_id=ask.id, mode=ask.mode)
     except KeyError as err:
         raise HTTPException(404, str(err)) from err
-    except ValueError as err:
+    except (ValueError, WakeEnded) as err:
         raise HTTPException(409, str(err)) from err
     return live
 

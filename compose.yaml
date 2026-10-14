@@ -30,6 +30,11 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
+      # Hermes's dashboard, only for the browser's screen: the backend asks it
+      # for a view and relays it to the app. Bound inside the container only,
+      # so its session token works; 50-huvu makes that token.
+      - HERMES_DASHBOARD=1
+      - HERMES_DASHBOARD_HOST=127.0.0.1
     volumes:
       - huvu:/opt/data
     ports:

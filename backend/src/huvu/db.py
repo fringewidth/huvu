@@ -227,6 +227,36 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
     -- routing.py), which its prompt cache depends on.
     route TEXT
 );
+
+-- Wakes (wake.py): a model instance a trigger started, and the
+-- conversation its person can open while it runs or waits for them. Its
+-- id is its first Hermes session's, and its conversation's in `turns`.
+CREATE TABLE IF NOT EXISTS wakes (
+    id TEXT PRIMARY KEY,
+    trigger_id TEXT,
+    -- Its person, or NULL for a group's trigger.
+    user_id TEXT,
+    group_id TEXT,
+    -- The trigger's note, which names it in the menu.
+    note TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    -- The Hermes session it runs in now. A compacted wake starts another.
+    session TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    -- running, waiting or ended.
+    status TEXT NOT NULL,
+    -- What it waits for, from wake_wait in its last run.
+    waits_for TEXT,
+    -- When its last run ended.
+    ran_at TEXT,
+    -- When huvu compacted it, or tried to.
+    compacted_at TEXT,
+    -- Its own notes on where it stands, from the compaction. The next run
+    -- starts a fresh session from them.
+    carried TEXT
+);
+CREATE INDEX IF NOT EXISTS wakes_user ON wakes (user_id, status);
+CREATE INDEX IF NOT EXISTS wakes_session ON wakes (session);
 """
 
 # Columns added to a table after it was first made, which CREATE TABLE IF
