@@ -84,9 +84,10 @@ const PHASE_FLOWER: Record<VoicePhase, FlowerState> = {
 export function Stage() {
   const { turns: allTurns, running, stopping } = thread.useThread();
   // A wake on the stage (chat/wakes.ts): the thread is its turns, and what
-  // the user sends goes to it. An ended one can still be read.
+  // the user sends goes to it. An ended one can still be read, and for a
+  // day after its run ended it, answered.
   const { shown: wake } = useWakes();
-  const wakeEnded = wake?.status === "ended";
+  const wakeEnded = wake?.status === "ended" && !wake.answerable;
   const canAsk = ui.hasInput && !wakeEnded;
   const wide = useWide();
 
@@ -792,7 +793,10 @@ function WakeBar({ wake, onWatch }: { wake: WakeInfo; onWatch: () => void }) {
     setTrouble(null);
     endWake(wake.id).catch(() => setTrouble("couldn't end it"));
   };
-  const status = trouble ?? (wake.status === "waiting" ? `waits for ${wake.waits_for ?? "you"}` : wake.status === "ended" ? "ended" : "at work");
+  const open = wake.status !== "ended" || wake.answerable;
+  const status =
+    trouble ??
+    (wake.status === "waiting" ? `waits for ${wake.waits_for ?? "you"}` : wake.status === "ended" ? (wake.answerable ? "done, reply to carry on" : "ended") : "at work");
   return (
     <m.div
       initial={{ opacity: 0 }}
@@ -811,7 +815,7 @@ function WakeBar({ wake, onWatch }: { wake: WakeInfo; onWatch: () => void }) {
           back
         </button>
         {/* Only a wake on pro or advanced may use the browser. */}
-        {(wake.tier === "pro" || wake.tier === "advanced") && wake.status !== "ended" && (
+        {(wake.tier === "pro" || wake.tier === "advanced") && open && (
           <button
             type="button"
             onClick={onWatch}
@@ -820,7 +824,7 @@ function WakeBar({ wake, onWatch }: { wake: WakeInfo; onWatch: () => void }) {
             watch
           </button>
         )}
-        {wake.status !== "ended" && (
+        {open && (
           <button
             type="button"
             onClick={end}

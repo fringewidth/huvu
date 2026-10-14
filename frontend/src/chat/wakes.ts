@@ -22,6 +22,9 @@ export interface WakeInfo {
   ran_at: string | null;
   // When the wait ends by itself.
   until: string | null;
+  // Whether what the user sends continues it: while it waits, and for a
+  // day after a run that ended it, unless they ended it themselves.
+  answerable: boolean;
 }
 
 interface WakesState {
@@ -59,7 +62,7 @@ export function wakeChanged(wake: WakeInfo): void {
 // Puts a wake on the stage.
 export async function showWake(id: string): Promise<void> {
   const listed = state.list.find((w) => w.id === id) ?? null;
-  set({ shown: listed ?? { id, trigger: null, note: "", tier: "", status: "running", waits_for: null, started_at: "", ran_at: null, until: null } });
+  set({ shown: listed ?? { id, trigger: null, note: "", tier: "", status: "running", waits_for: null, started_at: "", ran_at: null, until: null, answerable: true } });
   void thread.showWake(id);
   try {
     const { wake } = await getJson<{ wake: WakeInfo }>(`/api/wakes/${id}`);

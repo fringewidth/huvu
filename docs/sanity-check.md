@@ -150,6 +150,7 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. Open the menu. Under "at work", the wake should be listed while it runs or waits for you. Once it is done, it should leave the list.
 1. Tap "back". Your main conversation should come back as you left it.
 1. Open a waiting wake and tap "end". It should say ended, the text field should go, and it should leave the menu.
+1. Open a wake that finished on its own. The top should say "done, reply to carry on", and the text field should stay. Type something. huvu should carry on in that wake. A day later, the text field should be gone.
 1. Leave a wake waiting for over an hour, then answer it. huvu should still know what it was doing.
 1. Leave a wake waiting for a day. It should leave the menu by itself.
 1. Send mom a message from a wake. Her notification should open nothing special.

@@ -50,6 +50,29 @@ async def test_a_run_sends_its_history_and_streams_under_chats_names():
     await hermes.close()
 
 
+
+async def test_a_runs_tool_events_come_as_the_session_streams_do():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json={"run_id": "run_3"})
+        return httpx.Response(200, content=frames(
+            {"event": "tool.started", "tool": "browser_navigate", "preview": "keka.com"},
+            {"event": "tool.completed", "tool": "browser_navigate", "duration": 1.2, "error": False},
+            {"event": "tool.started", "tool": "browser_click"},
+            {"event": "tool.completed", "tool": "browser_click", "duration": 0.1, "error": True},
+            {"event": "run.completed", "output": "done"},
+        ))
+
+    hermes = client(handler)
+    events = [(e.name, e.data) async for e in hermes.run(PROFILE, "wake-3", [], "go")]
+    assert events[1:5] == [
+        ("tool.started", {"tool_name": "browser_navigate", "preview": "keka.com", "args": {}}),
+        ("tool.completed", {"tool_name": "browser_navigate", "preview": None}),
+        ("tool.started", {"tool_name": "browser_click", "preview": None, "args": {}}),
+        ("tool.failed", {"tool_name": "browser_click", "preview": None}),
+    ]
+    await hermes.close()
+
 async def test_a_run_ends_on_failure_and_a_refusal_raises():
     def failing(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
