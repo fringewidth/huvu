@@ -13,7 +13,11 @@ shows nowhere, and can't wait.
 A wake ends when its run ends, unless the model called `wake_wait` in that
 run: then it waits for its person, for up to WAIT. Whatever they send in it
 is the wake's next turn, in the same Hermes session, on the same tier, and
-that run ends or waits the same way. The person can end it from the app.
+that run ends or waits the same way. A wake its run ended still takes its
+person's reply for WAIT after that run (`answerable`), since a model can end
+a run that should have waited, such as one that asked its person to take
+over the browser. The person can end it from the app, and that one is
+closed for good (status `closed`, shown as ended).
 
 A waiting wake is compacted COMPACT_AFTER its last run, while the
 provider's cache of it (CACHE_TTL) is still warm: huvu asks it, in its own
@@ -199,7 +203,7 @@ class Waker:
         """A run in the wake ended: it waits if the model asked to, and ends
         otherwise. One its person ended meanwhile stays ended."""
         row = self._row(live.wake)
-        if row is None or row["status"] == "ended":
+        if row is None or row["status"] == "closed":
             return
         status = "waiting" if row["waits_for"] is not None and row["user_id"] is not None else "ended"
         self._db.execute("UPDATE wakes SET status = ?, ran_at = ? WHERE id = ?", (status, iso(self._kernel.now()), live.wake))
@@ -217,7 +221,7 @@ class Waker:
     ) -> LiveTurn:
         """The person's next message in their wake, as its next turn."""
         row = self._mine(wake_id, device)
-        if self._status(row) == "ended":
+        if not self._answerable(row):
             raise WakeEnded(f"wake {wake_id} has ended")
         compacting = self._compacting.get(wake_id)
         if compacting is not None:
@@ -257,7 +261,7 @@ class Waker:
     async def close(self, wake_id: str, device: Device) -> None:
         """Its person ends the wake, and a run still going in it stops."""
         self._mine(wake_id, device)
-        self._db.execute("UPDATE wakes SET status = 'ended' WHERE id = ?", (wake_id,))
+        self._db.execute("UPDATE wakes SET status = 'closed' WHERE id = ?", (wake_id,))
         for turn in self._kernel.conversations.turns(wake_id):
             if turn.running:
                 await self._kernel.conversations.stop(turn.id, wait=True)
@@ -371,10 +375,18 @@ class Waker:
         return row
 
     def _status(self, row) -> str:
-        """Its status now: a wait past WAIT has ended, swept or not."""
+        """Its status now: a wait past WAIT has ended, swept or not, and one
+        its person closed shows as ended."""
         ran = from_iso(row["ran_at"])
         expired = row["status"] == "waiting" and ran is not None and self._kernel.now() - ran >= WAIT
-        return "ended" if expired else row["status"]
+        return "ended" if expired or row["status"] == "closed" else row["status"]
+
+    def _answerable(self, row) -> bool:
+        """Whether its person's next message continues it: while it waits,
+        and for WAIT after a run that ended it, unless they closed it."""
+        ran = from_iso(row["ran_at"])
+        recent = ran is not None and self._kernel.now() - ran < WAIT
+        return row["user_id"] is not None and (row["status"] == "waiting" or row["status"] == "ended") and recent
 
     def _public(self, row) -> dict[str, Any]:
         ran = from_iso(row["ran_at"])
@@ -389,6 +401,7 @@ class Waker:
             "started_at": from_iso(row["started_at"]),
             "ran_at": ran,
             "until": ran + WAIT if status == "waiting" and ran is not None else None,
+            "answerable": self._answerable(row),
         }
 
     def _announce(self, wake_id: str) -> None:

@@ -67,10 +67,8 @@ async def test_a_wake_is_a_conversation_of_its_person_that_ends_with_its_run(ker
     started = pushed(kernel, sent, "turn.started")
     assert started and all(data["wake"] == wake for data, _ in started)
     assert {d for _, devices in started for d in devices} == {family.me_phone.id, family.me_web.id}
-    # Ended, so it isn't listed, and nothing can be said in it.
+    # Ended, so it isn't listed.
     assert kernel.waker.open_for("me") == []
-    with pytest.raises(WakeEnded):
-        await kernel.waker.ask(wake, "hello?", family.me_phone)
 
 
 async def test_a_wake_waits_when_the_model_asks_and_the_reply_continues_it(kernel, family, hermes):
@@ -131,9 +129,27 @@ async def test_the_person_ends_a_wake(kernel, family, hermes):
     wake = await ring(kernel)
     await kernel.waker.close(wake, family.me_phone)
     assert kernel.waker.open_for("me") == []
+    # Closed for good: it shows as ended, and takes no reply.
+    assert kernel.waker.view(wake, family.me_phone)["wake"]["status"] == "ended"
+    assert not kernel.waker.view(wake, family.me_phone)["wake"]["answerable"]
     with pytest.raises(WakeEnded):
         await kernel.waker.ask(wake, "never mind", family.me_phone)
 
+
+
+async def test_a_wake_its_run_ended_still_takes_its_persons_reply_for_a_day(kernel, family, hermes, clock):
+    # The model ended the run without waiting.
+    wake = await ring(kernel)
+    shown = kernel.waker.view(wake, family.me_phone)["wake"]
+    assert shown["status"] == "ended" and shown["answerable"]
+    hermes.script = DONE
+    live = await kernel.waker.ask(wake, "I'm logged in, carry on", family.me_phone)
+    await collect(kernel, live)
+    assert hermes.messages[-1][0] == wake
+    clock.advance(hours=24)
+    assert not kernel.waker.view(wake, family.me_phone)["wake"]["answerable"]
+    with pytest.raises(WakeEnded):
+        await kernel.waker.ask(wake, "and now?", family.me_phone)
 
 async def test_a_wait_ends_after_a_day(kernel, family, hermes, clock):
     hermes.script = waiting(kernel)

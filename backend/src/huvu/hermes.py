@@ -20,7 +20,9 @@ brings the history as finished when it ends, so it runs subagents
 (`delegate_task`) inline and returns their results in the same turn. On a
 session's chat it would keep them for a next turn, which a wake may never
 have. A later turn in the wake, its person's reply, brings no history, and
-Hermes loads the session's own.
+Hermes loads the session's own. Its tool events come in the session
+stream's shape: the runs stream names the tool `tool`, sends no args, and
+marks a failure on its completion.
 """
 
 from __future__ import annotations
@@ -149,6 +151,15 @@ class HermesClient:
                 elif name in ("run.failed", "run.cancelled"):
                     yield HermesEvent(name, event.data)
                     return
+                elif name in ("tool.started", "tool.completed"):
+                    # The runs stream names the tool `tool`, sends no args,
+                    # and marks a failure on its completion: put them the way
+                    # the session stream does, which the relay reads.
+                    tool = {"tool_name": event.data.get("tool") or event.data.get("tool_name") or "", "preview": event.data.get("preview")}
+                    if name == "tool.started":
+                        yield HermesEvent(name, {**tool, "args": event.data.get("args") or {}})
+                    else:
+                        yield HermesEvent("tool.failed" if event.data.get("error") else name, tool)
                 else:
                     yield HermesEvent(name, event.data)
 
