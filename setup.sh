@@ -118,6 +118,9 @@ configure() {
   # does. A Hermes cron job made from the API server has nowhere to deliver,
   # costs a model turn per run, and never shows in the app.
   hermes $p tools disable --platform api_server cronjob >/dev/null
+  # The home theatre's Fire TV, driven like a computer (the huvu plugin's
+  # external_computer tool). A plugin's toolset starts off.
+  hermes $p tools enable --platform api_server external_computer >/dev/null
   # The browser draws on its profile's own screen (Hermes's Bot Desktop,
   # Xvnc), which its first call starts, and keeps one persistent profile, so
   # a login made once stays. The app watches that screen. Only a session on

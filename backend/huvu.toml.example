@@ -114,6 +114,17 @@ deadline = 900
 # [screen]
 # dashboard = "http://127.0.0.1:9119"
 
+# The external computer (external_computer.py): a Fire TV the model drives
+# like a computer, over ADB on the network. huvu must be its only ADB
+# client. `key` is huvu's ADB private key (with key.pub next to it),
+# relative to this file, allowed once on the TV. `open_on_boot` is the app
+# opened when the TV boots, as package/activity. Without `adb`, there is no
+# external computer.
+# [external_computer]
+# adb = "192.168.1.20:5555"
+# key = "adbkey"
+# open_on_boot = "com.huvu.tv/.MainActivity"
+
 # huvu's voice (an Edge voice) and speech to text (Groq, GROQ_API_KEY).
 # Voices: en-US-AvaNeural, en-IN-NeerjaExpressiveNeural, en-IN-PrabhatNeural
 # and more (`uv run edge-tts --list-voices`).

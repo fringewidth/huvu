@@ -27,6 +27,7 @@ from .conversations import ConversationHub
 from .data import DataStore
 from .db import connect, from_iso, iso
 from .dream import Dreams
+from .external_computer import AdbComputer, ExternalComputer
 from .hearing import Hearing
 from .hermes import HermesClient
 from .routing import Router
@@ -59,6 +60,13 @@ SWEEP_EVERY = timedelta(days=1)
 NOTIFY_KEEP = timedelta(days=3)
 
 
+def _computer(config: Config) -> ExternalComputer | None:
+    if config.computer_adb is None or config.computer_key is None:
+        return None
+    host, port = config.computer_adb.rsplit(":", 1)
+    return AdbComputer(host, int(port), config.computer_key, config.computer_open_on_boot)
+
+
 class Kernel:
     def __init__(
         self,
@@ -67,9 +75,11 @@ class Kernel:
         hermes: HermesClient | None = None,
         sources: dict[str, Source] | None = None,
         clock: Callable[[], datetime] | None = None,
+        computer: ExternalComputer | None = None,
     ) -> None:
         """`sources` adds drivers by instance, next to the ones the config
-        names; `clock` replaces the wall clock. Both are for tests and for
+        names; `clock` replaces the wall clock; `computer` replaces the
+        external computer the config names. All three are for tests and for
         embedding the kernel."""
         self.config = config
         self._clock = clock
@@ -90,6 +100,7 @@ class Kernel:
         self.conversations = ConversationHub(self)
         self.waker = Waker(self)
         self.screen = Screen(self)
+        self.computer = computer or _computer(config)
         self.attendance = Attendance(self)
         fcm = FcmClient(config.fcm_credentials) if config.fcm_credentials else None
         web_push = WebPushClient(load_key(config.data_dir / "vapid.pem"), config.public_url)
@@ -105,6 +116,7 @@ class Kernel:
         self._ticker: asyncio.Task[None] | None = None
         self._warming: asyncio.Task[None] | None = None
         self._sweeping: asyncio.Task[None] | None = None
+        self._watching: asyncio.Task[None] | None = None
 
         self.registry.add("huvu", self.huvu)
         self.registry.add("chat", ChatSource())
@@ -138,8 +150,9 @@ class Kernel:
         return prompts.situation(f"{self.now():%a %Y-%m-%d %H:%M}", helping, shared, self.huvu.mode(), len(pending), str(folder))
 
     def may_browse(self, session: str, user: str | None, group: str | None) -> bool:
-        """Whether a Hermes session may use the browser: one of the asking
-        profile's that runs on pro or advanced. A conversation's main session
+        """Whether a Hermes session may use the browser, and the external
+        computer: one of the asking profile's that runs on pro or advanced.
+        A conversation's main session
         always runs on pro; a quick turn runs on basic in a session of its
         own; a wake runs on its trigger's tier."""
         owner = self.sessions.owner(session)
@@ -159,6 +172,8 @@ class Kernel:
         self._ticker = asyncio.create_task(self._tick(), name="kernel:tick")
         self._warming = asyncio.create_task(self.router.warm(), name="router:warm")
         self._sweeping = asyncio.create_task(self.screen.sweep(), name="screen:sweep")
+        if self.computer is not None:
+            self._watching = asyncio.create_task(self.computer.watch(), name="computer:watch")
         await self.kernel_event("started", f"kernel started with sources {', '.join(self.registry.names)}")
 
     def write_skills(self) -> None:
@@ -196,6 +211,10 @@ class Kernel:
             self._warming.cancel()
         if self._sweeping:
             self._sweeping.cancel()
+        if self._watching:
+            self._watching.cancel()
+        if self.computer is not None:
+            await self.computer.close()
         await self.conversations.close()
         await self.triggers.stop()
         await self.waker.stop()

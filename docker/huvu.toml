@@ -30,3 +30,11 @@ deadline = 900
 
 [speech]
 voice = "en-US-AvaNeural"
+
+# The home theatre's Fire TV, driven like a computer (external_computer.py),
+# over ADB with huvu's key at /opt/data/huvu/adbkey (and adbkey.pub). huvu
+# must be the TV's only ADB client.
+# [external_computer]
+# adb = "<the TV's address>:5555"
+# key = "adbkey"
+# open_on_boot = "com.huvu.tv/.MainActivity"

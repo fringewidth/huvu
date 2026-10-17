@@ -189,6 +189,44 @@ BROWSER_BLOCKED = "The browser works only on the pro and advanced tiers, and thi
 # change the account, from the huvu Hermes plugin.
 SWIGGY_BLOCKED = "huvu never places an order, pays or changes your person's Swiggy account: only your person does, in the Swiggy app. Leave the cart ready and tell your person it is waiting for them there."
 
+# The external_computer tool the huvu Hermes plugin adds
+# (external_computer.py): the home theatre's Fire TV, driven like a computer.
+EXTERNAL_COMPUTER = """The household's TV box: a Fire TV on the home theatre's projector, a computer apart from yours that you see and drive. Every action but `apps` answers with a fresh screenshot, the app in front, and whether the screen is on.
+
+It is built for a remote. The arrow keys move a highlight between items, Return opens the highlighted one, Escape goes back, and Home goes to the home screen. Clicks reach only some apps: find the highlight and move it with the keys first. Text goes into the field that has the highlight, once its on-screen keyboard is open.
+
+Video an app protects from copying shows black in screenshots, and some apps black out their menus too. There, go by the app in front and use the media keys.
+
+The box is off, and doesn't answer, while the home theatre's AV power is off. huvu's own app on it shows the people in the room your conversations with them: when you are done, leave it in front again, unless you left something playing for them. Each screenshot is saved as a file, whose path the result gives, should you want to show it to your person."""
+
+EXTERNAL_COMPUTER_SCHEMA = {
+    "name": "external_computer",
+    "description": EXTERNAL_COMPUTER,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["screenshot", "click", "key", "type", "open", "apps", "wait"],
+                "description": "screenshot: look at the screen. click: tap the point x, y. key: press keys in order. type: type text into the highlighted field. open: open an app by its package name, or a link in the app that handles it. apps: the package names of the apps the household installed; the box's own apps come with its system. wait: wait some seconds, then look.",
+            },
+            "x": {"type": "integer", "description": "For click: pixels from the screenshot's left edge."},
+            "y": {"type": "integer", "description": "For click: pixels from the screenshot's top edge."},
+            "keys": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "For key: the keys, pressed in order. Up, Down, Left, Right, Return, Escape, Home, Menu, BackSpace, Space, Search, PageUp, PageDown, and the media keys PlayPause, Play, Pause, Stop, Rewind, FastForward, Next, Previous.",
+            },
+            "text": {"type": "string", "description": "For type: plain ASCII text."},
+            "target": {"type": "string", "description": "For open: a package name, a package/activity, or a link."},
+            "seconds": {"type": "number", "description": "For wait: up to 30."},
+        },
+        "required": ["action"],
+    },
+}
+
+# The external_computer tool's result in a session on basic.
+COMPUTER_BLOCKED = "The TV box works only on the pro and advanced tiers, and this session runs on basic. To do this on it, register a one-time trigger that fires at once, on tier pro, whose note says what to do there. It runs at once in the background, as a wake your person can open. Tell your person so."
 
 
 # Opens a fresh session that continues a conversation, the way a compacted
