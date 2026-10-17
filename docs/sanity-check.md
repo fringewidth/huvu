@@ -137,12 +137,14 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. Ask huvu to set up something that repeats, such as "every day at 9pm, tell me to take my medicine".
 1. Open the menu. Under triggers, both should be listed, each with what it does and how often: the oven reminder "once", the medicine "every time".
 1. Tap "pause" on one. It should say paused by you. Tap "resume". It should be live again.
+1. On the medicine reminder, tap "skip next". It should say it skips the next, and the button should read "don't skip". At 9pm no reminder should come, and the trigger should stay in the menu with no skip left. The next day at 9pm the reminder should come.
+1. Ask huvu: "skip tomorrow's medicine reminder and remind me at 10pm instead". The menu should show the medicine reminder skipping the next, and a new reminder, once. At 9pm nothing should come, and at 10pm the reminder should.
 1. Ask huvu: "what triggers do I have?". It should name the same ones.
 1. Log in as the other person. Your triggers should not appear in their menu.
 1. Ask huvu to set up something that needs its strongest thinking, and say it should use the advanced model. On your phone, a card should ask you to allow it. In the menu it should say it waits for your yes. Tap "allow" (or yes on the phone). It should say watching, with "advanced" after how often.
 1. Ask for another advanced trigger, and tap no on the phone. It should leave the menu.
 1. In the menu, your dream should be listed: "Your dream...", every time, on pro. The next morning, a notification from huvu should wait for you: a few short lines of notes about the night, not paragraphs. If huvu set up a trigger on its own that night, the notes should name it and say why, and it should be in your menu.
-1. Ask huvu to pause your dream, then to remove it. Each time it should say only you can, from the app, and the dream should stay in the menu. Pause it from the menu: that should work. Resume it.
+1. Ask huvu to pause your dream, then to skip it, then to remove it. Each time it should say only you can, from the app, and the dream should stay in the menu. Pause it from the menu: that should work. Resume it. Tap "skip next" on it: no brief should come the next morning, and the morning after it should.
 
 ## Wakes: huvu at work in the background (phone and laptop)
 
@@ -251,6 +253,14 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 1. From another email account, send a mail to `bills@mail.hrishik.me` that claims to be from the shop. Ask huvu about it. It should say it can't trust that the shop sent it.
 1. From another family member's phone, ask huvu about your bills. It should say it can't see them.
 1. Stop the backend and forward a bill from Gmail to `bills@mail.hrishik.me`. No bounce should come back. Start the backend and forward it again. huvu should have it once.
+
+## YouTube
+
+1. On the Android phone, say "play Kesariya". huvu should say what it found, and a card should show under its answer: the video's picture, its title, its channel and "open in youtube". Tap it. The YouTube app should open on that video.
+1. On the iPhone, from the home screen icon, ask huvu to play a song. Tap the card. iOS may ask whether to open YouTube. The YouTube app should open on that video.
+1. On the laptop, ask huvu to play a song. The card should say "open on youtube". Click it. YouTube's site should open on that video in a new tab, and huvu should stay open in its own tab.
+1. Ask for a music video by its singer and song, then for something to watch, such as a cooking video. Each should find the right kind of video.
+1. In history, a turn with a video should show a "youtube" chip.
 
 ## Swiggy (food and Instamart)
 

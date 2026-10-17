@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
@@ -465,6 +466,72 @@ async def test_the_model_can_pause_and_resume_its_users_triggers(kernel, family,
     await home.press()
     await settle(kernel)
     assert len(wakes(hermes)) == 1
+
+
+async def test_a_skipped_fire_runs_nothing_and_the_next_one_runs(kernel, clock, hermes):
+    created = await kernel.tools.call("triggers_register", REMINDER, OWNER)
+    skipping = await kernel.tools.call("triggers_skip", {"id": created.data["id"]}, OWNER)
+    assert skipping.data["skip"] == 1 and skipping.data["status"] == "active"
+    [row] = (await kernel.data.sql("SELECT skip FROM huvu_triggers", kernel.accounts.scope("me", None), 10)).rows
+    assert row == [1]
+
+    # Tomorrow at 8: skipped, and it stays live with no skips left.
+    clock.advance(minutes=8 * 60 + 10)
+    await kernel.triggers.tick()
+    await settle(kernel)
+    trigger = kernel.triggers.get(created.data["id"])
+    assert kernel.notifications("me") == []
+    assert trigger.status == "active" and trigger.skip == 0 and trigger.fire_count == 0
+    assert kernel.events_since("trigger.skipped", clock.now - timedelta(days=1), user="me") == 1
+
+    # It rearms at 08:01, and the morning after it reminds them again.
+    clock.advance(minutes=1)
+    await kernel.triggers.tick()
+    clock.advance(days=1, minutes=-1)
+    await kernel.triggers.tick()
+    await settle(kernel)
+    assert [n["text"] for n in kernel.notifications("me")] == ["Water the plants."]
+
+
+async def test_a_skipped_once_trigger_waits_for_the_fire_after(kernel, home, hermes):
+    trigger = await kernel.triggers.register(spec(**{**DOORBELL, "once": True}), OWNER)
+    await kernel.triggers.skip(trigger.id, OWNER)
+    await home.press()
+    await settle(kernel)
+    assert wakes(hermes) == [] and trigger.status == "active"
+    await home.press()
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1 and trigger.status == "done"
+
+
+async def test_skips_are_set_and_only_by_the_triggers_user(kernel, home, hermes):
+    trigger = await kernel.triggers.register(spec(**DOORBELL), OWNER)
+    await kernel.tools.call("triggers_skip", {"id": trigger.id, "fires": 2}, OWNER)
+    # A count replaces the one before, so 0 skips none.
+    await kernel.tools.call("triggers_skip", {"id": trigger.id, "fires": 0}, OWNER)
+    await home.press()
+    await settle(kernel)
+    assert len(wakes(hermes)) == 1
+    assert kernel.db.execute("SELECT skip FROM triggers WHERE id = ?", (trigger.id,)).fetchone()["skip"] == 0
+    with pytest.raises(TriggerError, match="0 or more"):
+        await kernel.triggers.skip(trigger.id, OWNER, -1)
+    with pytest.raises(ToolError, match="no live trigger"):
+        await kernel.tools.call("triggers_skip", {"id": trigger.id}, Caller(kind="hermes", user="mom"))
+
+
+async def test_a_skip_outlives_a_restart(kernel, tmp_path, clock, home, hermes):
+    trigger = await kernel.triggers.register(spec(**DOORBELL), OWNER)
+    await kernel.triggers.skip(trigger.id, OWNER)
+    again = restarted(kernel, tmp_path, clock, hermes)
+    await again.registry.get("home").run()
+    await again.triggers.load()
+    assert again.triggers.get(trigger.id).skip == 1
+    await again.registry.get("home").press()
+    await settle(again)
+    assert wakes(hermes) == [] and again.triggers.get(trigger.id).skip == 0
+    await again.triggers.stop()
+    again.data.close()
+    again.db.close()
 
 
 async def test_busy_triggers_tell_their_user_once_an_hour(kernel, family, home):

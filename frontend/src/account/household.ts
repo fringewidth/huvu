@@ -20,6 +20,8 @@ export interface Trigger {
   // Who paused it. One a limit paused (`limit`: it fired or woke huvu too
   // often) comes back only by a person's tap, here.
   paused_by: "model" | "user" | "limit" | null;
+  // How many of its next fires it skips, running nothing.
+  skip: number;
   last_fired_at: string | null;
   fire_count: number;
   expires_at: string | null;
@@ -55,6 +57,12 @@ export async function refreshTriggers(): Promise<void> {
 
 export async function setPaused(id: string, paused: boolean): Promise<void> {
   const trigger = await postJson<Trigger>(`/api/triggers/${id}/${paused ? "pause" : "resume"}`);
+  set({ triggers: state.triggers?.map((t) => (t.id === id ? trigger : t)) ?? null });
+}
+
+// Has a trigger skip its next fire, or skip none.
+export async function setSkipping(id: string, skipping: boolean): Promise<void> {
+  const trigger = await postJson<Trigger>(`/api/triggers/${id}/${skipping ? "skip" : "unskip"}`);
   set({ triggers: state.triggers?.map((t) => (t.id === id ? trigger : t)) ?? null });
 }
 

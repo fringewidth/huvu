@@ -270,6 +270,7 @@ A query that fails (a live table whose source is down) changes nothing: an edge 
 1. **One run at a time.** A trigger is running from the look that decides to fire until its script ends. A change meanwhile gets one more look when the run ends, so a condition that went false in between still rearms it, and rows that came meanwhile fire then. Each trigger has its own claim; one slow trigger doesn't hold up the others.
 1. **The fire limit.** A trigger that fires more than 30 times in 5 minutes pauses itself, and its user is notified. It stops a trigger that feeds on its own runs, such as one that reads `huvu_events` for `trigger.run` rows.
 1. **Pausing.** Any session acting for a trigger's user can pause and resume it (`triggers_pause`, `triggers_resume`), and so can the user from the app. A paused trigger keeps everything but stops running.
+1. **Skipping.** Any session acting for a trigger's user can make it skip its next fires (`triggers_skip`, a count that replaces the one before, 0 for none), and the user can skip the next one from the app. A skipped fire uses up its edge or its rows, runs no script, counts toward neither limit, and is logged as `trigger.skipped`; a `once` trigger waits for the fire after. A trigger is a query, so huvu can't say when its next fire comes, but it can count fires, which works for every trigger the same way. Moving one occurrence is a skip and a `once` trigger at the new time. Added 2026-10-16.
 1. **The wake limit.** A trigger may wake the model at most 20 times in two hours, counted from `huvu_events` (`wake.started`), since its last resume if that is later. From the 10th wake on, the wake tells the model and asks it to handle the repeats in a script or pause the trigger until the person approves. The 21st doesn't happen: the trigger pauses itself, and its user is notified. A trigger either limit paused resumes only by the user's own tap.
 1. **The busy notice.** A user whose triggers fired more than 10 times in the last hour, together, is notified, once an hour at most. It also catches a script-only trigger that never wakes the model.
 1. Scripts never call the model themselves: `ctx.wake` asks the backend to, through the same waker and the same limit.
@@ -377,9 +378,9 @@ Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; 
 | Tool | What it does |
 |---|---|
 | `data_sql` | One read-only SQLite query over every table, history and live, scoped to the caller. The only read tool. See [Tables](#tables) |
-| `triggers_register`, `triggers_remove`, `triggers_pause`, `triggers_resume` | Trigger management. `triggers_register` with `dry_run` checks a trigger and registers nothing; the triggers themselves are `huvu_triggers` |
+| `triggers_register`, `triggers_remove`, `triggers_pause`, `triggers_resume`, `triggers_skip` | Trigger management. `triggers_register` with `dry_run` checks a trigger and registers nothing; the triggers themselves are `huvu_triggers` |
 | `act` | Runs a source action by name (`ha_bedroom_ac_set`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
-| `ui_choices`, `ui_show_feed`, `ui_show_image` | Parts for the frontend, added to the live turn of the calling session |
+| `ui_choices`, `ui_show_feed`, `ui_show_image`, `ui_youtube` | Parts for the frontend, added to the live turn of the calling session. `ui_youtube` finds the top video for a search through the YouTube Data API (`youtube.py`, `YOUTUBE_API_KEY`) |
 | `people_group` | The caller's groups and who is in each, by what the caller calls them. See [What people call each other](#what-people-call-each-other) |
 | `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |
 

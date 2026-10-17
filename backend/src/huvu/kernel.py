@@ -45,6 +45,7 @@ from .tools import ToolBox
 from .triggers import TriggerEngine
 from .screen import Screen
 from .wake import Waker
+from .youtube import YouTube
 
 log = logging.getLogger("huvu.kernel")
 
@@ -97,6 +98,7 @@ class Kernel:
         self.media = MediaStore(self)
         self.voice = Voice(config)
         self.hearing = Hearing(self)
+        self.youtube = YouTube(config.youtube_api_key)
         self.router = Router(self)
         self.dreams = Dreams(self)
         self.huvu = HuvuSource(self)
@@ -201,6 +203,7 @@ class Kernel:
         await self.hermes.close()
         await self.native_push.close()
         await self.hearing.close()
+        await self.youtube.close()
         await self.router.close()
         self.data.close()
         self.db.close()

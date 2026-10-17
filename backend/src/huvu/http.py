@@ -503,7 +503,8 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
 
     @app.post("/api/triggers/{trigger_id}/{verb}")
     async def trigger_control(trigger_id: str, verb: str, me: Device = device) -> JSONResponse:
-        """Pause or resume one of them. Resuming one the wake limit paused
+        """Pause or resume one of them, or have it skip its next fire
+        (`skip`) or none (`unskip`). Resuming one the wake limit paused
         takes this: a person's tap. `approve` says yes to an advanced
         trigger that waits: on the person's own device the tap is the yes,
         on a shared one it asks their phone like any approval."""
@@ -514,7 +515,12 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
                 raise HTTPException(404, f"no trigger {trigger_id!r}")
             await kernel.policy.request("huvu", "activate_trigger", {"trigger": trigger_id}, caller)
             return JSONResponse(api_json(trigger.public()))
-        controls = {"pause": kernel.triggers.pause, "resume": kernel.triggers.resume}
+        controls = {
+            "pause": kernel.triggers.pause,
+            "resume": kernel.triggers.resume,
+            "skip": lambda trigger_id, caller: kernel.triggers.skip(trigger_id, caller, 1),
+            "unskip": lambda trigger_id, caller: kernel.triggers.skip(trigger_id, caller, 0),
+        }
         if verb not in controls:
             raise HTTPException(404, f"no trigger control {verb!r}")
         try:

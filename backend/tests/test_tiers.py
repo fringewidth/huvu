@@ -102,12 +102,15 @@ async def test_everyone_gets_one_dream_and_a_removed_one_stays_gone(kernel):
     assert mine.spec.tier == "pro" and mine.spec.fire == "edge" and not mine.spec.once and "ctx.wake" in mine.spec.script
     assert mine.spec.sql == "SELECT 1 WHERE now_minute() = 240"
     assert "brief" in mine.spec.note and "quick notes" in mine.spec.note
-    # The model can't pause or remove a dream, a dream's own run included;
-    # its person can, from the app.
-    with pytest.raises(TriggerError, match="only they can pause or remove it"):
+    # The model can't pause, skip or remove a dream, a dream's own run
+    # included; its person can, from the app.
+    with pytest.raises(TriggerError, match="only they can pause, skip or remove it"):
         await kernel.triggers.remove(mine.id, ME)
-    with pytest.raises(TriggerError, match="only they can pause or remove it"):
+    with pytest.raises(TriggerError, match="only they can pause, skip or remove it"):
         await kernel.triggers.pause(mine.id, ME)
+    with pytest.raises(TriggerError, match="only they can pause, skip or remove it"):
+        await kernel.triggers.skip(mine.id, ME)
+    await kernel.triggers.skip(mine.id, Caller(kind="frontend", user="me"))
     await kernel.triggers.remove(mine.id, Caller(kind="frontend", user="me"))
     await kernel.dreams.ensure()
     assert not [t for t in kernel.triggers.list(ME) if t.spec.note.startswith("Your dream.")]

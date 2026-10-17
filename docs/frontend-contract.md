@@ -70,7 +70,7 @@ Only a session on pro or advanced may use Hermes's browser: a conversation's mai
 The backend builds parts from Hermes's stream:
 
 1. **Hermes's own tools.** `web_search` gets `args.query`; its result stays empty, since Hermes sends only a 500-character preview and a source count from it would be wrong. Any other Hermes tool becomes a part with empty args, which the stage shows as a generic note. Hermes's housekeeping (memory, skills, session search) never shows.
-1. **The model's `ui_*` tools.** `ui_choices` becomes a `choices` part, `ui_show_feed` a `video_feed` part with the feed's `src`, `label` and a `caption`, and `ui_show_image` an image part with its `caption`.
+1. **The model's `ui_*` tools.** `ui_choices` becomes a `choices` part, `ui_show_feed` a `video_feed` part with the feed's `src`, `label` and a `caption`, `ui_show_image` an image part with its `caption`, and `ui_youtube` a `youtube` part with the video's `id`, `title`, `channel` and `thumbnail`, which the app hands off to YouTube on a tap.
 1. **`MEDIA:<path>` in the answer.** It is Hermes's own way to attach a file, and its tools tell the model to use it, such as the browser's screenshot. The relay takes each tag out of the answer text and puts an image part where it was. A tag split across deltas is held back until it is whole. A tag whose file is missing or isn't an image stays as text.
 1. **huvu's actions** show as notes, such as `home_turn_on`. huvu's reads don't show.
 
@@ -161,7 +161,7 @@ Approvals are answered from phones only. An approval belongs to the user it was 
 
 ### Triggers
 
-`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `sql`, `fire` (`edge` or `rows`), `once`, `status` (`active`, `unconfirmed`, `awaiting`, `paused`), `tier` (`basic`, `pro` or `advanced`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one. A trigger a limit paused (`paused_by: "limit"`: it fired or woke huvu too often) resumes only this way, by a person's tap; the model can't. `POST /api/triggers/{id}/approve` says yes to an `awaiting` trigger: on the person's own device it goes live at once and the trigger comes back; elsewhere it opens an approval like any other.
+`GET /api/triggers` lists the triggers of this device's user (or of whoever is recognized at a shared device): `id`, `note`, `sql`, `fire` (`edge` or `rows`), `once`, `status` (`active`, `unconfirmed`, `awaiting`, `paused`), `tier` (`basic`, `pro` or `advanced`), `paused_by` (`model`, `user` or `limit`), `last_fired_at`, `fire_count` and more. `skip` is how many of its next fires it skips. `POST /api/triggers/{id}/pause` and `POST /api/triggers/{id}/resume` control one, and `POST /api/triggers/{id}/skip` and `POST /api/triggers/{id}/unskip` set it to skip its next fire, or none. A trigger a limit paused (`paused_by: "limit"`: it fired or woke huvu too often) resumes only this way, by a person's tap; the model can't. `POST /api/triggers/{id}/approve` says yes to an `awaiting` trigger: on the person's own device it goes live at once and the trigger comes back; elsewhere it opens an approval like any other.
 
 ### The wiki
 

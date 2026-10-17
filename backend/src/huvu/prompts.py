@@ -95,6 +95,7 @@ TOOLS: dict[str, str] = {
     'triggers_register': "Registers a trigger: one read-only query and a script that runs when its answer changes. Write `note` first: why it exists and what to do. fire edge runs the script when the answer goes from no rows to some rows, and again only after the answer was empty; fire rows runs it for each new row, so the query must return the id of a history table's row. once ends it after its first fire. The query runs at once when a table it reads gets a row, every minute when it reads the time, and every 5 seconds when it reads a live table. The script can call granted tools and can wake an instance of you. With dry_run it registers nothing, and shows the answer now and what the script would do. On a shared device with nobody recognized, the trigger waits until someone confirms on their phone that it was them; the result says so.",
     'triggers_remove': 'Removes a trigger.',
     'triggers_pause': 'Pauses a trigger: it stops firing, and keeps everything else. Use it when a trigger fires too often or misbehaves, until the person says what they want. `reason` is one line for them.',
+    'triggers_skip': "Makes a trigger skip its next fires and stay live: each skipped fire runs no script, and a once trigger waits for the fire after. Use it when your person wants one occurrence gone and the rest kept. To move an occurrence, skip it and register a once trigger for the new time. A trigger's skip column says how many fires it still skips.",
     'triggers_resume': 'Resumes a paused trigger. One a limit paused can only be resumed by its person, from the app.',
     'people_group': "Lists your person's groups, or the one named, and who is in each: their username, what your person calls them (`alias`), and whether they are a member or a guest. Look here first when your person names someone, such as \"tell mom\", and call people by their alias. When your person calls someone by another name, set it with huvu_set_person_alias.",
     'people_identify': "Asks someone who uses this shared device, on their phone, whether they're the one at it. Use it when someone says who they are, or you think you know. `user` is their username or name. Once they tap yes, you act for them: their triggers, approvals and notifications.",
@@ -102,12 +103,14 @@ TOOLS: dict[str, str] = {
     'ui_choices': 'Shows the owner buttons under your answer. Picking one sends its text as their next message.',
     'ui_show_feed': 'Shows a live feed in your answer. `feed` is a feed id from GET /api/feeds; `caption` says what it shows right now.',
     'ui_show_image': "Shows an image in your answer, after what you have written so far. `src` is an image file's absolute path on this machine, an https URL, or a ref from a source, such as an event's snapshot. `caption` goes under it.",
+    'ui_youtube': "Finds the top video on YouTube for `query` and shows it in your answer, after what you have written so far, with a button that opens it in your person's YouTube app, or on YouTube's site in a browser. Use it when your person wants to watch or listen to something on YouTube, music included. Write `query` the way you would search YouTube for it. Nothing plays until they tap the button; the result names the video, so say what you found.",
     'wake_wait': "Keeps this wake open after you finish, for your person, for up to a day. Without it, the wake ends when you finish. Your person opens the wake from a notification you send them with huvu_notify, or from their menu, and what they send there comes back to you as your next message, with everything you did here. Use it when you need their answer or their hand to go on. `waits_for` says in a few words what you need from them; they see it in their menu.",
 }
 
 # Argument descriptions the tool box adds.
 ACT_REASON = "One line: why."
 ACTION_REASON = "One line: why. Shown to the owner on approvals."
+SKIP_FIRES = "How many of its next fires to skip, 1 by default. It replaces any count set before, so 0 skips none."
 DRY_RUN = "Registers nothing: shows what the query reads, its answer now, and what the script would do with it, with actions and wakes only recorded."
 # Added to a source action's description when it always needs a tap.
 NEEDS_TAP = " Always needs a person's tap."
@@ -185,6 +188,7 @@ BROWSER_BLOCKED = "The browser works only on the pro and advanced tiers, and thi
 # The tool result of a Swiggy call that could place an order, pay, or
 # change the account, from the huvu Hermes plugin.
 SWIGGY_BLOCKED = "huvu never places an order, pays or changes your person's Swiggy account: only your person does, in the Swiggy app. Leave the cart ready and tell your person it is waiting for them there."
+
 
 
 # Opens a fresh session that continues a conversation, the way a compacted
@@ -610,6 +614,7 @@ TEXT: dict[str, str] = {
     'huvu.table.triggers.column.note': 'Why it exists and what to do',
     'huvu.table.triggers.column.once': 'Whether it ends after its first fire',
     'huvu.table.triggers.column.paused_by': 'model, user or limit, while paused',
+    'huvu.table.triggers.column.skip': 'How many of its next fires it skips',
     'huvu.table.triggers.column.script': 'Its script',
     'huvu.table.triggers.column.sql': 'Its query',
     'huvu.table.triggers.column.status': 'active, paused, unconfirmed (waiting for its person) or awaiting (waiting for their yes)',

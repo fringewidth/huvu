@@ -13,6 +13,7 @@
 # repo) with:
 #   HUVU_PUBLIC_URL=https://...  the address phones reach huvu at; required
 #   GROQ_API_KEY=gsk_...        speech to text; optional
+#   YOUTUBE_API_KEY=...         finding YouTube videos to hand off to the app; optional
 #   CLOUDFLARE_ACCOUNT_ID=...   the router's Clef-flash, for asks that aren't
 #   CLOUDFLARE_AI_TOKEN=...     house commands; optional, without them those run on pro
 #   HUVU_PORT=27613             only to move the port
@@ -33,6 +34,7 @@ services:
       # Not a secret: Amazon signs every request, and this only names the skill.
       - HUVU_ALEXA_SKILL_ID=${HUVU_ALEXA_SKILL_ID:-amzn1.ask.skill.49627247-f5d1-4980-997f-5a8a9039ebe5}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
       # Hermes's dashboard, only for the browser's screen: the backend asks it

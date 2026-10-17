@@ -57,7 +57,9 @@ key) and HUVU_MCP_TOKEN (the token that profile sends to /mcp) come from the
 environment, or else from backend/.env (gitignored), which setup.sh writes;
 both serve the default group's shared devices. HUVU_FCM_CREDENTIALS, the
 path of a Firebase service account's JSON key, turns on native push.
-GROQ_API_KEY turns on speech to text (hearing.py). CLOUDFLARE_ACCOUNT_ID
+GROQ_API_KEY turns on speech to text (hearing.py). YOUTUBE_API_KEY lets
+huvu find videos to hand off to the YouTube app (youtube.py).
+CLOUDFLARE_ACCOUNT_ID
 and CLOUDFLARE_AI_TOKEN (a token with Workers AI read) let the router ask
 Clef-flash whether an ask needs the conversation so far (routing.py);
 without them every ask runs on pro. HUVU_TIMEZONE, which
@@ -171,6 +173,8 @@ class Config:
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
+    # The YouTube Data API (youtube.py). No key, no videos.
+    youtube_api_key: str | None = None
     # The router (routing.py): one-off asks on basic, the rest on pro. Off
     # runs every ask on pro.
     router_enabled: bool = True
@@ -253,6 +257,7 @@ def load(path: Path | None = None) -> Config:
         speech_speed=float(speech.get("speed", 1.0)),
         groq_api_key=secret("GROQ_API_KEY"),
         stt_model=speech.get("stt_model", "whisper-large-v3"),
+        youtube_api_key=secret("YOUTUBE_API_KEY"),
         router_enabled=bool(router.get("enabled", True)),
         cloudflare_account_id=secret("CLOUDFLARE_ACCOUNT_ID"),
         cloudflare_ai_token=secret("CLOUDFLARE_AI_TOKEN"),
