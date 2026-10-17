@@ -122,6 +122,16 @@ There is no iPhone app. On an iPhone, huvu is the web page added to the home scr
 1. With huvu closed on the iPhone, ask for something that needs this person's yes. The iPhone should show "huvu needs a yes".
 1. In a Safari tab (not the home screen icon), log in. The menu should show no notifications row, and say "on Safari on iPhone".
 
+## Android: huvu on the home screen
+
+For an Android phone that can't install huvu's app, such as one whose company blocks installs.
+
+1. On the phone, open https://huvu.hrishik.me in Chrome. Tap the menu, then "Add to home screen", then "Install".
+1. Open huvu from that icon. It should open with no address bar. Log in.
+1. Open the menu. Under "you", it should say "notifications off", with "turn on" next to it. Do this on a phone with a pen (a Galaxy Ultra) too: it should look the same.
+1. Tap "turn on". Android should ask whether Chrome may send notifications, then whether huvu may. Allow both. The menu should say "notifications on".
+1. Close huvu, and get huvu to send this person a notification. The phone should show it.
+
 ## Approvals (phones only)
 
 1. Ask huvu: "remind me every day at 9pm to drink water, and use the advanced model for it". A card should appear above the text field. It should say "approve?", what the action does, who asked, and a countdown.
