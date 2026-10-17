@@ -197,7 +197,7 @@ It is built for a remote. The arrow keys move a highlight between items, Return 
 
 Video an app protects from copying shows black in screenshots, and some apps black out their menus too. There, go by the app in front and use the media keys.
 
-The box is off, and doesn't answer, while the home theatre's AV power is off. huvu's own app on it shows the people in the room your conversations with them: when you are done, leave it in front again, unless you left something playing for them. Each screenshot is saved as a file, whose path the result gives, should you want to show it to your person."""
+The box is off, and doesn't answer, while the home theatre's AV power is off. Its screen goes to sleep when nobody uses it, and the Wake key wakes it. huvu's own app on it shows the people in the room your conversations with them: when you are done, leave it in front again, unless you left something playing for them. Each screenshot is saved as a file, whose path the result gives, should you want to show it to your person."""
 
 EXTERNAL_COMPUTER_SCHEMA = {
     "name": "external_computer",
@@ -215,7 +215,7 @@ EXTERNAL_COMPUTER_SCHEMA = {
             "keys": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "For key: the keys, pressed in order. Up, Down, Left, Right, Return, Escape, Home, Menu, BackSpace, Space, Search, PageUp, PageDown, and the media keys PlayPause, Play, Pause, Stop, Rewind, FastForward, Next, Previous.",
+                "description": "For key: the keys, pressed in order. Up, Down, Left, Right, Return, Escape, Home, Menu, BackSpace, Space, Search, PageUp, PageDown, Wake and Sleep for the screen, and the media keys PlayPause, Play, Pause, Stop, Rewind, FastForward, Next, Previous.",
             },
             "text": {"type": "string", "description": "For type: plain ASCII text."},
             "target": {"type": "string", "description": "For open: a package name, a package/activity, or a link."},
