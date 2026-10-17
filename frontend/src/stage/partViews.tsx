@@ -1,3 +1,4 @@
+import { Capacitor } from "@capacitor/core";
 import { useEffect, useRef } from "react";
 import { ui } from "../config/interaction";
 import { capsClass, NUMERALS } from "./style";
@@ -75,6 +76,48 @@ export function VideoFeed({ part }: { part: ToolPart }) {
         />
       </div>
     </figure>
+  );
+}
+
+// Where a YouTube video opens. An iPhone's home screen app opens other sites
+// in a sheet of its own, where YouTube's app never takes over, so it goes to
+// the app by its scheme. The Android app hands a link to another site to
+// Android, which opens it in YouTube's app. A browser opens the site in a tab.
+function youtubeLink(id: string): { href: string; tab: boolean } {
+  const watch = `watch?v=${encodeURIComponent(id)}`;
+  if (/iPhone|iPad/.test(navigator.userAgent)) return { href: `youtube://www.youtube.com/${watch}`, tab: false };
+  return { href: `https://www.youtube.com/${watch}`, tab: !Capacitor.isNativePlatform() };
+}
+
+// A video huvu found on YouTube (ui_youtube). huvu plays nothing itself:
+// tapping it hands the video to YouTube. A screen with no input of its own
+// only shows what was found.
+export function YouTubeVideo({ part }: { part: ToolPart }) {
+  const id = str(part.args.id);
+  const title = str(part.args.title);
+  const channel = str(part.args.channel);
+  const thumbnail = str(part.args.thumbnail);
+  const { href, tab } = youtubeLink(id);
+  const body = (
+    <>
+      <span className={`${capsClass} flex min-w-0 items-center gap-3 text-ivory/60`}>
+        <span className="size-1.5 shrink-0 rounded-full bg-sindoor" />
+        <span className="truncate">youtube{channel && ` / ${channel}`}</span>
+      </span>
+      {thumbnail && <img src={thumbnail} alt="" className="aspect-video w-full border border-ivory/15 object-cover" />}
+      <span className="font-display text-base text-ivory">{title}</span>
+      {ui.hasInput && <span className={`${capsClass} text-sindoor`}>{tab ? "open on youtube" : "open in youtube"}</span>}
+    </>
+  );
+  if (!ui.hasInput || !id) return <figure className="m-0 flex max-w-[36rem] flex-col gap-2">{body}</figure>;
+  return (
+    <a
+      href={href}
+      {...(tab && { target: "_blank", rel: "noreferrer" })}
+      className="flex max-w-[36rem] flex-col gap-2 outline-none transition-opacity duration-500 hover:opacity-90 focus-visible:ring-1 focus-visible:ring-sindoor/60"
+    >
+      {body}
+    </a>
   );
 }
 

@@ -50,6 +50,7 @@ Optional settings go in a `.env` next to `compose.yaml`:
 
 ```sh
 GROQ_API_KEY=gsk_...          # voice: speech to text (console.groq.com, free)
+YOUTUBE_API_KEY=...           # YouTube: a Google Cloud API key with the YouTube Data API v3 on (free, about 100 searches a day)
 CLOUDFLARE_ACCOUNT_ID=...     # the router: Clef-flash on Workers AI (free tier);
 CLOUDFLARE_AI_TOKEN=...       # without these, every ask runs on the pro tier
 HUVU_PORT=27613               # only to move the port on the host

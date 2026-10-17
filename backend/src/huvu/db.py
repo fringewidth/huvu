@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS triggers (
     -- model, user or limit, while paused. One the limit paused resumes only
     -- by its user's tap.
     paused_by TEXT,
+    -- How many of its next fires it skips.
+    skip INTEGER NOT NULL DEFAULT 0,
     -- When it was last resumed; the wake limit counts from here.
     resumed_at TEXT,
     last_fired_at TEXT,
@@ -261,7 +263,7 @@ CREATE INDEX IF NOT EXISTS wakes_session ON wakes (session);
 
 # Columns added to a table after it was first made, which CREATE TABLE IF
 # NOT EXISTS doesn't add to an older database.
-ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("notifications", "sender_id", "TEXT"), ("push_tokens", "keys", "TEXT")]
+ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("notifications", "sender_id", "TEXT"), ("push_tokens", "keys", "TEXT"), ("triggers", "skip", "INTEGER NOT NULL DEFAULT 0")]
 
 
 # How long a statement waits for a lock another connection holds, in ms,

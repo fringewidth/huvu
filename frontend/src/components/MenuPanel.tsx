@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { allow, confirmPairing, refreshDevices, refreshTriggers, revoke, setPaused, useHousehold, type Trigger } from "../account/household";
+import { allow, confirmPairing, refreshDevices, refreshTriggers, revoke, setPaused, setSkipping, useHousehold, type Trigger } from "../account/household";
 import { canPair, errorText, logOut, useReach, useSession } from "../account/session";
 import { UNREACHABLE } from "../net/http";
 import { showWake, useWakes, type WakeInfo } from "../chat/wakes";
@@ -197,6 +197,14 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
       setError(errorText(err));
     }
   };
+  const toggleSkip = async () => {
+    setError(null);
+    try {
+      await setSkipping(t.id, t.skip === 0);
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
   const state = describe(t);
   return (
     <div className={`flex flex-col gap-1.5 border-l pl-3 ${limited ? "border-sindoor" : "border-ivory/15"}`}>
@@ -204,11 +212,16 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
       <div className="flex items-center gap-3">
         <span className={`${capsClass} ${limited || t.status === "awaiting" ? "text-sindoor" : "text-ivory/45"}`}>{state}</span>
         {t.fire_count > 0 && <span className={`${capsClass} text-ivory/35`}>fired {t.fire_count}</span>}
+        {t.status === "active" && (
+          <button type="button" onClick={() => void toggleSkip()} className={`${buttonClass} ml-auto text-ivory/60 hover:text-ivory`}>
+            {t.skip > 0 ? "don't skip" : "skip next"}
+          </button>
+        )}
         {t.status !== "unconfirmed" && (
           <button
             type="button"
             onClick={() => void toggle()}
-            className={`${buttonClass} ml-auto ${limited ? "text-ivory hover:text-sindoor" : "text-ivory/60 hover:text-ivory"}`}
+            className={`${buttonClass} ${t.status === "active" ? "" : "ml-auto"} ${limited ? "text-ivory hover:text-sindoor" : "text-ivory/60 hover:text-ivory"}`}
           >
             {t.status === "awaiting" ? "allow" : t.status === "active" ? "pause" : "resume"}
           </button>
@@ -222,6 +235,8 @@ function TriggerRow({ trigger: t }: { trigger: Trigger }) {
 function describe(t: Trigger): string {
   let state = `watching / ${t.once ? "once" : "every time"}`;
   if (t.tier !== "basic") state += ` / ${t.tier}`;
+  if (t.skip === 1) state += " / skips the next";
+  else if (t.skip > 1) state += ` / skips the next ${t.skip}`;
   if (t.status === "unconfirmed") state = "waiting for its person to say it's them";
   else if (t.status === "awaiting") state = "waiting for your yes: it uses the advanced model";
   else if (t.paused_by === "limit") state = "paused: it ran too often";

@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from huvu.spec import Caller
+from huvu.tools import ToolError
+from huvu.youtube import YouTube
 
 from .fakes import FakeHermes
 
@@ -417,6 +420,33 @@ async def test_ui_show_image_takes_a_path_and_a_caption(kernel, hermes, tmp_path
     await collect(kernel, live)
     [part] = live.turn.parts
     assert part["kind"] == "image" and part["caption"] == "the login page" and part["after"] == len("Look.")
+
+
+async def test_ui_youtube_shows_the_top_video_and_names_it(kernel, hermes):
+    def search(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["q"] == "kesariya arijit singh" and request.url.params["key"] == "k"
+        snippet = {"title": "Kesariya &#39;Brahmastra&#39;", "channelTitle": "Sony Music India", "thumbnails": {"high": {"url": "https://i.ytimg.com/vi/BddP6PYo2gs/hqdefault.jpg"}}}
+        return httpx.Response(200, json={"items": [{"id": {"kind": "youtube#video", "videoId": "BddP6PYo2gs"}, "snippet": snippet}]})
+
+    kernel.youtube = YouTube("k")
+    kernel.youtube._http = httpx.AsyncClient(transport=httpx.MockTransport(search))
+    results = []
+
+    async def play(session_id: str) -> None:
+        results.append(await kernel.tools.call("ui_youtube", {"query": "kesariya arijit singh"}, Caller(kind="hermes", session=session_id, user="me")))
+
+    hermes.script = [("run.started", {"run_id": "r"}), ("assistant.delta", {"delta": "Playing it."}), play, ("run.completed", {})]
+    live = await kernel.conversations.ask("c1", "play kesariya", user="me")
+    await collect(kernel, live)
+    [part] = live.turn.parts
+    assert part["toolName"] == "youtube" and part["after"] == len("Playing it.")
+    assert part["args"] == {"id": "BddP6PYo2gs", "title": "Kesariya 'Brahmastra'", "channel": "Sony Music India", "thumbnail": "https://i.ytimg.com/vi/BddP6PYo2gs/hqdefault.jpg"}
+    assert results[0].data["title"] == "Kesariya 'Brahmastra'" and results[0].labels == ["external"]
+
+
+async def test_ui_youtube_without_a_key_says_so(kernel):
+    with pytest.raises(ToolError, match="YOUTUBE_API_KEY"):
+        await kernel.tools.call("ui_youtube", {"query": "anything"}, Caller(kind="hermes", session="s", user="me"))
 
 
 async def test_a_running_turn_replays_what_came_before(kernel, hermes):

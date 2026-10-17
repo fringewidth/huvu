@@ -25,13 +25,14 @@ from pydantic import ValidationError
 
 from .accounts import AuthError, Device
 from .data import DataError
-from .prompts import ACT_REASON, ACTION_REASON, DRY_RUN, NEEDS_TAP, TOOLS, signature
+from .prompts import ACT_REASON, ACTION_REASON, DRY_RUN, NEEDS_TAP, SKIP_FIRES, TOOLS, signature
 from .registry import UnknownName, suggest
 from .scripts import ScriptError
 from .source import SourceError
 from .spec import Caller, Label, Result
 from .triggers import TriggerError, TriggerSpec
 from .wake import WakeEnded
+from .youtube import YouTubeError
 
 if TYPE_CHECKING:
     from .kernel import Kernel
@@ -113,7 +114,7 @@ class ToolBox:
             raise ToolError(f"{name} needs {', '.join(missing)}")
         try:
             result = await tool.handler(args, caller)
-        except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError, AuthError, DataError, WakeEnded) as err:
+        except (UnknownName, SourceError, TriggerError, ScriptError, ValidationError, AuthError, DataError, WakeEnded, YouTubeError) as err:
             raise ToolError(str(err)) from err
         return result
 
@@ -153,6 +154,13 @@ class ToolBox:
                 TOOLS["triggers_pause"],
                 _schema({"id": {"type": "string"}, "reason": {"type": "string"}}, ["id"]),
                 self._triggers_pause,
+                writes=True,
+            ),
+            Tool(
+                "triggers_skip",
+                TOOLS["triggers_skip"],
+                _schema({"id": {"type": "string"}, "fires": {"type": "integer", "minimum": 0, "description": SKIP_FIRES}}, ["id"]),
+                self._triggers_skip,
                 writes=True,
             ),
             Tool(
@@ -207,6 +215,12 @@ class ToolBox:
                 _schema({"src": {"type": "string"}, "caption": {"type": "string"}}, ["src"]),
                 self._ui_show_image,
             ),
+            Tool(
+                "ui_youtube",
+                TOOLS["ui_youtube"],
+                _schema({"query": {"type": "string"}}, ["query"]),
+                self._ui_youtube,
+            ),
         ]
 
     async def _act(self, args: dict[str, Any], caller: Caller) -> Result:
@@ -255,6 +269,10 @@ class ToolBox:
 
     async def _triggers_pause(self, args: dict[str, Any], caller: Caller) -> Result:
         trigger = await self._kernel.triggers.pause(args["id"], caller, args.get("reason"))
+        return Result(data=trigger.public(), labels=["house"])
+
+    async def _triggers_skip(self, args: dict[str, Any], caller: Caller) -> Result:
+        trigger = await self._kernel.triggers.skip(args["id"], caller, int(args.get("fires", 1)))
         return Result(data=trigger.public(), labels=["house"])
 
     async def _triggers_resume(self, args: dict[str, Any], caller: Caller) -> Result:
@@ -333,6 +351,11 @@ class ToolBox:
     async def _ui_show_image(self, args: dict[str, Any], caller: Caller) -> Result:
         url = self._kernel.media.url_for(args["src"])
         return await self._show(caller, "image", {"src": url, "caption": args.get("caption", "")}, ["house"])
+
+    async def _ui_youtube(self, args: dict[str, Any], caller: Caller) -> Result:
+        video = await self._kernel.youtube.find(str(args["query"]))
+        await self._show(caller, "youtube", video.public(), ["external"])
+        return Result(data={"shown": True, "title": video.title, "channel": video.channel}, labels=["external"])
 
     async def _show(self, caller: Caller, kind: str, args: dict[str, Any], labels: list[Label]) -> Result:
         shown = await self._kernel.conversations.show(caller, kind, args)

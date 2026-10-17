@@ -2,7 +2,7 @@ import type { RichPart, Turn } from "./thread";
 import { BACKEND } from "../net/http";
 import { PLATE } from "../config/palette";
 
-// A few past turns with images, a web search, a live feed and choices,
+// A few past turns with images, a web search, a live feed, a YouTube video and choices,
 // so the stage's rich parts and the history's chips can be seen before the
 // real gateway sends any. Dev builds only, and only with ?seed in the URL.
 export function devSeed(): Turn[] {
@@ -46,6 +46,18 @@ const SEED: (Pick<Turn, "ask" | "answer"> & { parts?: RichPart[] })[] = [
         caption: "smilestudio.example/book/saturday",
       }),
       tool("seed-choices", "choices", { options: ["book 10:30", "book 12:00", "the other two"] }),
+    ],
+  },
+  {
+    ask: "play kesariya",
+    answer: "Here's Kesariya, from Brahmastra.",
+    parts: [
+      tool("seed-youtube", "youtube", {
+        id: "BddP6PYo2gs",
+        title: "Kesariya - Brahmastra | Ranbir Kapoor | Alia Bhatt | Pritam | Arijit Singh | Amitabh Bhattacharya",
+        channel: "Sony Music India",
+        thumbnail: "https://i.ytimg.com/vi/BddP6PYo2gs/hqdefault.jpg",
+      }),
     ],
   },
 ];

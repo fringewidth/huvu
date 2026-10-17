@@ -15,7 +15,10 @@ owner's scope, and a script. `fire` says when the script runs:
         when the trigger is registered don't fire, nor rows that came while
         it was paused or waiting for its person.
 
-`once` ends it after its first fire. A trigger fires again only after its
+`once` ends it after its first fire. A trigger told to skip its next fires
+(`skip`) uses each of them up and runs no script, so "not tomorrow" needs no
+pause timed around the fire; a skipped fire doesn't end a `once` trigger.
+A trigger fires again only after its
 run ends: a change while it runs is looked at when the run ends, and no
 row is lost, since rows go by id.
 
@@ -146,6 +149,8 @@ class Trigger:
     group: str | None = None
     device: str | None = None
     paused_by: PausedBy | None = None
+    # How many of its next fires it skips.
+    skip: int = 0
     # When it was last resumed. The wake limit counts from here.
     resumed_at: datetime | None = None
     last_fired_at: datetime | None = None
@@ -165,6 +170,7 @@ class Trigger:
             "group": self.group,
             "device": self.device,
             "paused_by": self.paused_by,
+            "skip": self.skip,
             "note": self.spec.note,
             "sql": self.spec.sql,
             "fire": self.spec.fire,
@@ -228,6 +234,7 @@ class TriggerEngine:
                 expires_at=from_iso(spec.expires),
                 device=row["device_id"],
                 paused_by=row["paused_by"],
+                skip=row["skip"],
                 resumed_at=from_iso(row["resumed_at"]),
                 last_fired_at=from_iso(row["last_fired_at"]),
                 fire_count=row["fire_count"],
@@ -424,13 +431,13 @@ class TriggerEngine:
         return trigger
 
     def _only_its_person(self, trigger: Trigger, caller: Caller) -> None:
-        """A dream is the kernel's, and only its person may pause or remove
-        it, from the app. The dream itself audits its person's triggers,
+        """A dream is the kernel's, and only its person may pause, skip or
+        remove it, from the app. The dream itself audits its person's triggers,
         and on 2026-10-14 one that fired at an odd hour copied itself into
         a trigger of its own and removed the real one."""
         if caller.kind != "frontend" and self._kernel.dreams.is_dream(trigger.id):
             raise TriggerError(
-                f"{trigger.id} is your person's dream, which huvu runs and keeps up to date itself; only they can pause or remove it, from the app. Leave it as it is."
+                f"{trigger.id} is your person's dream, which huvu runs and keeps up to date itself; only they can pause, skip or remove it, from the app. Leave it as it is."
             )
 
     def get(self, trigger_id: str) -> Trigger | None:
@@ -489,6 +496,23 @@ class TriggerEngine:
         self._save(trigger)
         await self._kernel.kernel_event("trigger.paused", f"trigger {trigger.id} paused by {by}, {reason}: {trigger.spec.note}", entity=trigger.id, **_owner(trigger))
 
+    async def skip(self, trigger_id: str, caller: Caller, fires: int = 1) -> Trigger:
+        """Sets how many of its next fires one of the caller's live triggers
+        skips, 0 to skip none. It stays live, paused or not."""
+        trigger = self._triggers.get(trigger_id)
+        if trigger is None or trigger not in self.list(caller):
+            raise TriggerError(f"no live trigger {trigger_id!r}")
+        if fires < 0:
+            raise TriggerError("fires is how many of its next fires to skip: 0 or more")
+        self._only_its_person(trigger, caller)
+        trigger.skip = fires
+        self._save(trigger)
+        by = "user" if caller.kind == "frontend" else "model"
+        await self._kernel.kernel_event(
+            "trigger.skip", f"trigger {trigger.id} skips {f'its next {fires} fires' if fires else 'no fires'}, set by {by}: {trigger.spec.note}", entity=trigger.id, **_owner(trigger)
+        )
+        return trigger
+
     async def resume(self, trigger_id: str, caller: Caller) -> Trigger:
         trigger = self._triggers.get(trigger_id)
         if trigger is None or trigger not in self.list(caller) or trigger.status != "paused":
@@ -538,13 +562,14 @@ class TriggerEngine:
 
     def _write(self, trigger: Trigger) -> None:
         self._db.execute(
-            "UPDATE triggers SET status = ?, armed = ?, last_fired_at = ?, fire_count = ?, paused_by = ?, resumed_at = ?, after_id = ? WHERE id = ?",
+            "UPDATE triggers SET status = ?, armed = ?, last_fired_at = ?, fire_count = ?, paused_by = ?, skip = ?, resumed_at = ?, after_id = ? WHERE id = ?",
             (
                 trigger.status,
                 int(trigger.armed),
                 iso(trigger.last_fired_at),
                 trigger.fire_count,
                 trigger.paused_by,
+                trigger.skip,
                 iso(trigger.resumed_at),
                 trigger.after,
                 trigger.id,
@@ -655,7 +680,19 @@ class TriggerEngine:
 
     async def _fire(self, trigger: Trigger, columns: list[str], rows: list[list[Any]], labels: list[Any]) -> dict[str, Any] | None:
         """Marks the trigger fired and logs it, and returns the payload to
-        deliver, or None when the fire limit paused it instead."""
+        deliver, or None when it skips this fire or the fire limit paused it
+        instead."""
+        if trigger.skip:
+            trigger.skip -= 1
+            self._save(trigger)
+            await self._kernel.kernel_event(
+                "trigger.skipped",
+                f"trigger {trigger.id} skipped a fire with {len(rows)} rows, {trigger.skip} skips left: {trigger.spec.note}",
+                entity=trigger.id,
+                data={"rows": len(rows)},
+                **_owner(trigger),
+            )
+            return None
         now = self._kernel.now()
         while trigger.fires and now - trigger.fires[0] > FIRE_WINDOW:
             trigger.fires.popleft()
