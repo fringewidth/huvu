@@ -21,6 +21,7 @@ dependencies = [
     "dkimpy>=1.1.8",
     "dnspython>=2.9.0",
     "pypdf>=6.20.1",
+    "adb-shell[async]>=0.4.4",
 ]
 
 [project.scripts]

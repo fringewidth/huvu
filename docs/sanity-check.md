@@ -202,8 +202,17 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 
 1. With huvu open on the TV, hold the remote's mic button and say "Alexa, ask my huvu what time is it". Alexa should say nothing, and huvu should show your ask on the TV and answer it out loud.
 1. While huvu is still talking, press back. It should go quiet.
-1. Open YouTube on the TV, then tell huvu "turn on the home theatre" from your phone. Within a few seconds, huvu should come to the front on the TV over YouTube.
+1. Open YouTube on the TV, then tell huvu from your phone to put huvu back on the TV. Within about ten seconds, huvu should come to the front on the TV over YouTube.
 1. Close huvu on the TV and ask again. Alexa should say huvu isn't open on the TV.
+
+## The TV: huvu drives it
+
+1. With the home theatre on, ask huvu on your phone "what's on the TV?". Within about ten seconds, huvu should say what the TV shows, matching what you see.
+1. Ask it to show you the TV's screen. A picture of what the TV shows should appear in the turn.
+1. Ask "open Netflix on the TV". Netflix should open on the TV within about ten seconds, and huvu should say so.
+1. Ask it to find a film you name on Netflix and stop on its page. The TV should move through Netflix's search by itself, and stop on the film's page. Once a film plays, huvu may say the picture is black to it: Netflix hides its video from screenshots.
+1. Turn the home theatre off, wait two minutes, and ask "what's on the TV?". huvu should say the TV is off, without a long wait.
+1. On a quick ask that huvu answers on its own, without the conversation (such as "what's on the TV?" as the first thing you say), it should still answer, a little later, from a wake in the background.
 
 ## The TV: who's here
 

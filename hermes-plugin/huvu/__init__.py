@@ -26,6 +26,14 @@ can't tell which session a tool call came from. This plugin fills that in:
    placing an order and every payment tool among them, and so is any tool
    Swiggy adds later, until it is listed here. A cash-on-delivery order has
    no payment step at all, so the order tools are blocked too.
+7. The `external_computer` tool: the home theatre's Fire TV, driven like a
+   computer. Each call goes to the backend (`POST /api/computer`), which
+   holds the TV's ADB connection and says whether the session may use it,
+   by the browser's rule. The screenshot after each action comes back as
+   Hermes's multimodal result, so the model sees the screen in the same
+   step; an MCP tool's image would reach it only as a file path. Its
+   toolset, `external_computer`, is turned on for the API server by
+   setup.sh, since a plugin's toolset starts off.
 
 Settings come from the environment Hermes runs in:
     HUVU_URL              the backend, default http://localhost:3001
@@ -186,7 +194,36 @@ def _situation() -> str:
     return _post("/api/situation", {})["text"]
 
 
-def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
+# An action waits for its screenshot, about 3 s, and an open or a wait
+# settles first; a screenshot the box can only take the slow way takes
+# about 10 s more.
+COMPUTER_TIMEOUT = 90
+
+
+def _external_computer(args: dict[str, Any], session_id: str = "", **_: Any) -> str | dict[str, Any]:
+    action = (args or {}).get("action", "")
+    rest = {k: v for k, v in (args or {}).items() if k != "action"}
+    try:
+        answer = _post("/api/computer", {"session": session_id, "action": action, "args": rest}, timeout=COMPUTER_TIMEOUT)
+    except Exception as err:
+        logger.warning("huvu: external_computer failed, the backend didn't answer: %s", err)
+        return json.dumps({"error": f"huvu's backend didn't answer: {err}"})
+    if answer.get("error"):
+        return json.dumps({"error": answer["error"]})
+    text = json.dumps(answer.get("result") or {})
+    if not answer.get("image"):
+        return text
+    return {
+        "_multimodal": True,
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{answer['image']}"}},
+        ],
+        "text_summary": text,
+    }
+
+
+def _post(path: str, body: dict[str, Any], timeout: float = 3) -> dict[str, Any]:
     """POSTs to the backend as this turn's profile."""
     url = _secret("HUVU_URL", "http://localhost:3001").rstrip("/")
     token = _secret("HUVU_MCP_TOKEN")
@@ -196,16 +233,23 @@ def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
         headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=3) as res:
+    with urllib.request.urlopen(request, timeout=timeout) as res:
         return json.loads(res.read())
-
-
 
 
 def register(ctx) -> None:
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("on_stream_delta", _on_stream_delta)
+    # Older Hermes builds take no tools from a plugin.
+    if hasattr(ctx, "register_tool"):
+        ctx.register_tool(
+            name="external_computer",
+            toolset="external_computer",
+            schema=prompts.EXTERNAL_COMPUTER_SCHEMA,
+            handler=_external_computer,
+            description=prompts.EXTERNAL_COMPUTER_SCHEMA["description"],
+        )
     # Older Hermes builds have no system prompt sections.
     if hasattr(ctx, "register_system_prompt_section"):
         ctx.register_system_prompt_section("huvu", GUIDE)

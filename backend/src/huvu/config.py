@@ -72,6 +72,7 @@ profile secrets live in the database (see accounts.py), managed with
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dataclasses import dataclass, field
@@ -200,6 +201,12 @@ class Config:
     # huvu's PulseAudio (docker/s6/pulse), where each profile's browser
     # plays, for the screen's sound while its person holds it.
     pulse_server: str = "unix:/run/huvu-pulse/native"
+    # The external computer (external_computer.py): the TV box over ADB at
+    # host:port, with huvu's key, and the app it opens when the box boots
+    # (package/activity). No address, no external computer.
+    computer_adb: str | None = None
+    computer_key: Path | None = None
+    computer_open_on_boot: str | None = None
 
     def model(self, tier: str) -> ModelChoice:
         return self.models.get(tier) or ModelChoice(DEFAULT_MODELS[tier])
@@ -217,6 +224,7 @@ def load(path: Path | None = None) -> Config:
     speech = raw.get("speech", {})
     dream = raw.get("dream", {})
     router = raw.get("router", {})
+    computer = raw.get("external_computer", {})
     base = path.parent if path.exists() else Path.cwd()
     fcm = secret("HUVU_FCM_CREDENTIALS")
     # HUVU_WEB_DIR wins, so the image names where it put the build.
@@ -270,6 +278,9 @@ def load(path: Path | None = None) -> Config:
         dashboard_url=str(raw.get("screen", {}).get("dashboard", "http://127.0.0.1:9119")),
         dashboard_token=secret("HERMES_DASHBOARD_SESSION_TOKEN"),
         pulse_server=str(raw.get("screen", {}).get("pulse", "unix:/run/huvu-pulse/native")),
+        computer_adb=computer.get("adb"),
+        computer_key=(base / computer.get("key", "adbkey")).resolve(),
+        computer_open_on_boot=computer.get("open_on_boot"),
         sources=[SourceConfig(s["name"], s["driver"], dict(s.get("options", {}))) for s in raw.get("sources", [])],
     )
     for tier in config.models:
@@ -288,6 +299,8 @@ def load(path: Path | None = None) -> Config:
     for key, level in config.policy.items():
         if level not in ("silent", "notify", "ask"):
             raise ValueError(f"policy {key!r}: {level!r} must be silent, notify or ask")
+    if config.computer_adb is not None and not re.fullmatch(r"[^:\s]+:\d+", config.computer_adb):
+        raise ValueError(f"external_computer.adb must be host:port, not {config.computer_adb!r}")
     return config
 
 

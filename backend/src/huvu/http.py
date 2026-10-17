@@ -29,7 +29,8 @@ from .bundles import BundleError, Bundles
 from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, phone_auth
 from .config import Config
 from .conversations import Action
-from .prompts import BROWSER_BLOCKED
+from .external_computer import ComputerError, use
+from .prompts import BROWSER_BLOCKED, COMPUTER_BLOCKED
 from .screen import ScreenError
 from .hearing import HearingError
 from .kernel import Kernel
@@ -119,6 +120,13 @@ class WebPushSubscription(BaseModel):
 
 class Browsing(BaseModel):
     session: str
+
+
+class ComputerAction(BaseModel):
+    session: str
+    action: str
+    # The tool call's other arguments, as the model wrote them.
+    args: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScreenLease(BaseModel):
@@ -628,6 +636,25 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(401, "unauthorized")
         allowed = kernel.may_browse(body.session, user, group)
         return {"allowed": allowed, "why": None if allowed else BROWSER_BLOCKED}
+
+    @app.post("/api/computer")
+    async def computer(request: Request, body: ComputerAction) -> dict[str, Any]:
+        """One action of the external_computer tool, for the huvu Hermes
+        plugin, from a session that may use the browser. `result` is what
+        the model reads, `image` the screenshot after the action (base64
+        JPEG), and `error` why it failed."""
+        known, user, group = mcp_caller(config, accounts, bearer(request))
+        if not known:
+            raise HTTPException(401, "unauthorized")
+        if kernel.computer is None:
+            return {"error": "huvu has no external computer set up"}
+        if not kernel.may_browse(body.session, user, group):
+            return {"error": COMPUTER_BLOCKED}
+        try:
+            outcome = await use(kernel.computer, body.action, body.args, config.data_dir / "external_computer", kernel.now())
+        except ComputerError as err:
+            return {"error": str(err)}
+        return {"result": outcome.result, "image": outcome.image}
 
     @app.post("/api/situation")
     async def situation(request: Request) -> dict[str, str]:
