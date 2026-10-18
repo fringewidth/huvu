@@ -78,18 +78,22 @@ async def test_taps_run_at_once_on_personal_devices_only(kernel, home, family):
     assert home.acted == [("unlock", {})]
 
 
-async def test_notifications_reach_the_users_phones(kernel, family):
+async def test_notifications_reach_the_users_phones_and_browsers(kernel, family):
     from .test_triggers import push_events
 
     mine, mine_task = await push_events(kernel, family.me_phone.id)
+    browser, browser_task = await push_events(kernel, family.me_web.id)
     moms, moms_task = await push_events(kernel, family.mom_phone.id)
+    tv, tv_task = await push_events(kernel, family.tv.id)
     await kernel.tools.call("huvu_notify", {"text": "for me"}, Caller(kind="hermes", user="me"))
     await kernel.tools.call("huvu_notify", {"text": "for everyone"}, Caller(kind="hermes"))
     await asyncio.sleep(0)
     assert [d["text"] for _, d in mine] == ["for me", "for everyone"]
+    assert [d["text"] for _, d in browser] == ["for me", "for everyone"]
     assert [d["text"] for _, d in moms] == ["for everyone"]
-    mine_task.cancel()
-    moms_task.cancel()
+    assert tv == []
+    for task in (mine_task, browser_task, moms_task, tv_task):
+        task.cancel()
 
 
 async def test_external_results_keep_their_label(kernel, home):

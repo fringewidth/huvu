@@ -150,6 +150,20 @@ def phone_auth(config: Config, accounts: Accounts):
     return check
 
 
+def personal_auth(config: Config, accounts: Accounts):
+    """Like device_auth, for a person's own phone or browser: what shows
+    their notifications."""
+    device_check = device_auth(config, accounts)
+
+    async def check(request: Request) -> Device:
+        device = await device_check(request)
+        if not device.is_personal:
+            raise HTTPException(403, "do this from your phone or browser")
+        return device
+
+    return check
+
+
 def mcp_caller(config: Config, accounts: Accounts, token: str) -> tuple[bool, str | None, str | None]:
     """Whose Hermes profile sent this token: (allowed, user, group)."""
     known, user, group = accounts.mcp_caller(token) if token else (False, None, None)

@@ -18,13 +18,19 @@ interface ComposerProps {
   onSubmit: (text: string, from: Snapshot) => void;
   rewinding: boolean;
   onCancelRewind: () => void;
-  // A reply is still coming in. The composer offers to stop it, and sends
-  // nothing new until it is stopped or done.
+  // A reply is still coming in. The composer offers to stop it, and what
+  // is sent meanwhile waits in `queued`. A rewind sends nothing until the
+  // reply is stopped or done.
   running: boolean;
   // Asked to stop: the backend lets Hermes finish its last words, so the
   // reply ends a moment later.
   stopping: boolean;
   onStop: () => void;
+  // Asks sent while the reply comes in. They go as one ask once it
+  // finishes.
+  queued: string[];
+  // Takes the queued asks back into the field, to edit.
+  onUnqueue: () => void;
 }
 
 // Your words are always sans serif, the same face as the YOU cue they fly
@@ -44,8 +50,11 @@ export const Composer = memo(function Composer({
   running,
   stopping,
   onStop,
+  queued,
+  onUnqueue,
 }: ComposerProps) {
-  const canSend = draft.trim().length > 0 && !running;
+  const canSend = draft.trim().length > 0 && !(running && rewinding);
+  const queues = running && !rewinding;
 
   // An edit flies the old ask back down into the field.
   useLayoutEffect(() => {
@@ -58,6 +67,16 @@ export const Composer = memo(function Composer({
     onSubmit(draft.trim(), snapshot(el));
     // Phone: the keyboard goes down so the answer gets the whole screen.
     if (!ui.enterSends) el.blur();
+  };
+
+  // Phone: the tap that takes them back opens the keyboard too, which iOS
+  // allows only inside the tap itself.
+  const unqueue = () => {
+    const el = textareaRef.current;
+    onUnqueue();
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length));
   };
 
   return (
@@ -108,6 +127,35 @@ export const Composer = memo(function Composer({
             )}
           </AnimatePresence>
         </div>
+        <AnimatePresence initial={false}>
+          {queued.length > 0 && (
+            <m.div
+              key="queued"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.4, ease: EASE }}
+              className="overflow-hidden"
+            >
+              <button
+                type="button"
+                onClick={unqueue}
+                aria-label={`edit the queued ask: ${queued.join(", ")}`}
+                className="group flex w-full flex-col items-start gap-1 text-left"
+              >
+                {queued.map((text, i) => (
+                  <span
+                    key={i}
+                    className="line-clamp-2 font-display text-[16px] leading-[1.4] text-ivory/45 transition-colors duration-500 group-hover:text-ivory/70 sm:text-[18px]"
+                  >
+                    {text}
+                  </span>
+                ))}
+                {ui.queueHint && <span className={`${capsClass} text-ivory/35`}>{ui.queueHint}</span>}
+              </button>
+            </m.div>
+          )}
+        </AnimatePresence>
         <div className="flex items-end gap-3 sm:gap-5">
           <textarea
             id="huvu-ask"
@@ -118,6 +166,14 @@ export const Composer = memo(function Composer({
             enterKeyHint={ui.enterSends ? "send" : "enter"}
             onChange={(e) => onDraft(e.target.value)}
             onKeyDown={(e) => {
+              // Up at the very start of the field takes the queued asks
+              // back.
+              const el = e.currentTarget;
+              if (e.key === "ArrowUp" && queued.length > 0 && el.selectionStart === 0 && el.selectionEnd === 0) {
+                e.preventDefault();
+                onUnqueue();
+                return;
+              }
               if (!ui.enterSends || e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
               e.preventDefault();
               send();
@@ -135,7 +191,7 @@ export const Composer = memo(function Composer({
                 transition={{ duration: 0.4, ease: EASE }}
                 className={`${capsClass} mb-1 flex min-h-11 shrink-0 items-center px-3 text-ivory`}
               >
-                send
+                {queues ? "queue" : "send"}
               </m.button>
             )}
           </AnimatePresence>

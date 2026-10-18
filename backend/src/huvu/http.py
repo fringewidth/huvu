@@ -26,7 +26,7 @@ from . import mcp_server, wiki
 from .accounts import AuthError, Device
 from .alexa import Alexa, AlexaError
 from .bundles import BundleError, Bundles
-from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, phone_auth
+from .auth import LoginLimit, McpAuth, bearer, client_address, device_auth, ingest_auth, mcp_caller, personal_auth, phone_auth
 from .config import Config
 from .conversations import Action
 from .external_computer import ComputerError, use
@@ -147,6 +147,7 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
     mcp = mcp_server.build(kernel)
     device = Depends(device_auth(config, accounts))
     phone = Depends(phone_auth(config, accounts))
+    personal = Depends(personal_auth(config, accounts))
     poster = Depends(ingest_auth(config, accounts))
     login_limit = LoginLimit()
     bundles = Bundles(config.bundles_dir)
@@ -423,15 +424,17 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         kernel.native_push.register(me.id, body.token, body.platform)
         return {"ok": True}
 
-    @app.get("/api/push/web", dependencies=[phone])
+    @app.get("/api/push/web", dependencies=[personal])
     async def web_push_key() -> dict[str, str]:
-        """The VAPID public key a home screen web app subscribes with."""
+        """The VAPID public key a home screen web app or a browser
+        subscribes with."""
         return {"key": kernel.native_push.web.public_key}
 
     @app.post("/api/push/web")
-    async def web_push_subscribe(body: WebPushSubscription, me: Device = phone) -> dict[str, bool]:
-        """A home screen web app's push subscription, in place of an FCM
-        token. Logging the device out drops it."""
+    async def web_push_subscribe(body: WebPushSubscription, me: Device = personal) -> dict[str, bool]:
+        """A home screen web app's or a browser's push subscription, in
+        place of an FCM token. A browser gets notifications only, since
+        only a phone answers. Logging the device out drops it."""
         kernel.native_push.register(me.id, body.endpoint, "web", body.keys.model_dump())
         return {"ok": True}
 
@@ -495,9 +498,9 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
         return JSONResponse(api_json(kernel.policy.public(approval)))
 
     @app.get("/api/notifications")
-    async def notifications(by: Device = phone) -> JSONResponse:
-        """The notifications of the last few days, for a phone that wasn't
-        connected when they were sent."""
+    async def notifications(by: Device = personal) -> JSONResponse:
+        """The notifications of the last few days, for a phone or browser
+        that wasn't connected when they were sent."""
         return JSONResponse(api_json(kernel.notifications(by.user)))
 
     # Triggers

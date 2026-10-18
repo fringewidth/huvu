@@ -128,6 +128,11 @@ class Device:
         return self.kind == "phone"
 
     @property
+    def is_personal(self) -> bool:
+        """A person's own phone or browser: what shows their notifications."""
+        return self.user is not None and self.kind in ("phone", "web")
+
+    @property
     def is_tracker(self) -> bool:
         return self.kind == "tracker"
 
@@ -374,6 +379,12 @@ class Accounts:
                 "WHERE d.kind = 'phone' AND m.group_id = ? AND m.role = 'member'",
                 (group_id or self.default_group(),),
             ).fetchall()
+        return [r["id"] for r in rows]
+
+    def personal(self, user_id: str) -> list[str]:
+        """A user's phones and browsers, which show their notifications.
+        What needs an answer goes to their phones alone (phones)."""
+        rows = self._conn.execute("SELECT id FROM devices WHERE kind IN ('phone', 'web') AND user_id = ?", (user_id,)).fetchall()
         return [r["id"] for r in rows]
 
     # Hermes profiles

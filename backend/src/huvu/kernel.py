@@ -326,9 +326,9 @@ class Kernel:
         opens: str | None = None,
         sender: str | None = None,
     ) -> None:
-        """A notification on a user's phones, or on a group's members'
-        phones when there is no user. It is kept for NOTIFY_KEEP, so a phone
-        that wasn't connected finds it later. `opens` names the app screen
+        """A notification on a user's phones and browsers, or on a group's
+        members' when there is no user. It is kept for NOTIFY_KEEP, so a
+        device that wasn't connected finds it later. `opens` names the app screen
         that deals with it, such as "triggers". `sender` is the user who
         sent it through huvu_message: each recipient sees them by their own
         alias for them, and a group's message skips its sender."""
@@ -346,7 +346,7 @@ class Kernel:
         recipients = [user] if user else [m for m in self.accounts.members(group) if m != sender]
         for person in recipients:
             said_by = self._sender(person, sender)
-            self.push.send("notify", {**payload, "from": said_by}, self.accounts.phones(person))
+            self.push.send("notify", {**payload, "from": said_by}, self.accounts.personal(person))
             # The next ask on any of their own devices carries it, so a reply
             # to what huvu asked comes with the question.
             for device in self.accounts.devices_for(person):
@@ -359,7 +359,7 @@ class Kernel:
         return self.accounts.alias(recipient, sender) if sender else None
 
     def notifications(self, user: str | None) -> list[dict[str, Any]]:
-        """What was sent to a user's phones: their own notifications and
+        """What was sent to a user's devices: their own notifications and
         their member groups', oldest first. A message the user sent to a
         group is left out."""
         groups = self.accounts.member_groups(user)

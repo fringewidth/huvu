@@ -106,6 +106,12 @@ export function Stage() {
   // speaking while it listens brings it back.
   const [docked, setDocked] = useState(false);
   const [draft, setDraft] = useState("");
+  // Asks typed while a reply still comes in. They go as one ask once it
+  // ends. Stopping it puts them back into the field, and so does a reply
+  // that failed: a phone back from the background can lose a turn's
+  // stream while the turn still runs, and a new ask would stop it.
+  const [queued, setQueued] = useState<string[]>([]);
+  const unqueued = (text: string) => [...queued, text].filter((t) => t.trim()).join("\n");
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [menu, setMenu] = useState<MenuSection | null>(null);
   const wikiOpen = useWikiOpen();
@@ -212,7 +218,33 @@ export function Stage() {
     setDraft("");
   };
 
-  const stop = thread.stop;
+  const unqueue = () => {
+    if (queued.length === 0) return;
+    setDraft(unqueued(draft));
+    setQueued([]);
+  };
+
+  // The queue goes once the reply has finished, through `outbox`, since
+  // asking is no state of this component's. It waits out a rewind, and
+  // goes after the edit's reply. It goes back into the field in voice
+  // mode, which talks over the reply, and when another conversation takes
+  // the stage, since it belongs to the one it was typed in.
+  const [outbox, setOutbox] = useState<{ n: number; text: string } | null>(null);
+  if (queued.length > 0) {
+    if (mode === "voice" || stagedWake !== wakeId) unqueue();
+    else if (!running && !rewindId) {
+      if (allTurns.findLast(thread.asked)?.ending === "failed") unqueue();
+      else {
+        setOutbox({ n: (outbox?.n ?? 0) + 1, text: queued.join("\n") });
+        setQueued([]);
+      }
+    }
+  }
+
+  const stop = () => {
+    thread.stop();
+    unqueue();
+  };
 
   // Undoes the innermost thing: a reply still coming in, a rewind, history
   // or an opened turn, then voice mode. Returns false when there is
@@ -274,10 +306,12 @@ export function Stage() {
   const composerActions = useStable({
     submit: (text: string, from: Snapshot) => {
       setDraft("");
-      submit(text, from);
+      if (running && !rewindId) setQueued([...queued, text]);
+      else submit(text, from);
     },
     cancelRewind,
     stop,
+    unqueue,
   });
   // The flower always listens, and cuts huvu off to do it. The "write"
   // button is the way back to text. Tapping the docked flower only brings
@@ -541,6 +575,13 @@ export function Stage() {
     wrote.current = { id: turn.id, words, sent: w.sent + grow };
   }, [allTurns, mode, sessionStart]);
 
+  const sent = useRef(0);
+  useEffect(() => {
+    if (!outbox || outbox.n === sent.current) return;
+    sent.current = outbox.n;
+    thread.ask(outbox.text, inputMode);
+  }, [outbox, inputMode]);
+
   // With a keyboard, the text field is always the one in focus while in
   // text mode, so typing and holding space both work without a click
   // first. A touch screen is left alone, since focusing there pops up its
@@ -750,6 +791,8 @@ export function Stage() {
           running={running}
           stopping={stopping}
           onStop={composerActions.stop}
+          queued={queued}
+          onUnqueue={composerActions.unqueue}
         />
       )}
 

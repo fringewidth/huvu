@@ -1,5 +1,6 @@
-"""Web Push: what native_push.py does for the app, for huvu added to an
-iPhone's home screen, which has no app and no FCM.
+"""Web Push: what native_push.py does for the app, for huvu added to a
+phone's home screen, which has no FCM, and for huvu in a browser, which
+gets notifications only.
 
 The browser subscribes with huvu's VAPID public key and hands the backend
 its subscription: an endpoint at the browser's push service (Apple's for

@@ -157,8 +157,11 @@ function actionsAfterLastAsk(turns: Turn[]): Action[] {
   return turns.slice(from).flatMap((t) => (t.feed ? [{ text: `opened the live feed ${t.feed.label}`, at: new Date(t.at).toISOString() }] : []));
 }
 
-// Reads one turn's stream into the turn, until the backend ends it.
-async function read(store: Store, id: string, replies: (signal: AbortSignal) => AsyncGenerator<Reply>): Promise<void> {
+// Reads one turn's stream into the turn, until the backend ends it. A
+// stream lost on the way (a dropped connection, a phone in the background)
+// says nothing about the turn, which the backend runs on, so a turn the
+// backend has is followed again from its start, once.
+async function read(store: Store, id: string, replies: (signal: AbortSignal) => AsyncGenerator<Reply>, again = true): Promise<void> {
   const abort = new AbortController();
   store.streams.set(id, abort);
   try {
@@ -169,6 +172,11 @@ async function read(store: Store, id: string, replies: (signal: AbortSignal) => 
     patch(store, id, { running: false, stopping: false, thinking: "" });
   } catch (err) {
     if (abort.signal.aborted) return;
+    if (again && store.known.has(id) && !store.dropped.has(id)) {
+      console.warn("thread: lost the reply's stream, following it again", err);
+      void read(store, id, (signal) => followTurn(id, signal), false);
+      return;
+    }
     console.error("thread: reply failed", err);
     patch(store, id, { running: false, stopping: false, thinking: "", ending: "failed" });
   } finally {
@@ -181,7 +189,7 @@ async function read(store: Store, id: string, replies: (signal: AbortSignal) => 
 function follow(store: Store, id: string, at = Date.now()): void {
   if (store.streams.has(id) || store.dropped.has(id)) return;
   if (!store.state.turns.some((t) => t.id === id)) set(store, insert(store.state.turns, [{ ...blank(id, at), running: true }]));
-  else patch(store, id, { running: true });
+  else patch(store, id, { running: true, ending: null });
   void read(store, id, (signal) => followTurn(id, signal));
 }
 
@@ -310,7 +318,9 @@ export function notify(n: NoticeData): void {
 
 // Merges what the backend keeps into a store: turns this client doesn't
 // have are added, one that ended while nobody here listened takes the
-// backend's ending, and one still running is followed from its start.
+// backend's ending, and one still running is followed from its start. A
+// turn that failed here may have finished there: its stream was lost, not
+// the turn.
 function merge(store: Store, kept: KeptTurn[]): void {
   const local = new Map(store.state.turns.map((t) => [t.id, t]));
   const added: Turn[] = [];
@@ -321,7 +331,7 @@ function merge(store: Store, kept: KeptTurn[]): void {
     if (store.dropped.has(k.id) || store.streams.has(k.id)) continue;
     const turn: Turn = { ...blank(k.id, Date.parse(k.at)), ask: k.ask, answer: k.answer.trim(), parts: k.parts, running: k.running, ending: k.ending };
     if (!mine) added.push(turn);
-    else if (mine.running && !k.running) turns = turns.map((t) => (t.id === k.id ? turn : t));
+    else if ((mine.running || mine.ending === "failed") && !k.running) turns = turns.map((t) => (t.id === k.id ? turn : t));
   }
   set(store, insert(turns, added));
   for (const k of kept) if (k.running) follow(store, k.id);

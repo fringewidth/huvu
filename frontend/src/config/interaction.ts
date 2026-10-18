@@ -50,6 +50,8 @@ interface Profile {
   // nothing.
   placeholder?: string;
   idleHint?: string;
+  // Under the asks queued while a reply comes in: how to take them back.
+  queueHint?: string;
   // One is picked at random at launch.
   greetings: Greeting[];
   // The voice flower's full size, in px.
@@ -75,6 +77,7 @@ const PROFILES: Record<Target, Profile> = {
     keyboard: true,
     pushToTalkKey: " ",
     placeholder: "write, or hold space to speak",
+    queueHint: "up or click to edit",
     idleHint: "hold space to speak, or click the flower",
     greetings: [
       { line: "Back at it." },
@@ -98,6 +101,7 @@ const PROFILES: Record<Target, Profile> = {
     sendButton: true,
     keyboard: false,
     placeholder: "write, or tap the flower",
+    queueHint: "tap to edit",
     idleHint: "tap the flower to listen",
     greetings: [
       { line: "Back at it." },

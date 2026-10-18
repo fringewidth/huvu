@@ -1,6 +1,7 @@
 """Native push: FCM, so a phone hears what needs its person while the app
-is closed, and Web Push (web_push.py) for huvu added to an iPhone's home
-screen, which logs in as a phone too.
+is closed, and Web Push (web_push.py) for huvu added to a phone's home
+screen, which logs in as a phone too, and for huvu in a browser, which is
+sent notifications and nothing that needs an answer.
 
 The push stream (push.py) reaches a phone only while its app holds it open.
 A phone also registers its FCM token (`POST /api/push/token`), and the
