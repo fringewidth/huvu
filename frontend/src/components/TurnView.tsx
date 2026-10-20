@@ -200,7 +200,7 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
           {pieces.map((piece, i) =>
             "notes" in piece ? (
               <m.div key={i} {...fade}>
-                <HeroParts here={piece.notes} onChoose={actions.choose} onWatch={actions.watch} />
+                <Steps here={piece.notes} onChoose={actions.choose} onWatch={actions.watch} />
               </m.div>
             ) : (
               <AnimatePresence key={i} initial={false} mode="popLayout" custom={shape.ratio}>
@@ -278,10 +278,66 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
   );
 });
 
-function HeroParts({ here, onChoose, onWatch }: { here: RichPart[]; onChoose: (text: string) => void; onWatch: () => void }) {
+interface PartsProps {
+  here: RichPart[];
+  onChoose: (text: string) => void;
+  onWatch: () => void;
+}
+
+// The tool parts that show. The browser's steps in a row show as one note:
+// its first.
+function shownTools(here: RichPart[]): ToolPart[] {
+  return here.filter((p): p is ToolPart => p.kind === "tool").filter((p, i, all) => !isBrowser(p) || all.findIndex(isBrowser) === i);
+}
+
+// Notes huvu made one after another, with no words between them, fold
+// into one line that a tap opens and closes. A screen with no input of its
+// own shows only the line.
+function Steps({ here, onChoose, onWatch }: PartsProps) {
+  const [open, setOpen] = useState(false);
+  const count = shownTools(here).length;
+  if (count < 2) return <HeroParts here={here} onChoose={onChoose} onWatch={onWatch} />;
+  const label = `${count} steps`;
+  return (
+    <div className="flex flex-col">
+      {ui.hasInput ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className={`${capsClass} halo -my-3 flex min-h-11 items-center gap-2 self-start text-ivory/50 outline-none transition-colors duration-500 hover:text-ivory/80 focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+        >
+          {label}
+          <m.span aria-hidden animate={{ rotate: open ? 90 : 0 }} transition={{ duration: 0.4, ease: EASE }} className="inline-block">
+            ›
+          </m.span>
+        </button>
+      ) : (
+        <p className={`${capsClass} halo m-0 text-ivory/50`}>{label}</p>
+      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <m.div
+            key="steps"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.5, ease: EASE }}
+            className="overflow-hidden"
+          >
+            <div className="pt-4">
+              <HeroParts here={here} onChoose={onChoose} onWatch={onWatch} />
+            </div>
+          </m.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function HeroParts({ here, onChoose, onWatch }: PartsProps) {
   const images = here.filter((p): p is ImagePart => p.kind === "image");
-  // The browser's steps in a row show as one note: its first.
-  const tools = here.filter((p): p is ToolPart => p.kind === "tool").filter((p, i, all) => !isBrowser(p) || all.findIndex(isBrowser) === i);
+  const tools = shownTools(here);
   return (
     <div className="flex flex-col gap-4">
       {images.length > 0 && (
