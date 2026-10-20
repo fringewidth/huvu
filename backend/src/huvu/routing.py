@@ -45,6 +45,10 @@ WORKERS_AI = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf
 CACHE_SIZE = 2000
 # How long the connection to Workers AI stays open between asks, in seconds.
 KEEPALIVE = 300.0
+# How often `warm` touches the connection. Cloudflare closes one that has
+# been idle somewhere between 30 and 90 s, and a new one costs 0.6 to 2 s,
+# against Clef-flash's 0.25 s on an open one (measured 2026-10-20).
+WARM_EVERY = 20.0
 
 log = logging.getLogger("huvu.routing")
 
@@ -98,14 +102,17 @@ class Router:
         await self._http.aclose()
 
     async def warm(self) -> None:
-        """Opens the connection to Workers AI, so the first ask doesn't pay
-        for the handshake. A GET is refused, and that's fine: only the
-        connection matters."""
-        if self._account and self._token:
+        """Keeps the connection to Workers AI open for the kernel's life, so
+        no ask pays for the handshake. A GET is refused, and that's fine:
+        only the connection matters."""
+        if not (self._account and self._token):
+            return
+        while True:
             try:
                 await self._http.get(WORKERS_AI.format(account=self._account), headers={"Authorization": f"Bearer {self._token}"}, timeout=5.0)
             except httpx.HTTPError:
                 pass
+            await asyncio.sleep(WARM_EVERY)
 
     async def route(self, ask: str, *, notes: bool = False) -> Route:
         """`notes`: notes wait for the conversation's next ask, such as a
