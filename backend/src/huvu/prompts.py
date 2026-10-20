@@ -191,7 +191,7 @@ SWIGGY_BLOCKED = "huvu never places an order, pays or changes your person's Swig
 
 # The external_computer tool the huvu Hermes plugin adds
 # (external_computer.py): the home theatre's Fire TV, driven like a computer.
-EXTERNAL_COMPUTER = """The household's TV box: a Fire TV on the home theatre's projector, a computer apart from yours that you see and drive. Every action but `apps` answers with a fresh screenshot, the app in front, and whether the screen is on.
+EXTERNAL_COMPUTER = """The household's TV box: a Fire TV on the home theatre's projector, a computer apart from yours that you see and drive. Every action but `apps` answers with a fresh screenshot, the app in front, and whether the screen is on. When the screen can't be seen after an action, `screen` says why, and the action still ran.
 
 It is built for a remote. The arrow keys move a highlight between items, Return opens the highlighted one, Escape goes back, and Home goes to the home screen. Clicks reach only some apps: find the highlight and move it with the keys first. Text goes into the field that has the highlight, once its on-screen keyboard is open.
 

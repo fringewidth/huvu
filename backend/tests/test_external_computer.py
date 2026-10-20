@@ -91,6 +91,22 @@ async def test_actions_check_their_arguments(tmp_path):
     assert computer.did == [("keys", "Up", "Return")]
 
 
+class BlindComputer(FakeComputer):
+    async def look(self) -> Look:
+        raise ComputerError("the TV box stopped answering")
+
+
+async def test_an_action_that_ran_says_so_when_the_screen_cant_be_seen(tmp_path):
+    computer = BlindComputer()
+    outcome = await use(computer, "open", {"target": "com.netflix.ninja"}, tmp_path, NOW)
+    assert computer.did == [("open", "com.netflix.ninja")]
+    assert outcome.result == {"action": "open", "target": "com.netflix.ninja", "screen": "unseen: the TV box stopped answering"}
+    assert outcome.image is None
+    # Seeing the screen is all a screenshot does, so it fails.
+    with pytest.raises(ComputerError, match="stopped answering"):
+        await use(computer, "screenshot", {}, tmp_path, NOW)
+
+
 async def test_only_the_latest_screenshots_are_kept(tmp_path, monkeypatch):
     monkeypatch.setattr(external_computer, "KEEP_SHOTS", 2)
     for second in range(4):
@@ -117,6 +133,8 @@ class FakeDevice:
         if self.tv.dead:
             raise ConnectionResetError("the TV lost power")
         self.tv.commands.append(command)
+        if command.startswith("screenrecord") and self.tv.record_hangs:
+            raise TimeoutError("screenrecord never ended")
         return b"a video" if command.startswith("screenrecord") else b"a png"
 
     async def close(self) -> None:
@@ -130,6 +148,7 @@ class FakeTV:
         self.closed = 0
         self.dead = False
         self.off = False
+        self.record_hangs = False
         self.front = "com.amazon.tv.launcher/.ui.HomeActivity"
         self.uptime = 40.0
         self.boot = "boot-1"
@@ -235,6 +254,16 @@ async def test_a_look_is_a_frame_of_a_short_recording(frames):
     assert seen == Look("com.amazon.tv.launcher/.ui.HomeActivity", "on", JPEG, (1280, 720))
     assert any(c.startswith("screenrecord --size 1280x720") for c in tv.commands)
     assert frames == [(b"a video", 1280, 720)]
+
+
+async def test_a_recording_that_hangs_gives_way_to_a_screencap(frames):
+    tv = FakeTV()
+    tv.record_hangs = True
+    seen = await FakeAdbComputer(tv).look()
+    assert seen.jpeg == JPEG
+    # The recording is tried once, on the connection it hung on.
+    assert sum(c.startswith("screenrecord") for c in tv.commands) == 1
+    assert tv.commands[-1] == "screencap -p" and frames[-1] == (b"a png", 1280, 720)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")

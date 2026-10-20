@@ -24,7 +24,10 @@ acknowledgment after each, so it moves about 160 KB/s over the home Wi-Fi
 whatever the link's speed. A PNG of the screen is 1.3 MB, 9 to 11 s
 (measured 2026-10-17). So a screenshot is one second of `screenrecord` at
 the size the model sees, about 36 KB, and ffmpeg takes its last frame:
-about 3 s in all. `input` starts a Java VM on every call, about a second,
+about 3 s in all. In the first minutes after the Stick boots,
+`screenrecord` can hang (seen on 2026-10-18 and 2026-10-20, up to 7
+minutes after boot), so it gets RECORD_WAIT, and then the screenshot is a
+`screencap` PNG. `input` starts a Java VM on every call, about a second,
 so keys pressed together go in one call.
 """
 
@@ -197,10 +200,19 @@ async def use(computer: ExternalComputer, action: str, args: dict[str, Any], sho
     image = None
     if looks:
         await asyncio.sleep(settle)
-        seen = await computer.look()
-        result["in_front"] = seen.front
-        result["screen"] = seen.screen
-        if seen.jpeg is not None:
+        seen: Look | None = None
+        try:
+            seen = await computer.look()
+        except ComputerError as err:
+            # The action itself ran: the model must know it did, even
+            # when it can't see what came of it.
+            if action in ("screenshot", "wait"):
+                raise
+            result["screen"] = f"unseen: {err}"
+        if seen is not None:
+            result["in_front"] = seen.front
+            result["screen"] = seen.screen
+        if seen is not None and seen.jpeg is not None:
             result["screenshot"] = str(_save(seen.jpeg, shots, now))
             result["screenshot_size"] = list(seen.size)
             image = base64.b64encode(seen.jpeg).decode()
@@ -228,6 +240,10 @@ def _save(jpeg: bytes, folder: Path, now: datetime) -> Path:
 WATCH_EVERY = 10.0
 CONNECT_TIMEOUT = 3.0
 READ_TIMEOUT = 15.0
+# How long a one-second `screenrecord` may take before the screenshot is a
+# `screencap` instead, and how long that may take.
+RECORD_WAIT = 8.0
+SCREENCAP_WAIT = 60.0
 # A first connection this many seconds after the Stick booted counts as its
 # boot, and opens huvu.
 BOOT_WINDOW = 300.0
@@ -283,15 +299,15 @@ class AdbComputer(ExternalComputer):
         out = await self._on_device(lambda device: device.shell(command, read_timeout_s=timeout))
         return out.replace("\r", "")
 
-    async def _exec_out(self, command: str, timeout: float) -> bytes:
+    async def _exec_out(self, command: str, timeout: float, again: bool = True) -> bytes:
         """A command's output as it came, for binary output: `shell` runs
         on a terminal, which would mangle it."""
-        return await self._on_device(lambda device: device.exec_out(command, read_timeout_s=timeout, decode=False))
+        return await self._on_device(lambda device: device.exec_out(command, read_timeout_s=timeout, decode=False), again)
 
-    async def _on_device(self, call: Any) -> Any:
+    async def _on_device(self, call: Any, again: bool = True) -> Any:
         """Runs a call on the device, connecting first if need be. A
         connection that dies under a call (the AV power was cut and came
-        back) is made again once."""
+        back) is made again once, unless `again` is off."""
         async with self._lock:
             out: Any = None
             for attempt in (1, 2):
@@ -302,8 +318,9 @@ class AdbComputer(ExternalComputer):
                     out = await call(self._device)
                     break
                 except Exception as err:
+                    log.warning("the TV box failed a call (attempt %d): %r", attempt, err)
                     await self._drop()
-                    if fresh or attempt == 2:
+                    if fresh or attempt == 2 or not again:
                         raise ComputerError("the TV box stopped answering") from err
             return out
 
@@ -344,10 +361,14 @@ class AdbComputer(ExternalComputer):
         return Look(front, screen, jpeg, size)
 
     async def _screenshot(self, width: int, height: int) -> bytes:
-        video = await self._exec_out(
-            f"screenrecord --size {width}x{height} --bit-rate 4000000 --time-limit 1 {RECORDING} >/dev/null 2>&1; cat {RECORDING}; rm -f {RECORDING}",
-            timeout=30.0,
-        )
+        # A recording that hangs isn't tried again: screencap follows.
+        video = b""
+        with contextlib.suppress(ComputerError):
+            video = await self._exec_out(
+                f"screenrecord --size {width}x{height} --bit-rate 4000000 --time-limit 1 {RECORDING} >/dev/null 2>&1; cat {RECORDING}; rm -f {RECORDING}",
+                timeout=RECORD_WAIT,
+                again=False,
+            )
         frame = None
         if video:
             with contextlib.suppress(ComputerError):
@@ -355,7 +376,7 @@ class AdbComputer(ExternalComputer):
         if frame is None:
             # screenrecord fails on some screens; screencap always works,
             # at about 10 s.
-            frame = await last_frame(await self._exec_out("screencap -p", timeout=60.0), width, height)
+            frame = await last_frame(await self._exec_out("screencap -p", timeout=SCREENCAP_WAIT), width, height)
         return frame
 
     async def click(self, x: int, y: int) -> None:
