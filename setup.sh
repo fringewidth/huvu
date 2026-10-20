@@ -89,6 +89,12 @@ configure() {
   hermes $p config set HUVU_URL "$huvu_url" >/dev/null
   hermes $p config set mcp_servers.huvu.url "$huvu_url/mcp" >/dev/null
   hermes $p config set mcp_servers.huvu.headers.Authorization 'Bearer ${HUVU_MCP_TOKEN}' >/dev/null
+  # Hermes's web search and extract, on Tavily when it has a key: with none
+  # it falls back to Firecrawl's keyless tier, which was refusing it with
+  # 403 by 2026-10-20.
+  if [ -n "${TAVILY_API_KEY:-}" ]; then
+    hermes $p config set TAVILY_API_KEY "$TAVILY_API_KEY" >/dev/null
+  fi
   # Hermes's background review: after a turn, a forked review saves what it
   # learned about the person to memory and skills, which load into every new
   # session. Its "memory updated" line stays off the API server, so it never
