@@ -5,6 +5,7 @@ import { UNREACHABLE } from "../net/http";
 import { showWake, useWakes, type WakeInfo } from "../chat/wakes";
 import { release, useWaiting } from "../account/waiting";
 import { turnOnWebPush, useWebPush } from "../account/webPush";
+import { allowOverApps, turnOffWakeWord, turnOnWakeWord, useWakeWord, WAKE_WORD } from "../voice/wakeWord";
 import { capsClass } from "../stage/style";
 import { setWikiOpen } from "../wiki/wiki";
 import type { MenuSection } from "./Menu";
@@ -92,6 +93,7 @@ function You() {
         </div>
       ))}
       <Notifications />
+      <HeyHuvu />
       {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
     </Section>
   );
@@ -119,6 +121,38 @@ function Notifications() {
           </button>
         )}
       </div>
+      {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
+    </>
+  );
+}
+
+// "hey huvu", on the Android app only (voice/wakeWord.ts). It brings huvu
+// to the front from behind another app only once Android lets huvu show
+// over other apps, which only its settings can allow.
+function HeyHuvu() {
+  const wake = useWakeWord();
+  const [error, setError] = useState<string | null>(null);
+  if (!WAKE_WORD || !wake) return null;
+  const toggle = () => {
+    setError(null);
+    (wake.on ? turnOffWakeWord() : turnOnWakeWord()).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+  };
+  return (
+    <>
+      <div className="flex items-baseline gap-3">
+        <span className={`${capsClass} text-ivory/45`}>{wake.on ? "hey huvu on" : "hey huvu off"}</span>
+        <button type="button" onClick={toggle} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
+          {wake.on ? "turn off" : "turn on"}
+        </button>
+      </div>
+      {wake.on && !wake.overlay && (
+        <div className="flex items-baseline gap-3">
+          <span className={`${capsClass} text-sindoor`}>hears you only in huvu</span>
+          <button type="button" onClick={() => void allowOverApps()} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
+            allow over apps
+          </button>
+        </div>
+      )}
       {error && <p className="m-0 font-display text-[13px] font-medium leading-[1.4] text-sindoor">{error}</p>}
     </>
   );

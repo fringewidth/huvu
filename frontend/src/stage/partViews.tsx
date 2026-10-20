@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { useEffect, useRef } from "react";
 import { ui } from "../config/interaction";
+import { setClipsOpen } from "../voice/clips";
 import { capsClass, NUMERALS } from "./style";
 import { useWhepFeed } from "./useWhepFeed";
 import type { ToolPart } from "../chat/thread";
@@ -118,6 +119,26 @@ export function YouTubeVideo({ part }: { part: ToolPart }) {
     >
       {body}
     </a>
+  );
+}
+
+// huvu opened the recording screen (ui_learn_voice), which opens by itself
+// as the part arrives (voice/clips.ts). Once closed, this opens it again.
+export function LearnVoice() {
+  if (!ui.hasInput) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => setClipsOpen(true)}
+      className="flex max-w-[36rem] flex-col gap-1 text-left outline-none transition-opacity duration-500 hover:opacity-90 focus-visible:ring-1 focus-visible:ring-sindoor/60"
+    >
+      <span className={`${capsClass} flex items-center gap-3 text-ivory/60`}>
+        <span className="size-1.5 shrink-0 rounded-full bg-sindoor" />
+        your voice
+      </span>
+      <span className="font-display text-base text-ivory">Teach huvu how you say “hey huvu”.</span>
+      <span className={`${capsClass} text-sindoor`}>open</span>
+    </button>
   );
 }
 

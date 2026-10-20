@@ -99,6 +99,38 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. On the phone, turn the backend off and tap the flower. Under it, it should say "huvu isn't answering", and it should stop listening. No question should appear on the stage. Turn the backend on and tap the flower again. It should listen.
 1. Turn the backend off while huvu thinks about a spoken question. The answer should fail and show "try again", and the flower should stop listening. It should not ask again by itself.
 
+## Hey huvu (Android app)
+
+The model has to be trained first (`wake-word.md`). Until then, "turn on" says the build has no model.
+
+1. Open the menu. Under "you", it should say "hey huvu off", with "turn on" next to it. On a laptop, an iPhone, or huvu added to a phone's home screen, there should be no such row.
+1. Tap "turn on". Android should ask for the mic if it hasn't yet. The menu should say "hey huvu on". The notification list should have "Listening for hey huvu", and the status bar a green mic dot.
+1. With huvu open and the text field showing, say "hey huvu". The flower should move to the middle and listen. Ask something. It should go on as if you had tapped the flower.
+1. Under "hey huvu on", it should say "hears you only in huvu", with "allow over apps". Switch to another app and say "hey huvu". Nothing should happen.
+1. Go back to huvu and tap "allow over apps". Android's settings should open on huvu. Allow it and go back. The "hears you only in huvu" line should be gone.
+1. Switch to another app and say "hey huvu". huvu should come to the front and listen.
+1. Close huvu from the recent apps, then say "hey huvu". huvu should open and listen.
+1. Tap the flower and ask something long. huvu should hear all of it, as it did before "hey huvu" was on.
+1. Lock the phone and turn the screen on, without unlocking it. Say "hey huvu". Nothing should happen. Unlock it, wait a second, and say it again. huvu should come up.
+1. With music or a video playing, talk normally near the phone for ten minutes, without saying "hey huvu". huvu should not open by itself.
+1. In the notification, tap "Turn off". The notification and the green dot should go away. Open huvu. The menu should say "hey huvu off".
+1. Turn it on again and restart the phone. There should be no "Listening for hey huvu" notification until you open huvu once.
+
+## Teaching huvu your voice
+
+1. Ask huvu "learn my voice". It should say it is opening it, and a screen titled "Teach huvu how you say “hey huvu”" should open over the conversation. The menu should have no row for it.
+1. Close it. The answer should have a "your voice" card with "open". Tap it, and the screen should open again.
+1. Ask the same in voice mode. The screen should open, and voice mode should end: huvu should not listen for a new question while you record.
+1. Ask the same on the TV, through Alexa. huvu should say it works only on your own phone or browser.
+1. Tap "begin". The browser or phone should ask for the mic. huvu should say the first step out loud.
+1. Say "hey huvu" in your normal voice, close to the phone. Each should chime, and the count should go up by one.
+1. Say a long sentence. It should not count. huvu should say "just the two words, please".
+1. Shout "hey huvu" right into the mic. It should not count. huvu should say it was too loud.
+1. Tap "that wasn't it". The count should go down by one.
+1. In the "go far" and "another room" steps, say "hey huvu" in the voice you would use to call someone in the house. It should count without shouting.
+1. Put the phone away (lock it, or switch apps) in the middle of a step. It should stop recording. Come back, and "go on" should start where you left off.
+1. Close it in the middle, and ask again later. The steps should show how many you already did.
+
 ## Notifications
 
 1. With the app open, ask huvu: "send me a notification that says hello". The notice should appear on the stage marked "from huvu", in huvu's slanted letters.

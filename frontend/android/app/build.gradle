@@ -16,6 +16,11 @@ android {
         versionCode nativeVersion
         versionName "${nativeVersion}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // ONNX Runtime ships a native library for every ABI, about 12 MB
+        // each. The family's phones are all arm64.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -42,6 +47,8 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // The wake word's models (wake/WakeDetector.java).
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.30.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

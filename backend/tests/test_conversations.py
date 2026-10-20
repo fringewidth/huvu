@@ -479,3 +479,20 @@ async def test_every_ask_says_whether_it_was_spoken_or_typed(kernel, hermes):
     assert "no emojis" in prompts.VOICE_NOTE
     await collect(kernel, await kernel.conversations.ask("c1", "and now?", user="me"))
     assert hermes.messages[-1][1] == f"{prompts.TEXT_NOTE}\n\nand now?"
+
+
+async def test_ui_learn_voice_opens_the_recording_screen_on_a_personal_device(kernel, hermes):
+    phone, _ = kernel.accounts.login("me", "correct horse", "my phone", "phone")
+
+    async def learn(session_id: str) -> None:
+        await kernel.tools.call("ui_learn_voice", {}, Caller(kind="hermes", session=session_id, user="me", device=phone.id))
+
+    hermes.script = [("run.started", {"run_id": "r"}), ("assistant.delta", {"delta": "Opening it."}), learn, ("run.completed", {})]
+    live = await kernel.conversations.ask(phone.id, "learn my voice", user="me")
+    await collect(kernel, live)
+    [part] = live.turn.parts
+    assert part["kind"] == "tool" and part["toolName"] == "learn_voice"
+
+    # A shared device has no person whose clips they would be.
+    with pytest.raises(ToolError, match="own phone or browser"):
+        await kernel.tools.call("ui_learn_voice", {}, Caller(kind="hermes", session="s", user="me", device=None))

@@ -8,3 +8,7 @@ __pycache__/
 .claude/worktrees/
 # The host's secrets next to compose.yaml (GROQ_API_KEY and the like).
 /.env
+
+# The wake word's training data (wakeword/): tens of GB, downloaded and
+# recorded on the dev machine.
+/wakeword/data/

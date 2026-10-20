@@ -21,6 +21,8 @@ import { speaking, stopSpeaking } from "../voice/speaker";
 import { isWikiOpen, onWikiChange, useWikiOpen, wikiBack } from "../wiki/wiki";
 import { useSpokenAnswers } from "../voice/useSpokenAnswers";
 import { useVoiceSession, type VoicePhase } from "../voice/useVoiceSession";
+import { onWakeWord } from "../voice/wakeWord";
+import { isClipsOpen, onClipsChange, setClipsOpen, useClipsOpen } from "../voice/clips";
 import { Composer } from "./Composer";
 import { Feeds } from "./Feeds";
 import { Menu, type MenuSection } from "./Menu";
@@ -31,6 +33,7 @@ import { VoiceFlower, type FlowerState } from "./VoiceFlower";
 // The wiki, and its Markdown and editor libraries, load the first time it
 // opens.
 const WikiView = lazy(() => import("./Wiki").then((mod) => ({ default: mod.WikiView })));
+const VoiceClipsView = lazy(() => import("./VoiceClips").then((mod) => ({ default: mod.VoiceClipsView })));
 // huvu's browser, live, and noVNC with it, load the first time its screen
 // is watched.
 const ScreenView = lazy(() => import("./ScreenView").then((mod) => ({ default: mod.ScreenView })));
@@ -115,6 +118,7 @@ export function Stage() {
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [menu, setMenu] = useState<MenuSection | null>(null);
   const wikiOpen = useWikiOpen();
+  const clipsOpen = useClipsOpen();
   // huvu's browser screen, over the stage.
   const [screenOpen, setScreenOpen] = useState(false);
   // How tall the card of what waits on this phone is, so the turn stops
@@ -251,6 +255,7 @@ export function Stage() {
   // nothing left to undo (the hardware back button then leaves the app).
   const goBack = (): boolean => {
     if (isWikiOpen()) wikiBack();
+    else if (isClipsOpen()) setClipsOpen(false);
     else if (screenOpen) setScreenOpen(false);
     else if (menu) setMenu(null);
     else if (feedsOpen) setFeedsOpen(false);
@@ -413,9 +418,10 @@ export function Stage() {
   };
 
   const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
-    // The wiki has keys of its own, its editor among them: only back
-    // reaches the stage.
-    if (isWikiOpen()) {
+    // The wiki has keys of its own, its editor among them, and the
+    // recording screen must not start push-to-talk: only back reaches the
+    // stage.
+    if (isWikiOpen() || isClipsOpen()) {
       if (e.key === "Escape" || e.key === "GoBack" || e.key === "BrowserBack") goBack();
       return;
     }
@@ -552,14 +558,28 @@ export function Stage() {
 
 
 
-  // The menu opens the wiki, which takes its place.
-  useEffect(
-    () =>
-      onWikiChange(() => {
-        if (isWikiOpen()) setMenu(null);
-      }),
-    [],
-  );
+  // The recording screen takes the mic, and must hear only the person:
+  // voice mode ends, and huvu goes quiet.
+  const clipsOpened = useEffectEvent(() => {
+    setMenu(null);
+    if (mode === "voice") leaveVoice();
+    stopSpeaking();
+  });
+
+  // The menu opens the wiki, and huvu the recording screen, which takes
+  // the menu's place.
+  useEffect(() => {
+    const offWiki = onWikiChange(() => {
+      if (isWikiOpen()) setMenu(null);
+    });
+    const offClips = onClipsChange(() => {
+      if (isClipsOpen()) clipsOpened();
+    });
+    return () => {
+      offWiki();
+      offClips();
+    };
+  }, []);
 
   // A written reply grows the garland a little per new word. In voice mode,
   // and on a screen that says every answer, huvu's voice grows it instead.
@@ -599,6 +619,16 @@ export function Stage() {
     if (mode === "voice") voice.begin();
   });
   useEffect(() => startInitialVoice(), []);
+
+  // "hey huvu" (Android only) does what a tap on the flower does.
+  const heardWakeWord = useEffectEvent(() => {
+    setDocked(false);
+    if (voice.phase === "listening") return;
+    textareaRef.current?.blur();
+    setMode("voice");
+    voice.begin();
+  });
+  useEffect(() => onWakeWord(() => heardWakeWord()), []);
 
   // History opens scrolled to the newest turn.
   useLayoutEffect(() => {
@@ -726,6 +756,23 @@ export function Stage() {
           >
             <Suspense fallback={<div className="absolute inset-0 bg-paper" />}>
               <WikiView />
+            </Suspense>
+          </m.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {clipsOpen && (
+          <m.div
+            key="clips"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4, ease: EASE }}
+            className="absolute inset-0 z-40"
+          >
+            <Suspense fallback={<div className="absolute inset-0 bg-paper" />}>
+              <VoiceClipsView />
             </Suspense>
           </m.div>
         )}

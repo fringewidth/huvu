@@ -3,10 +3,12 @@ and Hermes's side through the official MCP client."""
 
 from __future__ import annotations
 
+import io
 import json
 import socket
 import threading
 import time
+import wave
 from dataclasses import dataclass
 
 import httpx
@@ -377,3 +379,41 @@ def test_no_builds_without_a_bundles_dir(tmp_path):
     config = Config(data_dir=tmp_path / "data", public_url="http://test")
     client = TestClient(create_app(config, Kernel(config, hermes=FakeHermes())))
     assert client.get("/api/app/phone").status_code == 404
+
+
+def _wav(seconds: float, rate: int = 16000) -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as clip:
+        clip.setnchannels(1)
+        clip.setsampwidth(2)
+        clip.setframerate(rate)
+        clip.writeframes(b"\0\0" * int(seconds * rate))
+    return out.getvalue()
+
+
+def test_a_person_records_clips_for_the_wake_word(server):
+    me = server.login("phone")
+    saved = httpx.post(f"{server.base}/api/voice-clips/wake/near", content=_wav(1.2), headers=me)
+    assert saved.status_code == 200 and saved.json()["id"].startswith("phone-")
+    httpx.post(f"{server.base}/api/voice-clips/wake/near", content=_wav(1.0), headers=me)
+    other = httpx.post(f"{server.base}/api/voice-clips/other/talk", content=_wav(15), headers=me).json()["id"]
+    assert httpx.get(f"{server.base}/api/voice-clips", headers=me).json() == {"steps": {"near": 2, "talk": 1}}
+    root = server.kernel.config.data_dir / "voice_clips" / "me"
+    assert (root / "other" / "talk" / f"{other}.wav").read_bytes() == _wav(15)
+
+    # "That wasn't it" drops the last one.
+    assert httpx.delete(f"{server.base}/api/voice-clips/{other}", headers=me).json() == {"deleted": True}
+    assert httpx.get(f"{server.base}/api/voice-clips", headers=me).json() == {"steps": {"near": 2}}
+    assert httpx.delete(f"{server.base}/api/voice-clips/{other}", headers=me).status_code == 404
+    assert httpx.delete(f"{server.base}/api/voice-clips/..", headers=me).status_code == 404
+
+    # Only what the phone hears: 16 kHz mono, a short clip, a known kind.
+    for path, body in (("wake/near", _wav(1, 44100)), ("wake/near", _wav(31)), ("wake/near", b"RIFF"), ("song/near", _wav(1)), ("wake/Near!", _wav(1))):
+        assert httpx.post(f"{server.base}/api/voice-clips/{path}", content=body, headers=me).status_code in (400, 404)
+
+    # Mom's clips are hers, and a shared device records none.
+    assert httpx.get(f"{server.base}/api/voice-clips", headers=server.login("web", "mom", "battery staple")).json() == {"steps": {}}
+    started = httpx.post(f"{server.base}/api/pair", json={"name": "living room", "kind": "tv"}).json()
+    httpx.post(f"{server.base}/api/pair/confirm", json={"code": started["code"]}, headers=me)
+    tv = {"Authorization": f"Bearer {httpx.get(f'{server.base}/api/pair/{started['pairing']}').json()['token']}"}
+    assert httpx.post(f"{server.base}/api/voice-clips/wake/near", content=_wav(1), headers=tv).status_code == 403

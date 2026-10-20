@@ -1,9 +1,11 @@
 import { audioContext, rms } from "./audio";
+import { holdWakeMic } from "./wakeWord";
 
 // The mic, shared by the level meter (while you talk) and barge-in (while
 // huvu talks). getUserMedia costs 100ms or more per call, so the stream
 // stays open for a while after its last user lets go. The next listen or
-// the next reply picks it up at once.
+// the next reply picks it up at once. While it is open, the wake word
+// listener on Android lets go of the mic (wakeWord.ts).
 export interface Mic {
   // The shared stream, for recording an ask. Never stop its tracks.
   stream: MediaStream;
@@ -32,6 +34,7 @@ function close(): void {
     ?.then(({ stream, source }) => {
       source.disconnect();
       for (const t of stream.getTracks()) t.stop();
+      void holdWakeMic(false);
     })
     .catch(() => {});
 }
@@ -48,14 +51,22 @@ export async function acquireMic(): Promise<Mic> {
   window.clearTimeout(closeTimer);
   closeSoon = false;
   users++;
-  open ??= navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-    const ctx = audioContext();
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 1024;
-    const source = ctx.createMediaStreamSource(stream);
-    source.connect(analyser);
-    return { stream, source, analyser, buf: new Uint8Array(analyser.fftSize) };
-  });
+  open ??= holdWakeMic(true)
+    .then(() => navigator.mediaDevices.getUserMedia({ audio: true }))
+    .then(
+      (stream) => {
+        const ctx = audioContext();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        const source = ctx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        return { stream, source, analyser, buf: new Uint8Array(analyser.fftSize) };
+      },
+      (err: unknown) => {
+        void holdWakeMic(false);
+        throw err;
+      },
+    );
   let shared;
   try {
     shared = await open;

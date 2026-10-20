@@ -70,7 +70,7 @@ Only a session on pro or advanced may use Hermes's browser: a conversation's mai
 The backend builds parts from Hermes's stream:
 
 1. **Hermes's own tools.** `web_search` gets `args.query`; its result stays empty, since Hermes sends only a 500-character preview and a source count from it would be wrong. Any other Hermes tool becomes a part with empty args, which the stage shows as a generic note. Hermes's housekeeping (memory, skills, session search) never shows.
-1. **The model's `ui_*` tools.** `ui_choices` becomes a `choices` part, `ui_show_feed` a `video_feed` part with the feed's `src`, `label` and a `caption`, `ui_show_image` an image part with its `caption`, and `ui_youtube` a `youtube` part with the video's `id`, `title`, `channel` and `thumbnail`, which the app hands off to YouTube on a tap.
+1. **The model's `ui_*` tools.** `ui_choices` becomes a `choices` part, `ui_show_feed` a `video_feed` part with the feed's `src`, `label` and a `caption`, `ui_show_image` an image part with its `caption`, `ui_youtube` a `youtube` part with the video's `id`, `title`, `channel` and `thumbnail`, which the app hands off to YouTube on a tap, and `ui_learn_voice` a `learn_voice` part with no args, which opens the recording screen as it arrives in a running turn, and again on a tap.
 1. **`MEDIA:<path>` in the answer.** It is Hermes's own way to attach a file, and its tools tell the model to use it, such as the browser's screenshot. The relay takes each tag out of the answer text and puts an image part where it was. A tag split across deltas is held back until it is whole. A tag whose file is missing or isn't an image stays as text.
 1. **huvu's actions** show as notes, such as `home_turn_on`. huvu's reads don't show.
 
@@ -166,6 +166,10 @@ Approvals are answered from phones only. An approval belongs to the user it was 
 ### The wiki
 
 The agent's memory is a wiki of Markdown pages that the agent writes and organizes itself; the app reads it and lets its person correct it. Only a personal device has one: a shared device gets 403. `GET /api/wiki` lists `pages` (`path`, `title`, `modified`, `size`, newest first) and the `index`, the entries of the profile's `MEMORY.md`, in the agent's order. `GET /api/wiki/page?path=` returns `path`, `text`, `version` (a hash of the text) and `modified`. `PUT /api/wiki/page` with `path`, `text` and the `version` the edit started from saves it; `version: null` makes a new page. Either answers 409 when the page changed since (the agent wrote it meanwhile, or a new page's path is taken), and writes nothing. `DELETE /api/wiki/page?path=&version=` removes one, with the same check. A path is relative, ends in `.md`, and stays inside the wiki; anything else is 400.
+
+### Voice clips
+
+Each person records how they say "hey huvu", for training the wake word (`voice_clips.py`, `docs/wake-word.md`). Only a personal device records: a shared device gets 403. `GET /api/voice-clips` answers `{"steps": {"<step>": n}}`, the clips kept so far by step, so the screen picks up where the person left off. `POST /api/voice-clips/{kind}/{step}` with a WAV body (16 kHz, mono, 16-bit, 0.2 to 30 s) keeps one and answers `{"id"}`; `kind` is `wake` (the phrase) or `other` (what must not wake huvu). Anything else is 400. `DELETE /api/voice-clips/{id}` drops one of the caller's own, or answers 404.
 
 ### Triggers on a shared device
 

@@ -20,3 +20,4 @@ backend/.env
 backend/huvu.toml
 browser-extension/
 mail-worker/
+wakeword/

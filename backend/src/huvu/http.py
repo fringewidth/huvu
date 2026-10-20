@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.routing import Route
 
-from . import mcp_server, wiki
+from . import mcp_server, voice_clips, wiki
 from .accounts import AuthError, Device
 from .alexa import Alexa, AlexaError
 from .bundles import BundleError, Bundles
@@ -586,6 +586,32 @@ def create_app(config: Config, kernel: Kernel | None = None) -> FastAPI:
             raise HTTPException(409, str(err)) from err
         except wiki.WikiError as err:
             raise HTTPException(400, str(err)) from err
+        return {"deleted": True}
+
+    @app.get("/api/voice-clips")
+    async def voice_clip_counts(me: Device = personal) -> dict[str, dict[str, int]]:
+        """How many clips the person has recorded for the wake word, by
+        step, so the recording screen picks up where they left off."""
+        assert me.user is not None
+        return {"steps": voice_clips.counts(config.data_dir, me.user)}
+
+    @app.post("/api/voice-clips/{kind}/{step}")
+    async def voice_clip_save(kind: str, step: str, request: Request, me: Device = personal) -> dict[str, str]:
+        """One clip for the wake word's training, as a WAV body."""
+        assert me.user is not None
+        try:
+            clip_id = voice_clips.save(config.data_dir, me.user, kind, step, me.kind, await request.body(), kernel.now())
+        except voice_clips.ClipError as err:
+            raise HTTPException(400, str(err)) from err
+        return {"id": clip_id}
+
+    @app.delete("/api/voice-clips/{clip_id}")
+    async def voice_clip_delete(clip_id: str, me: Device = personal) -> dict[str, bool]:
+        assert me.user is not None
+        try:
+            voice_clips.delete(config.data_dir, me.user, clip_id)
+        except voice_clips.ClipError as err:
+            raise HTTPException(404, str(err)) from err
         return {"deleted": True}
 
     @app.post("/api/actions/{source}/{action}")

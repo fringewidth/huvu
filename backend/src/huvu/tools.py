@@ -221,6 +221,12 @@ class ToolBox:
                 _schema({"query": {"type": "string"}}, ["query"]),
                 self._ui_youtube,
             ),
+            Tool(
+                "ui_learn_voice",
+                TOOLS["ui_learn_voice"],
+                _schema({}),
+                self._ui_learn_voice,
+            ),
         ]
 
     async def _act(self, args: dict[str, Any], caller: Caller) -> Result:
@@ -356,6 +362,15 @@ class ToolBox:
         video = await self._kernel.youtube.find(str(args["query"]))
         await self._show(caller, "youtube", video.public(), ["external"])
         return Result(data={"shown": True, "title": video.title, "channel": video.channel}, labels=["external"])
+
+    async def _ui_learn_voice(self, args: dict[str, Any], caller: Caller) -> Result:
+        """Opens the app's recording screen, where the person records their
+        voice for the wake word (voice_clips.py). Their clips are their own,
+        so a shared device can't."""
+        device = self._kernel.accounts.device(caller.device)
+        if device is None or not device.is_personal:
+            raise ToolError("your person can record their voice only on their own phone or browser, not here")
+        return await self._show(caller, "learn_voice", {}, ["owner"])
 
     async def _show(self, caller: Caller, kind: str, args: dict[str, Any], labels: list[Label]) -> Result:
         shown = await self._kernel.conversations.show(caller, kind, args)

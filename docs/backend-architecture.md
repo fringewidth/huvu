@@ -380,7 +380,7 @@ Hermes names each one `mcp__huvu__<name>`. Hermes sees only the kernel's tools; 
 | `data_sql` | One read-only SQLite query over every table, history and live, scoped to the caller. The only read tool. See [Tables](#tables) |
 | `triggers_register`, `triggers_remove`, `triggers_pause`, `triggers_resume`, `triggers_skip` | Trigger management. `triggers_register` with `dry_run` checks a trigger and registers nothing; the triggers themselves are `huvu_triggers` |
 | `act` | Runs a source action by name (`ha_bedroom_ac_set`), with its args. Every action takes an optional `reason`. A wrong name or argument comes back with the closest name or the right signature |
-| `ui_choices`, `ui_show_feed`, `ui_show_image`, `ui_youtube` | Parts for the frontend, added to the live turn of the calling session. `ui_youtube` finds the top video for a search through the YouTube Data API (`youtube.py`, `YOUTUBE_API_KEY`) |
+| `ui_choices`, `ui_show_feed`, `ui_show_image`, `ui_youtube`, `ui_learn_voice` | Parts for the frontend, added to the live turn of the calling session. `ui_youtube` finds the top video for a search through the YouTube Data API (`youtube.py`, `YOUTUBE_API_KEY`). `ui_learn_voice` opens the screen where a person records their voice for the wake word, on their own device only |
 | `people_group` | The caller's groups and who is in each, by what the caller calls them. See [What people call each other](#what-people-call-each-other) |
 | `people_identify`, `people_release` | On a shared device: ask a family member on their phone whether it's them, or forget who is there |
 
@@ -445,6 +445,7 @@ backend/
     external_computer.py  the Fire TV the model drives like a computer, over ADB; opens huvu when it boots
     dream.py          each person's nightly dream: its trigger, kept up to date with the code
     wiki.py           each profile's wiki, the agent's memory: where it is, and the app's reads and edits
+    voice_clips.py    each person's recordings of "hey huvu" and of what must not wake huvu, for training the wake word
     speech.py         huvu's voice: Edge, a turn's answer spoken a sentence at a time
     hearing.py        speech to text through Groq's Whisper
     alexa.py          asks through the Alexa skill, for the Fire TV: Amazon's signature checks, then the ask on the TV

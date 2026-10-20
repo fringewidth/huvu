@@ -24,6 +24,12 @@
 
         </activity>
 
+        <!-- Listens for "hey huvu" while the screen is on (wake/WakeService.java). -->
+        <service
+            android:name=".wake.WakeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -41,4 +47,9 @@
     <!-- Voice mode: the WebView asks for the mic through Capacitor. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- The wake word: a service that keeps the mic while huvu is behind
+         another app, and brings huvu to the front when it hears it. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 </manifest>

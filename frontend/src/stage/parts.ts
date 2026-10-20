@@ -1,5 +1,5 @@
 import type { FC } from "react";
-import { BrowserNote, Choices, GenericNote, VideoFeed, WebSearchNote, YouTubeVideo } from "./partViews";
+import { BrowserNote, Choices, GenericNote, LearnVoice, VideoFeed, WebSearchNote, YouTubeVideo } from "./partViews";
 import type { RichPart, ToolPart } from "../chat/thread";
 
 // Everything in a turn that isn't plain text: images, tool calls, and
@@ -22,6 +22,7 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   web_search: { chip: "web", slot: "note", Hero: WebSearchNote },
   video_feed: { chip: "live", slot: "panel", Hero: VideoFeed },
   youtube: { chip: "youtube", slot: "panel", Hero: YouTubeVideo },
+  learn_voice: { chip: "your voice", slot: "panel", Hero: LearnVoice },
   choices: { chip: "choices", slot: "choices", Hero: Choices },
 };
 
