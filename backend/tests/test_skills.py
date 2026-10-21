@@ -14,12 +14,14 @@ from huvu.tools import ToolError
 
 def test_a_source_becomes_a_skill(kernel):
     text = skills.render(kernel.registry.spec("home"))
-    assert text.startswith("---\nname: huvu-home\ndescription: \"A fake house. Load before")
+    assert text.startswith("---\nname: huvu-home\ndescription: \"A fake house.\"")
     assert "Search for a light before turning it on." in text
     assert "- `home_turn_on(entity_id)`: Turns a light on." in text
     assert "- `home_unlock()`: Unlocks the front door. (always needs a person's tap)" in text
     assert "## Live tables" in text and "### `home_lights`" in text and "- `state` (text): on or off" in text
-    assert "## History tables" in text and "### `home_unlocks`" in text and "Indexed on (id), (ts), (user_id, ts)." in text
+    assert "## History tables" in text and "### `home_unlocks`" in text
+    # What every skill shares is said once, in the plugin's section, not here.
+    assert "standard columns" not in text and "Indexed on" not in text
     # A live table is listed before the history, and isn't indexed.
     assert text.index("### `home_lights`") < text.index("### `home_unlocks`")
 

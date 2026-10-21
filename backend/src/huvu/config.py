@@ -42,6 +42,10 @@
     [wakes]
     deadline = 900           # seconds a wake may run before huvu stops it
 
+    [prompt_cache]           # the provider's prompt cache (conversations.py, wake.py)
+    expires = true           # false for a provider whose cache never expires (the ChatGPT login)
+    ttl = 3600               # seconds it keeps a session's prompt after its last use
+
     [speech]
     voice = "en-US-AvaNeural"   # an Edge voice: uv run edge-tts --list-voices
     speed = 1.0
@@ -76,6 +80,7 @@ import re
 import tomllib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -171,6 +176,13 @@ class Config:
     dream_deadline: float = 3600.0
     # Seconds a wake may run before huvu stops its Hermes run (wake.py).
     wake_deadline: float = 900.0
+    # How long the provider keeps a session's prompt cached after its last
+    # use. Set, a conversation starts a fresh session once the cache has
+    # gone cold, with a shorter transcript (conversations.py), and a
+    # waiting wake is compacted before it goes cold (wake.py). None, for a
+    # provider whose cache never expires (the ChatGPT login), turns both
+    # off.
+    prompt_cache_ttl: timedelta | None = timedelta(hours=1)
     # Speech to text on Groq (hearing.py). No key, no hearing.
     groq_api_key: str | None = None
     stt_model: str = "whisper-large-v3"
@@ -225,6 +237,7 @@ def load(path: Path | None = None) -> Config:
     dream = raw.get("dream", {})
     router = raw.get("router", {})
     computer = raw.get("external_computer", {})
+    cache = raw.get("prompt_cache", {})
     base = path.parent if path.exists() else Path.cwd()
     fcm = secret("HUVU_FCM_CREDENTIALS")
     # HUVU_WEB_DIR wins, so the image names where it put the build.
@@ -261,6 +274,7 @@ def load(path: Path | None = None) -> Config:
         dream_tier=str(dream.get("tier", "pro")),
         dream_deadline=float(dream.get("deadline", 3600.0)),
         wake_deadline=float(raw.get("wakes", {}).get("deadline", 900.0)),
+        prompt_cache_ttl=timedelta(seconds=float(cache.get("ttl", 3600))) if cache.get("expires", True) else None,
         speech_voice=speech.get("voice", "en-US-AvaNeural"),
         speech_speed=float(speech.get("speed", 1.0)),
         groq_api_key=secret("GROQ_API_KEY"),
@@ -292,6 +306,9 @@ def load(path: Path | None = None) -> Config:
         raise ValueError(f"wakes.deadline must be above 0 seconds, not {config.wake_deadline}")
     if config.dream_deadline <= 0:
         raise ValueError(f"dream.deadline must be above 0 seconds, not {config.dream_deadline}")
+    # A waiting wake is compacted 5 minutes before the cache expires.
+    if config.prompt_cache_ttl is not None and config.prompt_cache_ttl <= timedelta(minutes=5):
+        raise ValueError(f"prompt_cache.ttl must be above 300 seconds, not {config.prompt_cache_ttl.total_seconds():.0f}")
     if not 0 < config.router_escalate_at <= 1:
         raise ValueError(f"router.escalate_at must be above 0 and at most 1, not {config.router_escalate_at}")
     if config.auth_mode not in ("on", "off"):

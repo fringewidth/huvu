@@ -108,6 +108,17 @@ deadline = 3600
 [wakes]
 deadline = 900
 
+# The provider's prompt cache, which keeps a session's prompt for `ttl`
+# seconds after its last use. While it expires, a conversation starts a
+# fresh session once the cache is cold, reading about 12,000 tokens of
+# transcript in place of 200,000, and a waiting wake is compacted 5 minutes
+# before its cache expires. On the Claude login, keep Hermes's
+# `prompt_caching.cache_ttl: "1h"` in every profile to match. `expires =
+# false` is for a provider whose cache never expires (the ChatGPT login).
+[prompt_cache]
+expires = true
+ttl = 3600
+
 # Hermes's dashboard, which serves each profile's browser screen for the
 # app to watch (screen.py). Its session token is HERMES_DASHBOARD_SESSION_TOKEN;
 # without it there is no screen. The container sets both up.

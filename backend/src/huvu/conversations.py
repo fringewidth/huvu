@@ -7,14 +7,16 @@ Hermes's stream into frontend events (see the relay below), and sends those
 to the client that asked and to the same device's other open streams. A
 turn never reaches another device.
 
-Prompt caching decides when a session continues. The provider keeps a
-session's prompt cached for CACHE_TTL after its last use, so an ask within
-that window continues the same Hermes session and hits the cache. An ask
+Prompt caching decides when a session continues. When the provider's
+cache expires (`prompt_cache_ttl` in the config), an ask within that
+window continues the same Hermes session and hits the cache, and an ask
 after it starts a fresh session, primed with a transcript of the asks and
 answers so far: with the cache cold, a short transcript costs less than
-replaying the old session's thinking and tool output. The transcript holds
-only the latest turns that fit in TRANSCRIPT_CHARS, and the model reads
-older ones with data_sql, from `chat_turns`.
+replaying the old session's thinking and tool output. When it never
+expires, a session always continues. A fresh session (also after a
+rewind or a change of model) reads only the latest turns that fit in its
+transcript (`_transcript_chars`), and the model reads older ones with
+data_sql, from `chat_turns`.
 
 Every turn that ends becomes a `chat_turns` row (builtin/chat.py), with
 its cache reads (`usage`), so the window can be checked against the
@@ -40,7 +42,7 @@ import re
 import secrets
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, tzinfo
+from datetime import datetime, tzinfo
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
@@ -61,13 +63,14 @@ log = logging.getLogger("huvu.conversations")
 Ending = Literal["failed", "stopped"] | None
 
 HUVU_PREFIX = "mcp__huvu__"
-# How long the provider keeps a session's prompt cached after its last use.
-CACHE_TTL = timedelta(hours=1)
 # How much of the conversation a fresh session reads: the latest turns that
-# fit, about 12,000 tokens at four characters a token. Older turns are left
-# out, so a long conversation doesn't cost more on every cold start; the
+# fit, at about four characters a token. With a cache that expires, every
+# cold start replays it at full price, so it is about 12,000 tokens; with
+# one that doesn't, a fresh session is rare (a rewind, another model, the
+# retention sweep), so it is about 200,000. Older turns are left out; the
 # model reads them from `chat_turns`.
 TRANSCRIPT_CHARS = 50_000
+TRANSCRIPT_CHARS_LASTING = 800_000
 # How many notes wait for a device's next ask; older ones go. A phone
 # nobody asks from for days gathers every notification.
 NOTES_KEPT = 12
@@ -275,7 +278,7 @@ class ConversationHub:
                 # A rewind, a cold cache, another model, or a session the
                 # retention sweep deleted: a fresh session carries the
                 # conversation so far, the quick turns among it.
-                message = _seeded(kept, message, tz, conversation_id)
+                message = _seeded(kept, message, tz, conversation_id, self._transcript_chars())
                 session = await self._new_session(conversation_id, user, group, profile, route.key, main=True)
             else:
                 message = _with_quick_turns(message, _unseen(kept, session), tz)
@@ -402,9 +405,16 @@ class ConversationHub:
         yield "turn.ended", {**base, "ending": turn.ending, "answer": turn.answer}
 
     def _cold(self, session: str) -> bool:
-        """Whether the provider's cache of a session has expired."""
+        """Whether the provider's cache of a session has expired. One that
+        never expires never goes cold."""
+        ttl = self._kernel.config.prompt_cache_ttl
+        if ttl is None:
+            return False
         last = self._kernel.sessions.last_used(session)
-        return last is None or self._kernel.now() - last > CACHE_TTL
+        return last is None or self._kernel.now() - last > ttl
+
+    def _transcript_chars(self) -> int:
+        return TRANSCRIPT_CHARS if self._kernel.config.prompt_cache_ttl is not None else TRANSCRIPT_CHARS_LASTING
 
     async def stop(self, turn_id: str, *, wait: bool = False) -> None:
         """Asks Hermes to stop the turn. The relay goes on until Hermes's
@@ -801,12 +811,12 @@ def _with_quick_turns(text: str, turns: list[Turn], tz: tzinfo | None) -> str:
     return "\n".join([*lines, "", text])
 
 
-def _seeded(kept: list[Turn], text: str, tz: tzinfo | None, device: str) -> str:
+def _seeded(kept: list[Turn], text: str, tz: tzinfo | None, device: str, chars: int) -> str:
     """The first message of a fresh session that continues a conversation,
     the way a compacted session continues: what was asked and answered so
     far, then the new message. The model is told to carry on as if nothing
     happened, not to acknowledge it. Only the latest turns that fit in
-    TRANSCRIPT_CHARS go in."""
+    `chars` go in."""
     if not kept:
         return text
     earlier: list[tuple[list[str], str, str]] = []
@@ -814,7 +824,7 @@ def _seeded(kept: list[Turn], text: str, tz: tzinfo | None, device: str) -> str:
     for t in reversed(kept):
         notes = [_note(a, tz) for a in t.actions]
         size += sum(map(len, notes)) + len(t.ask) + len(t.answer)
-        if size > TRANSCRIPT_CHARS:
+        if size > chars:
             break
         earlier.append((notes, t.ask, t.answer))
     earlier.reverse()

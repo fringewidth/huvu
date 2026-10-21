@@ -186,6 +186,10 @@ def wake_carried(notes: str, message: str) -> str:
 # or a wake on basic), from the huvu Hermes plugin.
 BROWSER_BLOCKED = "The browser works only on the pro and advanced tiers, and this session runs on basic. To do this in the browser, register a one-time trigger that fires at once, on tier pro, whose note says what to do there. It runs at once in the background, as a wake your person can open and watch. Tell your person so."
 
+# The tool result of a skill_view of a huvu-* skill, from the huvu Hermes
+# plugin: every one is pinned in the system prompt already.
+SKILL_PINNED = "This skill is already in your system prompt, in full: read it there. huvu's skills are pinned into every session, so loading one adds nothing."
+
 # The tool result of a Swiggy call that could place an order, pay, or
 # change the account, from the huvu Hermes plugin.
 SWIGGY_BLOCKED = "huvu never places an order, pays or changes your person's Swiggy account: only your person does, in the Swiggy app. Leave the cart ready and tell your person it is waiting for them there."
@@ -357,7 +361,28 @@ LIVE_COLUMNS: dict[str, tuple[str, str]] = {
 }
 
 SKILL_PREFIX = "huvu-"
-SKILL_OWNED = """huvu wrote this skill from its driver and rewrites it at every start and whenever the source changes, so don't edit it; put what you learn in your own skills or memory."""
+# The index every history table has, whatever its source adds.
+STANDARD_INDEXES = [["id"], ["ts"], ["user_id", "ts"]]
+
+
+def indexes(columns: list[list[str]]) -> str:
+    """`(id), (user_id, ts)`: indexes as a skill names them."""
+    return ", ".join(f"({', '.join(i)})" for i in columns)
+
+
+# What every huvu-<source> skill shares, said once in a system prompt
+# section of its own (the huvu Hermes plugin), not in each skill, since
+# every skill is pinned into every session.
+SKILLS_SHARED = (
+    "Each huvu-<source> skill lists its source's actions, live tables and history tables, and huvu rewrites it whenever the source changes: it is read-only, so put what you learn in your own skills or your wiki.\n\n"
+    "Run an action with act; every action takes an optional `reason`.\n\n"
+    "Query the tables with data_sql (SQLite, one read-only statement; JSON functions work). "
+    "A live table is what is true now, read the moment a query reads it, and nothing is kept; each also has user_id and group_id, whose row it is. A trigger that reads one runs every 5 seconds.\n\n"
+    f"A history table keeps what happened, for good. Each also has the standard columns {', '.join(STANDARD_COLUMNS)}: "
+    "`id` numbers rows in the order huvu recorded them, `at` is ISO local time, `ts` seconds since the epoch, `local_minute` minutes since local midnight, `weekday` 1 for Monday, and `user_id` whose row it is. "
+    f"Each is indexed on {indexes(STANDARD_INDEXES)}; a skill names any other index. "
+    "Join tables of different sources on time (`ts` windows, or the latest row before a time) and on `user_id`. A trigger that reads one runs the moment a row lands."
+)
 
 
 def signature(name: str, schema: dict[str, Any]) -> str:
@@ -391,7 +416,7 @@ def skill(spec: Any) -> str:
     lines = [
         "---",
         f"name: {SKILL_PREFIX}{spec.name}",
-        f"description: {json.dumps(one_line(spec.description) + f' Load before using huvu actions or tables of {spec.name}.')}",
+        f"description: {json.dumps(one_line(spec.description))}",
         "metadata:",
         "  hermes:",
         "    tags: [huvu]",
@@ -399,47 +424,29 @@ def skill(spec: Any) -> str:
         "",
         f"# huvu: {spec.name}",
         "",
-        SKILL_OWNED,
-        "",
     ]
     if spec.guide.strip():
         lines += [spec.guide.strip(), ""]
     if spec.actions:
-        lines += ["## Actions", "", "Run with `act`, as `act({\"name\": ..., \"args\": {...}})`. Every action takes an optional `reason`.", ""]
+        lines += ["## Actions", ""]
         lines += [f"- `{signature(f'{spec.name}_{a.name}', a.input_schema)}`: {a.description}" + _waits(a) for a in spec.actions]
         lines.append("")
     live = [t for t in spec.tables if t.live]
     history = [t for t in spec.tables if not t.live]
     if live:
-        scope = ", ".join(LIVE_COLUMNS)
-        lines += [
-            "## Live tables",
-            "",
-            "What is true now, read the moment a query reads them; nothing is kept. Query with `data_sql`. "
-            f"Every live table also has {scope}: whose row it is. A trigger that reads one runs every 5 seconds.",
-            "",
-        ]
+        lines += ["## Live tables", ""]
         for table in live:
             lines += [f"### `{spec.name}_{table.name}`", "", one_line(table.description), ""]
             lines += [f"- `{col.name}` ({col.type}): {col.description}" for col in table.columns]
             lines.append("")
     if history:
-        standard = ", ".join(STANDARD_COLUMNS)
-        lines += [
-            "## History tables",
-            "",
-            f"What happened, kept for good. Query with `data_sql` (SQLite, one read-only statement; JSON functions work). "
-            f"Every history table also has the standard columns {standard}: `id` numbers rows in the order huvu recorded them, "
-            "`at` is ISO local time, `ts` seconds since the epoch, `local_minute` minutes since local midnight, `weekday` 1 for Monday, "
-            "and `user_id` whose row it is. Join tables of different sources on time (`ts` windows, or the latest row before a time) "
-            "and on `user_id`. A trigger that reads one runs the moment a row lands.",
-            "",
-        ]
+        lines += ["## History tables", ""]
         for table in history:
             lines += [f"### `{spec.name}_{table.name}`", "", one_line(table.description), ""]
             lines += [f"- `{col.name}` ({col.type}): {col.description}" for col in table.columns]
-            indexes = [["id"], ["ts"], ["user_id", "ts"], *table.indexes]
-            lines += ["", "Indexed on " + ", ".join(f"({', '.join(i)})" for i in indexes) + ".", ""]
+            if table.indexes:
+                lines += ["", f"Also indexed on {indexes(table.indexes)}."]
+            lines.append("")
     return "\n".join(lines)
 
 

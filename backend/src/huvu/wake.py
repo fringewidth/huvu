@@ -19,12 +19,14 @@ a run that should have waited, such as one that asked its person to take
 over the browser. The person can end it from the app, and that one is
 closed for good (status `closed`, shown as ended).
 
-A waiting wake is compacted COMPACT_AFTER its last run, while the
-provider's cache of it (CACHE_TTL) is still warm: huvu asks it, in its own
+When the provider's cache expires (`prompt_cache_ttl` in the config), a
+waiting wake is compacted COMPACT_BEFORE the cache of it goes cold, while
+it is still warm: huvu asks it, in its own
 session, to write down where it stands. Hermes's API server has no
 compaction of its own to call. The next turn then starts a fresh session
 from those notes, so a reply after the cache went cold doesn't pay to
-replay the whole run, its tool output and pages included.
+replay the whole run, its tool output and pages included. When the cache
+never expires, a waiting wake is never compacted.
 
 A wake's first turn runs through Hermes's /v1/runs (HermesClient.run), with
 the situation block as the history before it. A turn whose caller brings
@@ -60,7 +62,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from . import prompts
-from .conversations import CACHE_TTL, Action, LiveTurn, _with_actions
+from .conversations import Action, LiveTurn, _with_actions
 from .db import from_iso, iso
 from .hermes import TITLE_MAX, HermesError
 from .times import for_model
@@ -81,9 +83,9 @@ WAKE_LIMIT = 20
 SUMMARY_CHARS = 300
 # How long a wake waits for its person after its last run.
 WAIT = timedelta(days=1)
-# When a waiting wake is compacted after its last run: before the
-# provider's cache of it expires.
-COMPACT_AFTER = CACHE_TTL - timedelta(minutes=5)
+# How long before the provider's cache of a waiting wake expires it is
+# compacted.
+COMPACT_BEFORE = timedelta(minutes=5)
 
 
 class WakeEnded(Exception):
@@ -283,12 +285,13 @@ class Waker:
         """Once a minute: ends wakes that waited too long, and compacts the
         ones whose cache is about to go cold."""
         now = self._kernel.now()
+        ttl = self._kernel.config.prompt_cache_ttl
         for row in self._db.execute("SELECT * FROM wakes WHERE status = 'waiting'").fetchall():
             ran = from_iso(row["ran_at"])
             if self._status(row) == "ended":
                 self._db.execute("UPDATE wakes SET status = 'ended' WHERE id = ?", (row["id"],))
                 self._announce(row["id"])
-            elif row["compacted_at"] is None and ran is not None and now - ran >= COMPACT_AFTER and row["id"] not in self._compacting:
+            elif ttl is not None and row["compacted_at"] is None and ran is not None and now - ran >= ttl - COMPACT_BEFORE and row["id"] not in self._compacting:
                 task = asyncio.create_task(self._compact(row["id"]), name=f"wake:compact:{row['id']}")
                 self._compacting[row["id"]] = task
                 task.add_done_callback(lambda _, wake=row["id"]: self._compacting.pop(wake, None))

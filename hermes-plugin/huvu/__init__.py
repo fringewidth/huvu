@@ -12,6 +12,8 @@ can't tell which session a tool call came from. This plugin fills that in:
    with it. Hermes never shows the model an MCP server's own instructions,
    so this is the one place huvu can say it. BROWSER_HANDOFF follows in a
    section of its own: when to ask the person to take over the browser.
+   SKILLS_SHARED does too: what every huvu-* skill has in common, said
+   once instead of in each pinned skill.
 4. The model's reasoning summary, as it streams, goes to the backend
    (`POST /api/thinking`), so the stage can show it while a turn runs. It
    needs `plugins.stream_reasoning_deltas` on, which setup.sh sets.
@@ -34,6 +36,9 @@ can't tell which session a tool call came from. This plugin fills that in:
    step; an MCP tool's image would reach it only as a file path. Its
    toolset, `external_computer`, is turned on for the API server by
    setup.sh, since a plugin's toolset starts off.
+8. A `skill_view` of a huvu-* skill is blocked: every one is pinned in
+   the system prompt (skills.auto_load), and the model loaded them anyway,
+   a round trip and up to 14,000 characters of context each time.
 
 Settings come from the environment Hermes runs in:
     HUVU_URL              the backend, default http://localhost:3001
@@ -80,6 +85,8 @@ PREFIX = f"mcp__{SERVER}__"
 
 # Hermes's own browser tools all start with this.
 BROWSER = "browser_"
+# Hermes's tool that loads a skill into the context.
+SKILL_VIEW = "skill_view"
 
 # Hermes names an MCP tool mcp__<server>__<tool>, with every character
 # outside [A-Za-z0-9_] in either part made an underscore.
@@ -122,6 +129,8 @@ def _on_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "
         return _browsing(session_id)
     if tool_name.startswith(SWIGGY):
         return _swiggy(tool_name)
+    if tool_name == SKILL_VIEW:
+        return _skill_view(args)
     if not tool_name.startswith(PREFIX):
         return None
     return {"action": "modify", "args": {"_session": session_id}}
@@ -135,6 +144,14 @@ def _swiggy(tool_name: str) -> dict[str, Any] | None:
         return None
     logger.warning("huvu: blocked Swiggy's %s", tool_name)
     return {"action": "block", "message": prompts.SWIGGY_BLOCKED}
+
+
+def _skill_view(args: Any) -> dict[str, Any] | None:
+    """None lets a skill_view through; one of a huvu skill is blocked."""
+    name = str((args or {}).get("name") or "") if isinstance(args, dict) else ""
+    if not name.strip().startswith(prompts.SKILL_PREFIX):
+        return None
+    return {"action": "block", "message": prompts.SKILL_PINNED}
 
 
 def _browsing(session_id: str) -> dict[str, Any] | None:
@@ -254,3 +271,4 @@ def register(ctx) -> None:
     if hasattr(ctx, "register_system_prompt_section"):
         ctx.register_system_prompt_section("huvu", GUIDE)
         ctx.register_system_prompt_section("huvu-browser", prompts.BROWSER_HANDOFF)
+        ctx.register_system_prompt_section("huvu-skills", prompts.SKILLS_SHARED)

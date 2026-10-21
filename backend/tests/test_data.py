@@ -162,4 +162,4 @@ def test_tables_are_in_the_skill(house):
     text = skills.render(kernel.registry.spec("diary"))
     assert "## History tables" in text and "### `diary_entries`" in text and "## Live tables" not in text
     assert "- `mood` (integer): 1 to 5" in text
-    assert "Indexed on (id), (ts), (user_id, ts), (mood, ts)." in text
+    assert "Also indexed on (mood, ts)." in text

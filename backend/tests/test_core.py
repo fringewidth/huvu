@@ -130,3 +130,16 @@ async def test_local_time_is_the_houses_not_the_servers(tmp_path, hermes, home, 
     monkeypatch.setenv("HUVU_TIMEZONE", "Mars/Olympus")
     with pytest.raises(ValueError, match="IANA"):
         load(tmp_path / "huvu.toml")
+
+
+def test_the_prompt_cache_expires_unless_told_otherwise(tmp_path):
+    from huvu.config import load
+
+    path = tmp_path / "huvu.toml"
+    path.write_text("")
+    assert load(path).prompt_cache_ttl == timedelta(hours=1)
+    path.write_text("[prompt_cache]\nexpires = false\n")
+    assert load(path).prompt_cache_ttl is None
+    path.write_text("[prompt_cache]\nttl = 300\n")
+    with pytest.raises(ValueError, match="above 300 seconds"):
+        load(path)

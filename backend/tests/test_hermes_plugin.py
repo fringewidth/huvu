@@ -49,6 +49,9 @@ def test_the_guide_goes_into_every_session_prompt():
     assert ctx.hooks == ["pre_tool_call", "pre_llm_call", "on_stream_delta"]
     assert "huvu-<source>" in ctx.sections["huvu"] and "huvu_notify" in ctx.sections["huvu"]
     assert len(ctx.sections["huvu"]) <= 4000
+    # What every skill shares, said once.
+    assert "standard columns id, at, ts" in ctx.sections["huvu-skills"] and "(user_id, ts)" in ctx.sections["huvu-skills"]
+    assert all(len(s) <= 4000 for s in ctx.sections.values())
 
 
 def test_reasoning_deltas_go_to_the_backend_in_bursts(monkeypatch):
@@ -91,6 +94,15 @@ def test_the_browser_is_blocked_when_the_backend_is_down(monkeypatch):
     monkeypatch.setattr(plugin, "_post", down)
     out = plugin._on_pre_tool_call(tool_name="browser_snapshot", args={}, session_id="w1")
     assert out == {"action": "block", "message": plugin.prompts.BROWSER_BLOCKED}
+
+
+def test_a_pinned_huvu_skill_is_never_loaded_again():
+    plugin = load()
+    blocked = {"action": "block", "message": plugin.prompts.SKILL_PINNED}
+    assert plugin._on_pre_tool_call(tool_name="skill_view", args={"name": "huvu-ha"}, session_id="s1") == blocked
+    # The model's own skills load as usual.
+    assert plugin._on_pre_tool_call(tool_name="skill_view", args={"name": "home-alexa-controls"}, session_id="s1") is None
+    assert plugin._on_pre_tool_call(tool_name="skill_view", args=None, session_id="s1") is None
 
 
 def test_swiggy_never_places_an_order_or_pays():

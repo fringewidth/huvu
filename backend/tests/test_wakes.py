@@ -162,6 +162,15 @@ async def test_a_wait_ends_after_a_day(kernel, family, hermes, clock):
     assert kernel.db.execute("SELECT status FROM wakes WHERE id = ?", (wake,)).fetchone()["status"] == "ended"
 
 
+async def test_a_waiting_wake_is_never_compacted_when_the_cache_never_expires(kernel, family, hermes, clock):
+    kernel.config.prompt_cache_ttl = None
+    hermes.script = waiting(kernel)
+    await ring(kernel)
+    clock.advance(hours=12)
+    await kernel.waker.sweep()
+    assert all(m != prompts.WAKE_COMPACT for _, m in hermes.messages)
+
+
 async def test_a_waiting_wake_is_compacted_before_its_cache_goes_cold(kernel, family, hermes, clock):
     hermes.script = waiting(kernel)
     wake = await ring(kernel)

@@ -265,6 +265,14 @@ async def test_a_stop_before_the_run_starts_reaches_it(kernel, hermes):
     assert hermes.stopped == ["run_7"] and kernel.conversations.turns("c1")[0].ending == "stopped"
 
 
+async def test_a_session_continues_when_the_cache_never_expires(kernel, hermes, clock):
+    kernel.config.prompt_cache_ttl = None
+    await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
+    clock.advance(days=3)
+    await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
+    assert len(hermes.sessions) == 1 and hermes.messages[-1][1].endswith("\n\ntwo")
+
+
 async def test_a_warm_session_continues_and_a_cold_one_starts_over(kernel, hermes, clock):
     await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
     clock.advance(minutes=59)

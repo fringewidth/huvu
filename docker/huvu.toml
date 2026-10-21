@@ -28,6 +28,13 @@ deadline = 3600
 [wakes]
 deadline = 900
 
+# The ChatGPT login's prompt cache never expires. On a login whose does,
+# such as Claude's, set `expires = true` (and Hermes's
+# `prompt_caching.cache_ttl: "1h"` in every profile).
+[prompt_cache]
+expires = false
+ttl = 3600
+
 [speech]
 voice = "en-US-AvaNeural"
 
