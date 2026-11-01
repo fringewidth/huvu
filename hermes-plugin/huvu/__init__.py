@@ -211,9 +211,8 @@ def _situation() -> str:
     return _post("/api/situation", {})["text"]
 
 
-# An action waits for its screenshot, about 3 s, and an open or a wait
-# settles first; a screenshot the box can only take the slow way takes
-# about 10 s more.
+# An action takes about 2 s; a task (search, install) waits on the box's
+# screens for up to a minute, the backend's own limit.
 COMPUTER_TIMEOUT = 90
 
 

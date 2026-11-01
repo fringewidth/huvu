@@ -21,7 +21,7 @@
 
     [models]                 # the three tiers of model huvu runs on
     basic = "gpt-6-luna"     # plain house control, and trigger wakes
-    pro = "gpt-6-sol"        # every other ask, and wakes that need more thought
+    pro = "gpt-6-luna"       # every other ask, and wakes that need more thought
     advanced = "gpt-6-astra" # wakes only, and only with the person's yes
     # A model alone runs on the profile's own login. To run a tier on another
     # Hermes provider, name it: anthropic is the Claude login, openai-codex
@@ -89,7 +89,7 @@ from .spec import Autonomy
 # The repo this backend runs from: backend/src/huvu/config.py, three up.
 REPO = Path(__file__).resolve().parents[3]
 # The model behind each tier, on the ChatGPT login Hermes uses.
-DEFAULT_MODELS = {"basic": "gpt-6-luna", "pro": "gpt-6-sol", "advanced": "gpt-6-astra"}
+DEFAULT_MODELS = {"basic": "gpt-6-luna", "pro": "gpt-6-luna", "advanced": "gpt-6-astra"}
 
 
 @dataclass(frozen=True)

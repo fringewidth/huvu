@@ -35,7 +35,7 @@ async def test_conversations_run_on_pro_and_wakes_on_their_tier(kernel, family, 
     live = await kernel.conversations.ask(family.me_web.id, "hi", user="me")
     async for _ in kernel.conversations.subscribe(live):
         pass
-    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
+    assert hermes.models[live.turn.hermes_session] == "gpt-6-luna"
 
     basic = await kernel.triggers.register(TriggerSpec.model_validate(BELL), ME)
     await ring(kernel)
@@ -44,7 +44,7 @@ async def test_conversations_run_on_pro_and_wakes_on_their_tier(kernel, family, 
 
     await kernel.triggers.register(TriggerSpec.model_validate({**BELL, "tier": "pro"}), ME)
     await ring(kernel)
-    assert wake_models(hermes) == ["gpt-6-luna", "gpt-6-sol"]
+    assert wake_models(hermes) == ["gpt-6-luna", "gpt-6-luna"]
 
 
 async def test_an_advanced_trigger_waits_for_a_yes_on_the_phone(kernel, family, hermes):

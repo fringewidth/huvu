@@ -5,9 +5,20 @@ Hermes has a computer of its own (its Bot Desktop, where its browser runs),
 so this one is named external. The only one is the home theatre's Fire TV
 Stick, worked over ADB (`AdbComputer`). The plugin posts each action to the
 backend (`POST /api/computer`), the backend runs it here, and the plugin
-hands the model the screenshot as an image, so the model sees the screen in
-the same step. A session may use it only where it may use the browser: on
-pro or advanced (`Kernel.may_browse`).
+hands the model the result, with a screenshot as an image when there is one,
+so the model sees the screen in the same step. A session may use it only
+where it may use the browser: on pro or advanced (`Kernel.may_browse`).
+
+The model sees the screen as elements: the accessibility tree of the window
+in front, one line per thing on it, numbered when it can be selected
+(`elements`). It is the TV's DOM: on Amazon's own screens (the home screen,
+search, settings, the Appstore) it names everything, and a few hundred
+tokens of it replace a screenshot. Video apps (YouTube, Netflix, JioHotstar)
+draw their own screens and leave it empty, so there a screenshot comes too.
+Above the primitives sit the box's common tasks, each one call: `search`,
+`settings`, `install` and `media`, built from the steps a person takes with
+the remote on Fire OS 5.2.9.5, as read off the family's Stick on 2026-11-01.
+Fire OS locks its own search and settings intents to Amazon's apps.
 
 The Stick takes one ADB client at a time, so huvu holds the connection for
 everything done to it, and nothing else may: Home Assistant's Android TV
@@ -19,16 +30,17 @@ Home Assistant's `home_theatre_huvu` used to: ADB answers about 26 s after
 power, before the home screen, which would cover an app opened then, so it
 waits for an app in front first.
 
-The Stick's adbd is Android 5.1's: it sends 4 KB a packet and waits for an
+Every action is one shell command and one round trip: huvu's helper
+(`tv-helper/` beside this package, built into `tv-helper.jar`), run with
+`app_process`, presses the keys or selects the element, waits for the screen
+to settle, and answers the tree and a screenshot, all in one Java VM. The
+Stick's adbd is Android 5.1's: it sends 4 KB a packet and waits for an
 acknowledgment after each, so it moves about 160 KB/s over the home Wi-Fi
-whatever the link's speed. A PNG of the screen is 1.3 MB, 9 to 11 s
-(measured 2026-10-17). So a screenshot is one second of `screenrecord` at
-the size the model sees, about 36 KB, and ffmpeg takes its last frame:
-about 3 s in all. In the first minutes after the Stick boots,
-`screenrecord` can hang (seen on 2026-10-18 and 2026-10-20, up to 7
-minutes after boot), so it gets RECORD_WAIT, and then the screenshot is a
-`screencap` PNG. `input` starts a Java VM on every call, about a second,
-so keys pressed together go in one call.
+whatever the link's speed. A `screencap` PNG is 1.3 MB, 9 to 11 s (measured
+2026-10-17), so the helper scales the screen on the box and sends a JPEG of
+about 80 KB. It replaced a second of `screenrecord` per screenshot (about 3
+s), whose recordings hung for runs of calls (seen 2026-10-18 to 2026-11-01)
+and cost 18 s a screenshot each time. An action takes about 1.5 to 2.5 s.
 """
 
 from __future__ import annotations
@@ -36,25 +48,23 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
+import hashlib
+import json
 import logging
 import re
 import shlex
-import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 log = logging.getLogger("huvu.external_computer")
 
 # The size of the screenshots the model sees, and of the space its clicks
 # are in, whatever the screen's own size.
 SHOT_WIDTH = 1280
-# How long the screen gets to settle after an action, before the screenshot
-# that answers it. Opening an app takes longer.
-SETTLE = 1.0
-SETTLE_OPEN = 3.0
 MAX_WAIT = 30.0
 # Screenshots kept on disk, so the model can show one to its person.
 KEEP_SHOTS = 100
@@ -101,7 +111,26 @@ KEYS = {
     "sleep": 223,
 }
 
-ACTIONS = ("screenshot", "click", "key", "type", "open", "apps", "wait")
+# What `media` does, as the remote's media keys. Fire OS lets no shell
+# process drive a media session itself ("Missing permission to control
+# media"), so the keys go to the app in front, which hands them to its own.
+MEDIA = {
+    "state": None,
+    "play": 126,
+    "pause": 127,
+    "playpause": 85,
+    "stop": 86,
+    "forward": 90,
+    "back": 89,
+    "next": 87,
+    "previous": 88,
+}
+# Android's playback states, as `dumpsys media_session` numbers them.
+PLAYBACK = {0: "none", 1: "stopped", 2: "paused", 3: "playing", 4: "fast forwarding", 5: "rewinding", 6: "buffering", 7: "error", 8: "connecting", 9: "skipping back", 10: "skipping forward", 11: "skipping"}
+
+ACTIONS = ("look", "screenshot", "select", "key", "type", "click", "wait", "open", "apps", "media", "search", "settings", "install")
+
+Picture = Literal["always", "auto", "never"]
 
 
 class ComputerError(Exception):
@@ -111,12 +140,19 @@ class ComputerError(Exception):
 @dataclass
 class Look:
     """The screen after an action: what is in front, whether the screen is
-    on, and a JPEG of it when it is."""
+    on, the screen as elements, and a JPEG of it when one was taken.
+    `hidden` is a screen the app keeps out of screenshots; `error` says
+    where an action stopped partway, and `note` what a task did."""
 
     front: str | None
     screen: str
+    elements: str | None = None
     jpeg: bytes | None = None
     size: tuple[int, int] = (0, 0)
+    hidden: bool = False
+    error: str | None = None
+    note: str | None = None
+    media: dict[str, Any] | None = None
 
 
 @dataclass
@@ -126,26 +162,45 @@ class Outcome:
 
 
 class ExternalComputer(ABC):
-    """A screen the model drives. Coordinates are in the screenshot's
-    pixels."""
+    """A screen the model drives. Every action answers the screen after it.
+    Coordinates are in the screenshot's pixels, and elements are numbered as
+    the last look numbered them."""
 
     @abstractmethod
-    async def look(self) -> Look: ...
+    async def look(self, picture: Picture) -> Look: ...
 
     @abstractmethod
-    async def click(self, x: int, y: int) -> None: ...
+    async def select(self, element: int) -> Look: ...
 
     @abstractmethod
-    async def keys(self, names: list[str]) -> None: ...
+    async def keys(self, names: list[str]) -> Look: ...
 
     @abstractmethod
-    async def type(self, text: str) -> None: ...
+    async def type(self, text: str) -> Look: ...
 
     @abstractmethod
-    async def open(self, target: str) -> None: ...
+    async def click(self, x: int, y: int) -> Look: ...
+
+    @abstractmethod
+    async def wait(self, seconds: float) -> Look: ...
+
+    @abstractmethod
+    async def open(self, target: str) -> Look: ...
 
     @abstractmethod
     async def apps(self) -> list[str]: ...
+
+    @abstractmethod
+    async def media(self, command: str, times: int) -> Look: ...
+
+    @abstractmethod
+    async def search(self, query: str) -> Look: ...
+
+    @abstractmethod
+    async def settings(self) -> Look: ...
+
+    @abstractmethod
+    async def install(self, package: str | None) -> Look: ...
 
     async def watch(self) -> None:
         """Runs for the kernel's life; a computer with nothing to watch
@@ -157,62 +212,86 @@ class ExternalComputer(ABC):
 
 async def use(computer: ExternalComputer, action: str, args: dict[str, Any], shots: Path, now: datetime) -> Outcome:
     """Runs one action of the external_computer tool, and answers with the
-    screen after it. The screenshot is saved under `shots` too, so the
-    model can show it to its person."""
+    screen after it. A screenshot is saved under `shots` too, so the model
+    can show it to its person."""
     result: dict[str, Any] = {"action": action}
-    settle = SETTLE
-    looks = action != "apps"
-    if action == "screenshot":
-        settle = 0
-    elif action == "click":
-        x, y = _int(args, "x"), _int(args, "y")
-        await computer.click(x, y)
-        result.update(x=x, y=y)
+    seen: Look | None = None
+    if action == "look":
+        seen = await computer.look("auto")
+    elif action == "screenshot":
+        seen = await computer.look("always")
+    elif action == "select":
+        element = args.get("element")
+        if isinstance(element, bool) or not isinstance(element, int):
+            raise ComputerError("select needs `element`: an element's number from the last look")
+        seen = await computer.select(element)
+        result["element"] = element
     elif action == "key":
         names = args.get("keys")
         if isinstance(names, str):
             names = names.split()
         if not names or not all(isinstance(n, str) for n in names):
             raise ComputerError("key needs `keys`: the names of the keys to press, in order")
-        await computer.keys(names)
+        seen = await computer.keys(names)
         result["keys"] = names
     elif action == "type":
         text = args.get("text")
         if not isinstance(text, str) or not text:
             raise ComputerError("type needs `text`")
-        await computer.type(text)
+        seen = await computer.type(text)
+    elif action == "click":
+        x, y = _int(args, "x"), _int(args, "y")
+        seen = await computer.click(x, y)
+        result.update(x=x, y=y)
+    elif action == "wait":
+        seconds = args.get("seconds", 1)
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
+            raise ComputerError("wait needs `seconds`, a number")
+        seen = await computer.wait(min(float(seconds), MAX_WAIT))
     elif action == "open":
         target = args.get("target")
         if not isinstance(target, str) or not target.strip():
             raise ComputerError("open needs `target`: an app's package name, or a link")
-        await computer.open(target.strip())
+        seen = await computer.open(target.strip())
         result["target"] = target.strip()
-        settle = SETTLE_OPEN
     elif action == "apps":
         result["apps"] = await computer.apps()
-    elif action == "wait":
-        seconds = args.get("seconds", SETTLE)
-        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
-            raise ComputerError("wait needs `seconds`, a number")
-        settle = min(float(seconds), MAX_WAIT)
+    elif action == "media":
+        command = args.get("command", "state")
+        if command not in MEDIA:
+            raise ComputerError(f"media needs `command`: one of {', '.join(MEDIA)}")
+        times = args.get("times", 1)
+        if isinstance(times, bool) or not isinstance(times, int) or not 1 <= times <= 30:
+            raise ComputerError("media's `times` is a whole number from 1 to 30")
+        seen = await computer.media(command, times)
+        result["command"] = command
+    elif action == "search":
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ComputerError("search needs `query`")
+        seen = await computer.search(query.strip())
+        result["query"] = query.strip()
+    elif action == "settings":
+        seen = await computer.settings()
+    elif action == "install":
+        package = args.get("package")
+        if package is not None and (not isinstance(package, str) or not PACKAGE.fullmatch(package.strip())):
+            raise ComputerError("install's `package` is an app's package name; leave it out for the app whose Appstore page is in front")
+        seen = await computer.install(package.strip() if package else None)
     else:
         raise ComputerError(f"no action {action!r}; the actions are {', '.join(ACTIONS)}")
     image = None
-    if looks:
-        await asyncio.sleep(settle)
-        seen: Look | None = None
-        try:
-            seen = await computer.look()
-        except ComputerError as err:
-            # The action itself ran: the model must know it did, even
-            # when it can't see what came of it.
-            if action in ("screenshot", "wait"):
-                raise
-            result["screen"] = f"unseen: {err}"
-        if seen is not None:
-            result["in_front"] = seen.front
-            result["screen"] = seen.screen
-        if seen is not None and seen.jpeg is not None:
+    if seen is not None:
+        result["in_front"] = seen.front
+        result["screen"] = seen.screen
+        for name in ("error", "note", "media"):
+            if getattr(seen, name):
+                result[name] = getattr(seen, name)
+        if seen.elements:
+            result["elements"] = seen.elements
+        if seen.hidden:
+            result["screenshot"] = "none: this app hides its screen from screenshots"
+        if seen.jpeg is not None:
             result["screenshot"] = str(_save(seen.jpeg, shots, now))
             result["screenshot_size"] = list(seen.size)
             image = base64.b64encode(seen.jpeg).decode()
@@ -235,30 +314,161 @@ def _save(jpeg: bytes, folder: Path, now: datetime) -> Path:
     return path
 
 
+# The screen as elements
+
+
+@dataclass
+class Elements:
+    """The screen as the model reads it, and what each number stands for:
+    the node's identity, for the helper to find it again."""
+
+    text: str
+    numbered: dict[int, dict[str, Any]]
+
+
+# Longest a line of text on the screen is shown.
+LINE = 200
+
+
+def elements(nodes: list[dict[str, Any]]) -> Elements:
+    """One line per thing on the screen, in the tree's order. A node the
+    remote can highlight or press is numbered, named by its own text or
+    description or else by the text inside it, and marked when it has the
+    highlight; text outside any of them is a plain line. A node that holds
+    others the remote can reach is a list, not numbered itself. Runs of
+    single characters (an on-screen keyboard's keys) share one line."""
+    children: dict[int, list[int]] = {}
+    for i, node in enumerate(nodes):
+        children.setdefault(node.get("p", -1), []).append(i)
+
+    def actionable(node: dict[str, Any]) -> bool:
+        return bool(node.get("focusable") or node.get("clickable") or node.get("editable"))
+
+    def named(node: dict[str, Any]) -> str:
+        return (node.get("text") or node.get("desc") or "").strip()
+
+    def inside(i: int) -> list[int]:
+        found = []
+        for child in children.get(i, []):
+            found.append(child)
+            found.extend(inside(child))
+        return found
+
+    used: set[int] = set()
+    lines: list[str] = []
+    singles: list[str] = []
+    numbered: dict[int, dict[str, Any]] = {}
+
+    def flush() -> None:
+        if singles:
+            lines.append("    " + " ".join(singles))
+            singles.clear()
+
+    for i, node in enumerate(nodes):
+        if i in used:
+            continue
+        name = named(node)
+        below = inside(i)
+        if actionable(node) and any(actionable(nodes[j]) for j in below):
+            # A list or a row of things that can be selected: they are
+            # numbered themselves, and the text between them stays text.
+            if name:
+                flush()
+                lines.append("    " + _short(name))
+            continue
+        if actionable(node):
+            within = below
+            used.update(within)
+            label = name
+            if not label:
+                parts: list[str] = []
+                for j in within:
+                    part = named(nodes[j])
+                    if part and part not in parts:
+                        parts.append(part)
+                label = " / ".join(parts[:3])
+            highlighted = node.get("focused") or any(nodes[j].get("focused") for j in within)
+            if not label and not highlighted:
+                continue
+            flush()
+            number = len(numbered) + 1
+            numbered[number] = {
+                "class": node.get("class"),
+                "text": node.get("text"),
+                "desc": node.get("desc"),
+                "id": node.get("id"),
+                "bounds": node.get("bounds"),
+            }
+            marks = []
+            if highlighted:
+                marks.append("highlighted")
+            if node.get("editable"):
+                marks.append("text field")
+            if node.get("selected"):
+                marks.append("selected")
+            if "checked" in node:
+                marks.append("on" if node["checked"] else "off")
+            if node.get("disabled"):
+                marks.append("disabled")
+            line = f"[{number}] {_short(label) or '(unnamed)'}"
+            lines.append(line + (f" ({', '.join(marks)})" if marks else ""))
+        elif name:
+            if len(name) <= 2:
+                singles.append(name)
+                continue
+            flush()
+            lines.append("    " + _short(name))
+    flush()
+    return Elements("\n".join(lines), numbered)
+
+
+def _short(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= LINE else text[: LINE - 1] + "…"
+
+
+# The Fire TV over ADB
+
 # How often `watch` tries the Stick while it is off, and checks the
 # connection while it is on.
 WATCH_EVERY = 10.0
 CONNECT_TIMEOUT = 3.0
 READ_TIMEOUT = 15.0
-# How long a one-second `screenrecord` may take before the screenshot is a
-# `screencap` instead, and how long that may take.
-RECORD_WAIT = 8.0
-SCREENCAP_WAIT = 60.0
-# A first connection this many seconds after the Stick booted counts as its
-# boot, and opens huvu.
-BOOT_WINDOW = 300.0
-# How long the boot waits for an app in front, then how long the opened app
-# gets to come to the front, and how many times it is opened.
-BOOT_WAIT = 300.0
-BOOT_SETTLE = 5.0
-OPEN_WAIT = 30.0
-OPEN_TRIES = 3
-RECORDING = "/sdcard/huvu-screen.mp4"
+# How long a helper call may take: its waits, and the look after.
+HELPER_TIMEOUT = 60.0
+# The helper, and where it goes on the box: named by its hash, so a new
+# build never runs an old copy.
+HELPER = Path(__file__).with_name("tv-helper.jar")
+HELPER_DIR = "/data/local/tmp"
+# How long the screen gets to settle after an action, before the look that
+# answers it: a short wait for the app to take the input, then until the
+# accessibility events stop, at most SETTLE_MOST. Video apps send none, so
+# for them the short wait is what there is.
+SETTLE = ["sleep:400", "idle:1500"]
+# Opening an app: how long it may take to come to the front.
+OPEN_WAIT = 10_000
+# Fire OS 5's launcher, as read off the family's Stick on 2026-11-01.
+LAUNCHER = "com.amazon.tv.launcher"
+FIND = [{"label": "Find"}]
+SEARCH = [{"id": "com.amazon.tv.launcher:id/search_btn_text"}, {"label": "Search"}]
+SUGGESTION = "com.amazon.tv.launcher:id/title"
+SEARCH_RESULTS = [{"id": "com.amazon.tv.launcher:id/search_text"}]
+SETTINGS = [{"id": "com.amazon.tv.launcher:id/nav_bar_settings"}, {"label": "Settings"}]
+# The Appstore: an app's page, and its button, whose label says what a press
+# does ("Download You own it" for a free app the account has).
+APPSTORE = "com.amazon.venezia"
+BUY = "com.amazon.venezia:id/buy_button"
+# A button that downloads at no cost starts with one of these words. Anything
+# else (a price, "Buy", "Rent") is left alone: huvu never pays.
+FREE = ("download", "get", "free", "install", "update")
 PACKAGE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 COMPONENT = re.compile(rf"{PACKAGE.pattern}/[A-Za-z0-9_.$]+")
 FOCUS = re.compile(r"mCurrentFocus=Window\{\S+ \S+ ([^ }]+)\}")
 SIZE = re.compile(r"(Physical|Override) size: (\d+)x(\d+)")
 WAKEFULNESS = re.compile(r"mWakefulness=(\w+)")
+SECTION = re.compile(rb"HUVU (\w+) (\d+)\n")
+STATE_MARK = "HUVU-STATE"
+OPENED_MARK = "HUVU-OPENED"
 
 
 @dataclass
@@ -274,6 +484,8 @@ class AdbComputer(ExternalComputer):
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _size: tuple[int, int] | None = field(default=None, init=False, repr=False)
     _boot: str | None = field(default=None, init=False, repr=False)
+    _helper_on_box: bool = field(default=False, init=False, repr=False)
+    _numbered: dict[int, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
 
     # The device
 
@@ -292,6 +504,7 @@ class AdbComputer(ExternalComputer):
                 await device.close()
             raise ComputerError("the TV box doesn't answer: the home theatre's AV power may be off, or it is still starting") from err
         self._size = None
+        self._helper_on_box = False
         return device
 
     async def _run(self, command: str, timeout: float = READ_TIMEOUT) -> str:
@@ -307,7 +520,8 @@ class AdbComputer(ExternalComputer):
     async def _on_device(self, call: Any, again: bool = True) -> Any:
         """Runs a call on the device, connecting first if need be. A
         connection that dies under a call (the AV power was cut and came
-        back) is made again once, unless `again` is off."""
+        back) is made again once, unless `again` is off. A call that timed
+        out isn't run again: it may have pressed keys already."""
         async with self._lock:
             out: Any = None
             for attempt in (1, 2):
@@ -320,7 +534,7 @@ class AdbComputer(ExternalComputer):
                 except Exception as err:
                     log.warning("the TV box failed a call (attempt %d): %r", attempt, err)
                     await self._drop()
-                    if fresh or attempt == 2 or not again:
+                    if fresh or attempt == 2 or not again or "timeout" in type(err).__name__.lower():
                         raise ComputerError("the TV box stopped answering") from err
             return out
 
@@ -344,85 +558,190 @@ class AdbComputer(ExternalComputer):
         width, height = await self._screen_size()
         return SHOT_WIDTH, round(SHOT_WIDTH * height / width / 2) * 2
 
+    # The helper
+
+    async def _put_helper(self) -> str:
+        """Puts this build of the helper on the box, once a connection."""
+        path = _helper_path()
+        if not self._helper_on_box:
+            if path not in await self._run(f"ls {path} 2>/dev/null"):
+                await self._run(f"rm -f {HELPER_DIR}/huvu-tv-*.jar")
+                await self._on_device(lambda device: device.push(str(HELPER), path, read_timeout_s=READ_TIMEOUT))
+                log.info("put the helper on the TV box at %s", path)
+            self._helper_on_box = True
+        return path
+
+    async def _helper(self, steps: list[str], picture: Picture = "auto", before: str | None = None, after: str | None = None) -> tuple[Look, str, dict[str, bytes]]:
+        """Runs `before` in the box's shell, the helper's steps and a look,
+        then `after`, all in one command, and answers the look, what
+        `before` and `after` printed, and the helper's other sections."""
+        path = await self._put_helper()
+        width, height = await self._shot_size()
+        helper = " ".join(shlex.quote(s) for s in [*steps, f"look:{width}x{height},{picture}"])
+        command = "; ".join(
+            part
+            for part in (
+                before and f"{{ {before}; }} 2>&1",
+                f"echo {STATE_MARK}",
+                f"CLASSPATH={path} app_process /system/bin com.huvu.tvhelper.Helper {helper} 2>/dev/null",
+                f"echo {STATE_MARK}",
+                "dumpsys window windows | grep mCurrentFocus",
+                "dumpsys power | grep mWakefulness=",
+                after,
+            )
+            if part
+        )
+        raw = await self._exec_out(command, timeout=HELPER_TIMEOUT)
+        mark = f"{STATE_MARK}\n".encode()
+        printed, _, rest = raw.partition(mark)
+        body, _, state = rest.partition(mark)
+        sections = _sections(body)
+        state_text = state.decode(errors="replace").replace("\r", "")
+        if "tree" not in sections:
+            problem = sections.get("error", b"").decode(errors="replace") or body.decode(errors="replace").strip()[:300]
+            raise ComputerError(f"the TV box's helper failed: {problem or 'it printed nothing'}")
+        found = FOCUS.search(state_text)
+        wake = WAKEFULNESS.search(state_text)
+        screen = {"Awake": "on", "Dreaming": "screensaver", "Dozing": "off", "Asleep": "off"}.get(wake.group(1) if wake else "", "unknown")
+        tree = json.loads(sections["tree"])
+        seen = elements(tree.get("nodes", []))
+        self._numbered = seen.numbered
+        jpeg = sections.get("shot") if screen != "off" else None
+        look = Look(
+            front=found.group(1) if found else None,
+            screen=screen,
+            elements=seen.text or None,
+            jpeg=jpeg,
+            size=(width, height) if jpeg else (0, 0),
+            hidden="hidden" in sections and screen != "off",
+            error=sections["error"].decode(errors="replace") if "error" in sections else None,
+        )
+        return look, printed.decode(errors="replace").replace("\r", "") + state_text, sections
+
     # What the model does
 
     async def front(self) -> str | None:
         found = FOCUS.search(await self._run("dumpsys window windows | grep mCurrentFocus"))
         return found.group(1) if found else None
 
-    async def look(self) -> Look:
-        front = await self.front()
-        found = WAKEFULNESS.search(await self._run("dumpsys power | grep mWakefulness="))
-        screen = {"Awake": "on", "Dreaming": "screensaver", "Dozing": "off", "Asleep": "off"}.get(found.group(1) if found else "", "unknown")
-        jpeg, size = None, (0, 0)
-        if screen != "off":
-            size = await self._shot_size()
-            jpeg = await self._screenshot(*size)
-        return Look(front, screen, jpeg, size)
+    async def look(self, picture: Picture) -> Look:
+        return (await self._helper([], picture))[0]
 
-    async def _screenshot(self, width: int, height: int) -> bytes:
-        # A recording that hangs isn't tried again: screencap follows.
-        video = b""
-        with contextlib.suppress(ComputerError):
-            video = await self._exec_out(
-                f"screenrecord --size {width}x{height} --bit-rate 4000000 --time-limit 1 {RECORDING} >/dev/null 2>&1; cat {RECORDING}; rm -f {RECORDING}",
-                timeout=RECORD_WAIT,
-                again=False,
-            )
-        frame = None
-        if video:
-            with contextlib.suppress(ComputerError):
-                frame = await last_frame(video, width, height)
-        if frame is None:
-            # screenrecord fails on some screens; screencap always works,
-            # at about 10 s.
-            frame = await last_frame(await self._exec_out("screencap -p", timeout=SCREENCAP_WAIT), width, height)
-        return frame
+    async def select(self, element: int) -> Look:
+        want = self._numbered.get(element)
+        if want is None:
+            raise ComputerError(f"no element {element} in the last look: look again")
+        return (await self._helper([_select([want]), *SETTLE]))[0]
 
-    async def click(self, x: int, y: int) -> None:
+    async def keys(self, names: list[str]) -> Look:
+        return (await self._helper([_keys(names), *SETTLE]))[0]
+
+    async def type(self, text: str) -> Look:
+        if not text.isascii() or not text.isprintable():
+            raise ComputerError("only plain text without accents or symbols outside ASCII can be typed")
+        return (await self._helper([_text(text), *SETTLE]))[0]
+
+    async def click(self, x: int, y: int) -> Look:
         shot_width, shot_height = await self._shot_size()
         if not (0 <= x < shot_width and 0 <= y < shot_height):
             raise ComputerError(f"({x}, {y}) is off the screen, which is {shot_width}x{shot_height}")
         width, height = await self._screen_size()
-        await self._run(f"input tap {round(x * width / shot_width)} {round(y * height / shot_height)}")
+        return (await self._helper([f"tap:{round(x * width / shot_width)},{round(y * height / shot_height)}", *SETTLE]))[0]
 
-    async def keys(self, names: list[str]) -> None:
-        codes = []
-        for name in names:
-            code = KEYS.get(re.sub(r"[\s_\-]", "", name.lower()))
-            if code is None:
-                raise ComputerError(f"no key {name!r}; the keys are {', '.join(sorted(KEYS))}")
-            codes.append(code)
-        await self._run("input keyevent " + " ".join(str(c) for c in codes))
+    async def wait(self, seconds: float) -> Look:
+        return (await self._helper([f"sleep:{round(seconds * 1000)}"]))[0]
 
-    async def type(self, text: str) -> None:
-        if not text.isascii() or not text.isprintable():
-            raise ComputerError("only plain text without accents or symbols outside ASCII can be typed")
-        # `input text` reads %s as a space, and takes no space itself.
-        await self._run("input text " + shlex.quote(text.replace(" ", "%s")))
-
-    async def open(self, target: str) -> None:
-        """A link opens in the app that takes it, a package/activity
-        starts that activity, and a package opens as its launcher icon
-        would, the TV's icon first."""
-        started = lambda out: "Error" not in out
+    async def open(self, target: str) -> Look:
+        """A link opens in the app that takes it, a package/activity starts
+        that activity, and a package opens as its launcher icon would, the
+        TV's icon first."""
+        steps = ["sleep:1500", "idle:2500"]
         if "://" in target:
-            tries = [(f"am start -a android.intent.action.VIEW -d {shlex.quote(target)}", started)]
+            before = f"am start -a android.intent.action.VIEW -d {shlex.quote(target)} | grep -q Error || echo {OPENED_MARK}"
         elif COMPONENT.fullmatch(target):
-            tries = [(f"am start -n {target}", started)]
+            before = f"am start -n {target} | grep -q Error || echo {OPENED_MARK}"
         elif PACKAGE.fullmatch(target):
-            injected = lambda out: "Events injected: 1" in out
-            tries = [(f"monkey -p {target} -c android.intent.category.{c} 1", injected) for c in ("LEANBACK_LAUNCHER", "LAUNCHER")]
+            before = " || ".join(
+                f"monkey -p {target} -c android.intent.category.{c} 1 | grep -q 'Events injected: 1' && echo {OPENED_MARK}"
+                for c in ("LEANBACK_LAUNCHER", "LAUNCHER")
+            )
+            steps = [f"front:{target},{OPEN_WAIT}", "idle:2500"]
         else:
             raise ComputerError("open needs an app's package name, a package/activity, or a link")
-        for command, worked in tries:
-            if worked(await self._run(command)):
-                return
-        raise ComputerError(f"{target} didn't open: nothing installed takes it")
+        look, printed, _ = await self._helper(steps, before=before)
+        if OPENED_MARK not in printed:
+            raise ComputerError(f"{target} didn't open: nothing installed takes it")
+        return look
 
     async def apps(self) -> list[str]:
         out = await self._run("pm list packages -3")
         return sorted(line.removeprefix("package:").strip() for line in out.splitlines() if line.startswith("package:"))
+
+    async def media(self, command: str, times: int) -> Look:
+        code = MEDIA[command]
+        steps = [] if code is None else [_keys_codes([code] * (times if command in ("forward", "back") else 1)), "sleep:800"]
+        look, printed, _ = await self._helper(steps, after="dumpsys media_session; cat /proc/uptime")
+        # An app that publishes no media session (Netflix doesn't) can't be
+        # read: its state is unknown, not "nothing plays".
+        look.media = playing(printed, look.front) or {"state": "unknown: the app in front doesn't say what it plays"}
+        return look
+
+    async def search(self, query: str) -> Look:
+        """The box's own search, across its apps: Home, Find, Search, the
+        query typed on its keyboard, and the suggestion that is the query,
+        or else the first."""
+        if not query.isascii() or not query.isprintable():
+            raise ComputerError("only plain text without accents or symbols outside ASCII can be typed")
+        suggestion = [{"id": SUGGESTION, "label": query}, {"id": SUGGESTION}]
+        look, _, _ = await self._helper(
+            [
+                *_home(FIND),
+                _select(FIND),
+                _until(SEARCH, 6000),
+                _select(SEARCH),
+                # The keyboard's keys show in the tree only some of the
+                # time, so the wait for it is a fixed one.
+                "sleep:2000",
+                _text(query),
+                _until([{"id": SUGGESTION}], 8000),
+                _select(suggestion),
+                _until(SEARCH_RESULTS, 10000),
+                "idle:2500",
+            ]
+        )
+        return look
+
+    async def settings(self) -> Look:
+        """The box's settings: Home, then Settings, which opens its row."""
+        return (await self._helper([*_home(SETTINGS), _select(SETTINGS), "idle:2500"]))[0]
+
+    async def install(self, package: str | None) -> Look:
+        """Downloads an app from the Appstore, from its page there: the one
+        `package` opens, or the one in front. Only a free download is
+        pressed."""
+        before = None
+        steps = [_until([{"id": BUY}], 8000), "idle:1500"]
+        if package:
+            before = f"am start -a android.intent.action.VIEW -d {shlex.quote('amzn://apps/android?p=' + package)}"
+            steps = [f"front:{APPSTORE},{OPEN_WAIT}", *steps]
+        look, _, sections = await self._helper(steps, picture="never", before=before)
+        if look.error:
+            return look
+        button = _node(sections, BUY)
+        label = (button.get("desc") or button.get("text") or "").strip() if button else ""
+        if not button:
+            look.error = "no Appstore page with a download button is in front"
+            return look
+        if label.lower().startswith("open"):
+            look.note = f"already installed (the button says {label!r})"
+            return look
+        if not label.lower().startswith(FREE):
+            look.error = f"not pressed: the button says {label!r}, which isn't a free download, and huvu never pays"
+            return look
+        pressed = (await self._helper([_select([{"id": BUY}]), "sleep:1500", "idle:2500"], picture="never"))[0]
+        if not pressed.error:
+            pressed.note = f"pressed {label!r}: it downloads and installs in the background, and `apps` lists it once it is in"
+        return pressed
 
     # The Stick's boots
 
@@ -459,7 +778,7 @@ class AdbComputer(ExternalComputer):
         await asyncio.sleep(BOOT_SETTLE)
         for _ in range(OPEN_TRIES):
             await self._run(f"input keyevent {KEYS['wake']} && am start -n {component}")
-            settle = loop.time() + OPEN_WAIT
+            settle = loop.time() + BOOT_OPEN_WAIT
             while loop.time() < settle:
                 if (await self.front() or "").startswith(package + "/"):
                     log.info("opened %s on the TV box", component)
@@ -468,20 +787,111 @@ class AdbComputer(ExternalComputer):
         log.warning("%s didn't come to the front on the TV box", component)
 
 
-async def last_frame(media: bytes, width: int, height: int) -> bytes:
-    """The last frame of a video, or an image, as a JPEG of the given size,
-    through ffmpeg. MP4 keeps its index at the end, so it goes through a
-    file."""
-    with tempfile.TemporaryDirectory() as folder:
-        source = Path(folder) / "in"
-        target = Path(folder) / "out.jpg"
-        source.write_bytes(media)
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-loglevel", "error", "-y", "-i", str(source), "-vf", f"scale={width}:{height}", "-update", "1", "-q:v", "4", str(target),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, err = await process.communicate()
-        if process.returncode != 0 or not target.exists():
-            raise ComputerError(f"the screenshot couldn't be read: {err.decode(errors='replace').strip()[:200]}")
-        return target.read_bytes()
+# A first connection this many seconds after the Stick booted counts as its
+# boot, and opens huvu.
+BOOT_WINDOW = 300.0
+# How long the boot waits for an app in front, then how long the opened app
+# gets to come to the front, and how many times it is opened.
+BOOT_WAIT = 300.0
+BOOT_SETTLE = 5.0
+BOOT_OPEN_WAIT = 30.0
+OPEN_TRIES = 3
+
+
+@functools.cache
+def _helper_path() -> str:
+    digest = hashlib.sha256(HELPER.read_bytes()).hexdigest()[:12]
+    return f"{HELPER_DIR}/huvu-tv-{digest}.jar"
+
+
+def _sections(body: bytes) -> dict[str, bytes]:
+    """The helper's answers: `HUVU <name> <length>\\n` and that many bytes
+    each. Anything the runtime printed between them is skipped."""
+    sections: dict[str, bytes] = {}
+    at = 0
+    while True:
+        found = SECTION.search(body, at)
+        if not found:
+            return sections
+        start = found.end()
+        end = start + int(found.group(2))
+        sections[found.group(1).decode()] = body[start:end]
+        at = end
+
+
+def _b64(text: str) -> str:
+    return base64.b64encode(text.encode()).decode()
+
+
+def _select(wants: list[dict[str, Any]]) -> str:
+    return f"select:{_b64(json.dumps(wants))}"
+
+
+def _text(text: str) -> str:
+    return f"text:{_b64(text)}"
+
+
+def _keys_codes(codes: list[int]) -> str:
+    return "key:" + ",".join(str(c) for c in codes)
+
+
+def _keys(names: list[str]) -> str:
+    codes = []
+    for name in names:
+        code = KEYS.get(re.sub(r"[\s_\-]", "", name.lower()))
+        if code is None:
+            raise ComputerError(f"no key {name!r}; the keys are {', '.join(sorted(KEYS))}")
+        codes.append(code)
+    return _keys_codes(codes)
+
+
+def _until(wants: list[dict[str, Any]], ms: int) -> str:
+    return f"until:{_b64(json.dumps(wants))},{ms}"
+
+
+def _home(there: list[dict[str, Any]]) -> list[str]:
+    """Home, and a wait until `there` shows on it. Home goes twice: the
+    first press may only wake the screen or end the screensaver, and the
+    launcher takes a moment to start its transition, which `idle` would
+    take for a screen at rest."""
+    home = _keys_codes([KEYS["home"]])
+    return [home, "sleep:1200", home, _until(there, 8000), "idle:1000"]
+
+
+def _node(sections: dict[str, bytes], resource: str) -> dict[str, Any] | None:
+    """The first node of the look's tree with that resource id, with the
+    text inside it."""
+    nodes = json.loads(sections["tree"]).get("nodes", [])
+    for i, node in enumerate(nodes):
+        if node.get("id") == resource:
+            inner = [n.get("text") or n.get("desc") for n in nodes if n.get("p") == i]
+            return {**node, "text": " ".join(filter(None, [node.get("text"), *inner])) or None}
+    return None
+
+
+def playing(dump: str, front: str | None) -> dict[str, Any] | None:
+    """What plays, from `dumpsys media_session` and `/proc/uptime`: the
+    session of the app in front, or else one that is playing or paused,
+    with its position in seconds now."""
+    uptime = re.search(r"^(\d+\.\d+) \d+\.\d+$", dump, re.MULTILINE)
+    now_ms = float(uptime.group(1)) * 1000 if uptime else None
+    sessions = []
+    stack = dump.split("Sessions Stack")[0]
+    for block in re.split(r"\n(?=\S[^\n]* \S+/\S+\n  ownerPid=)", stack):
+        package = re.search(r"^\s+package=(\S+)", block, re.MULTILINE)
+        state = re.search(r"state=PlaybackState \{state=(\d+), position=(-?\d+), buffered position=-?\d+, speed=([\d.]+), updated=(\d+)", block)
+        if not package or not state:
+            continue
+        title = re.search(r"metadata:size=\d+, description=([^,\n]+)", block)
+        sessions.append((package.group(1), int(state.group(1)), int(state.group(2)), float(state.group(3)), int(state.group(4)), title.group(1).strip() if title else None))
+    in_front = (front or "").split("/")[0]
+    chosen = next((s for s in sessions if s[0] == in_front), None) or next((s for s in sessions if s[1] in (2, 3, 6)), None)
+    if chosen is None:
+        return None
+    package, state, position, speed, updated, title = chosen
+    if state == 3 and now_ms is not None and updated > 0:
+        position += int((now_ms - updated) * speed)
+    answer: dict[str, Any] = {"app": package, "state": PLAYBACK.get(state, str(state)), "position_seconds": max(0, position) // 1000}
+    if title and title != "null":
+        answer["title"] = title
+    return answer

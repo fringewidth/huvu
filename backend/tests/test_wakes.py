@@ -85,7 +85,7 @@ async def test_a_wake_waits_when_the_model_asks_and_the_reply_continues_it(kerne
     # loads the session's own.
     session, message = hermes.messages[-1]
     assert session == wake and message.endswith("it's 482913")
-    assert hermes.histories[wake] == [] and hermes.models[wake] == "gpt-6-sol"
+    assert hermes.histories[wake] == [] and hermes.models[wake] == "gpt-6-luna"
     turns = kernel.waker.view(wake, family.me_phone)["turns"]
     assert [t["ask"] for t in turns] == ["", "it's 482913"] and turns[1]["answer"] == "done"
     # That run didn't ask to wait, so the wake has ended.
@@ -204,7 +204,7 @@ async def test_a_wake_runs_on_its_triggers_tier_though_the_trigger_fired_once(ke
     # A once trigger has ended by the time its wake starts.
     wake = await ring(kernel, tier="pro", once=True)
     assert kernel.db.execute("SELECT tier FROM wakes WHERE id = ?", (wake,)).fetchone()["tier"] == "pro"
-    assert hermes.models[wake] == "gpt-6-sol"
+    assert hermes.models[wake] == "gpt-6-luna"
 
 
 async def test_a_session_on_pro_or_advanced_may_browse(kernel, family, hermes):

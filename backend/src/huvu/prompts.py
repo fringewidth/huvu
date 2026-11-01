@@ -196,11 +196,13 @@ SWIGGY_BLOCKED = "huvu never places an order, pays or changes your person's Swig
 
 # The external_computer tool the huvu Hermes plugin adds
 # (external_computer.py): the home theatre's Fire TV, driven like a computer.
-EXTERNAL_COMPUTER = """The household's TV box: a Fire TV on the home theatre's projector, a computer apart from yours that you see and drive. Every action but `apps` answers with a fresh screenshot, the app in front, and whether the screen is on. When the screen can't be seen after an action, `screen` says why, and the action still ran.
+EXTERNAL_COMPUTER = """The household's TV box: a Fire TV on the home theatre's projector, a computer apart from yours that you see and drive. Every action but `apps` answers with the app in front, whether the screen is on, and the screen as elements: one line for each thing on it, numbered when it can be selected, with the highlighted one marked. A screenshot comes too when the elements say next to nothing, as in video apps, which draw their own screens; `screenshot` always brings one. When an action stopped partway, `error` says where, and the rest of the answer shows where the box was left.
 
-It is built for a remote. The arrow keys move a highlight between items, Return opens the highlighted one, Escape goes back, and Home goes to the home screen. Clicks reach only some apps: find the highlight and move it with the keys first. Text goes into the field that has the highlight, once its on-screen keyboard is open.
+Reach first for the actions that do a whole task: `search` searches the box's content and apps, `settings` opens its settings, `install` downloads a free app from its Appstore, and `media` controls and reports what plays. Then `select`, which highlights an element by its number and presses select, the way the remote does. Where there are no elements, go by the screenshot and the keys: the arrows move a highlight, Return opens the highlighted item, Escape goes back, Home goes home, and text goes into the field that has the highlight.
 
-Video an app protects from copying shows black in screenshots, and some apps black out their menus too. There, go by the app in front and use the media keys.
+Video an app protects from copying shows black, and Netflix hides its whole screen from screenshots: there, go by the app in front, `media` and the media keys.
+
+huvu never pays. `install` presses only a download that costs nothing; where a screen asks for money, to buy, rent or subscribe, stop and tell your person.
 
 The box is off, and doesn't answer, while the home theatre's AV power is off. Its screen goes to sleep when nobody uses it, and the Wake key wakes it. huvu's own app on it shows the people in the room your conversations with them: when you are done, leave it in front again, unless you left something playing for them. Each screenshot is saved as a file, whose path the result gives, should you want to show it to your person."""
 
@@ -212,19 +214,28 @@ EXTERNAL_COMPUTER_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["screenshot", "click", "key", "type", "open", "apps", "wait"],
-                "description": "screenshot: look at the screen. click: tap the point x, y. key: press keys in order. type: type text into the highlighted field. open: open an app by its package name, or a link in the app that handles it. apps: the package names of the apps the household installed; the box's own apps come with its system. wait: wait some seconds, then look.",
+                "enum": ["look", "screenshot", "select", "key", "type", "click", "wait", "open", "apps", "media", "search", "settings", "install"],
+                "description": "look: the screen as elements, with a screenshot only where they say next to nothing. screenshot: the elements and a screenshot. select: highlight an element and press select. key: press keys in order. type: type text into the highlighted field. click: tap the point x, y, which only some apps take. wait: wait some seconds, then look. open: open an app by its package name, or a link in the app that handles it. apps: the package names of the apps the household installed; the box's own apps come with its system. media: control what plays, or report it. search: search the box's content and apps, and open the results. settings: open the box's settings. install: download a free app from the Appstore.",
             },
-            "x": {"type": "integer", "description": "For click: pixels from the screenshot's left edge."},
-            "y": {"type": "integer", "description": "For click: pixels from the screenshot's top edge."},
+            "element": {"type": "integer", "description": "For select: an element's number from the latest answer."},
             "keys": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "For key: the keys, pressed in order. Up, Down, Left, Right, Return, Escape, Home, Menu, BackSpace, Space, Search, PageUp, PageDown, Wake and Sleep for the screen, and the media keys PlayPause, Play, Pause, Stop, Rewind, FastForward, Next, Previous.",
             },
             "text": {"type": "string", "description": "For type: plain ASCII text."},
-            "target": {"type": "string", "description": "For open: a package name, a package/activity, or a link."},
+            "x": {"type": "integer", "description": "For click: pixels from the screenshot's left edge."},
+            "y": {"type": "integer", "description": "For click: pixels from the screenshot's top edge."},
             "seconds": {"type": "number", "description": "For wait: up to 30."},
+            "target": {"type": "string", "description": "For open: a package name, a package/activity, or a link."},
+            "command": {
+                "type": "string",
+                "enum": ["state", "play", "pause", "playpause", "stop", "forward", "back", "next", "previous"],
+                "description": "For media. state reports what plays, its app and position, where the app says; forward and back skip by the app's own step, `times` times; next and previous move between items.",
+            },
+            "times": {"type": "integer", "description": "For media forward and back: how many steps, 1 to 30."},
+            "query": {"type": "string", "description": "For search: plain ASCII text."},
+            "package": {"type": "string", "description": "For install: the app's package name. Leave it out to install the app whose Appstore page is in front."},
         },
         "required": ["action"],
     },

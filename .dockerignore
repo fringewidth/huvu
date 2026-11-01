@@ -16,6 +16,7 @@ hermes-skills/
 backend/.venv/
 backend/data/
 backend/tests/
+backend/tv-helper/
 backend/.env
 backend/huvu.toml
 browser-extension/

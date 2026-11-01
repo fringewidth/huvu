@@ -76,7 +76,7 @@ url = "http://localhost:8642"
 # provider too (anthropic is the Claude login, openai-codex the ChatGPT one).
 [models]
 basic = "gpt-6-luna"
-pro = "gpt-6-sol"
+pro = "gpt-6-luna"
 advanced = "gpt-6-astra"
 # pro = { model = "claude-sonnet-5-5", provider = "anthropic" }
 

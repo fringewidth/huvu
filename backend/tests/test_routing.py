@@ -72,7 +72,7 @@ async def test_an_ask_that_needs_context_runs_on_pro(talk, hermes: FakeHermes):
     clef(talk, {"make it shorter": 0.9})
     live = await talk.conversations.ask("c1", "make it shorter", user="me")
     await collect(talk, live)
-    assert (hermes.models[live.turn.hermes_session], hermes.efforts[live.turn.hermes_session]) == ("gpt-6-sol", None)
+    assert (hermes.models[live.turn.hermes_session], hermes.efforts[live.turn.hermes_session]) == ("gpt-6-luna", None)
     assert (await routes(talk))[0]["why"] == "context"
 
 
@@ -84,8 +84,8 @@ async def test_an_ask_at_the_line_runs_on_pro(talk):
 async def test_without_clef_every_ask_runs_on_pro(talk, hermes: FakeHermes):
     live = await talk.conversations.ask("c1", "it's stuffy in here", user="me")
     await collect(talk, live)
-    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
-    assert await routes(talk) == [{"tier": "pro", "model": "gpt-6-sol", "effort": None, "why": "failed", "p": None}]
+    assert hermes.models[live.turn.hermes_session] == "gpt-6-luna"
+    assert await routes(talk) == [{"tier": "pro", "model": "gpt-6-luna", "effort": None, "why": "failed", "p": None}]
 
 
 async def test_a_failed_clef_runs_on_pro(talk):
@@ -112,7 +112,7 @@ async def test_with_the_router_off_every_ask_runs_on_pro(talk, hermes: FakeHerme
     talk.config.router_enabled = False
     live = await talk.conversations.ask("c1", "turn on the projector", user="me")
     await collect(talk, live)
-    assert hermes.models[live.turn.hermes_session] == "gpt-6-sol"
+    assert hermes.models[live.turn.hermes_session] == "gpt-6-luna"
     assert (await routes(talk))[0]["why"] == "off"
 
 
@@ -200,9 +200,9 @@ async def test_hermes_gets_the_effort_as_a_model_option():
     client._http = httpx.AsyncClient(base_url="http://hermes", transport=httpx.MockTransport(answer))
     profile = Profile(None, None)
     [event async for event in client.chat(profile, "s1", "hi", model="gpt-6-luna", effort="none")]
-    [event async for event in client.chat(profile, "s1", "hi", model="gpt-6-sol")]
+    [event async for event in client.chat(profile, "s1", "hi", model="gpt-6-luna")]
     assert sent[0] == {"message": "hi", "model": "gpt-6-luna", "model_options": {"reasoning_effort": "none"}}
-    assert sent[1] == {"message": "hi", "model": "gpt-6-sol"}
+    assert sent[1] == {"message": "hi", "model": "gpt-6-luna"}
     await client.close()
 
 

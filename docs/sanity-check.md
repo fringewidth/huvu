@@ -258,7 +258,14 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 1. With the home theatre on, ask huvu on your phone "what's on the TV?". Within about ten seconds, huvu should say what the TV shows, matching what you see.
 1. Ask it to show you the TV's screen. A picture of what the TV shows should appear in the turn.
 1. Ask "open Netflix on the TV". Netflix should open on the TV within about ten seconds, and huvu should say so.
-1. Ask it to find a film you name on Netflix and stop on its page. The TV should move through Netflix's search by itself, and stop on the film's page. Once a film plays, huvu may say the picture is black to it: Netflix hides its video from screenshots.
+1. Ask it to find a film you name on Netflix and stop on its page. The TV should move through Netflix's search by itself, and stop on the film's page. Once a film plays, huvu may say it can't see the screen: Netflix hides it from screenshots.
+1. Ask huvu to search the TV for a film you name. Within about fifteen seconds the TV should show Fire TV's own search results for it, and huvu should name some of what it found.
+1. Ask huvu to open the TV's settings. The TV's Settings row should open on the home screen within about ten seconds.
+1. Ask huvu to open the TV's network settings. It should get there from the Settings row by itself, without a long pause between moves.
+1. Ask huvu to install an app the TV doesn't have yet, by name, one that is free. The TV should show the app's Appstore page and start the download, and huvu should say it is downloading. Ask "is it installed?" a minute later: huvu should say yes.
+1. Ask huvu to install a paid app or game. It should not press the button, and should say the app costs money.
+1. While a YouTube video plays on the TV, ask huvu to pause it, then to play it again, then to skip ahead a little. The video should pause, play, and jump ahead, and huvu should say where it is in the video.
+1. Each move huvu makes on the TV should take a second or two, not ten or more. When you ask what's on the TV while the home screen shows, huvu should answer without needing a picture of it.
 1. Turn the home theatre off, wait two minutes, and ask "what's on the TV?". huvu should say the TV is off, without a long wait.
 1. On a quick ask that huvu answers on its own, without the conversation (such as "what's on the TV?" as the first thing you say), it should still answer, a little later, from a wake in the background.
 

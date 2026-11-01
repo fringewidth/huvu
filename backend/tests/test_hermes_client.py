@@ -42,8 +42,8 @@ async def test_a_run_sends_its_history_and_streams_under_chats_names():
 
     hermes = client(handler)
     history = [{"role": "user", "content": "[huvu situation]\nNow: Tue"}]
-    events = [(e.name, e.data) async for e in hermes.run(PROFILE, "wake-1", history, "Your dream.", model="gpt-6-sol")]
-    assert sent == [{"session_id": "wake-1", "input": [*history, {"role": "user", "content": "Your dream."}], "model": "gpt-6-sol"}]
+    events = [(e.name, e.data) async for e in hermes.run(PROFILE, "wake-1", history, "Your dream.", model="gpt-6-luna")]
+    assert sent == [{"session_id": "wake-1", "input": [*history, {"role": "user", "content": "Your dream."}], "model": "gpt-6-luna"}]
     assert [n for n, _ in events] == ["run.started", "tool.started", "assistant.delta", "assistant.delta", "assistant.completed", "run.completed"]
     assert events[0][1] == {"run_id": "run_9"}
     assert events[4][1] == {"content": "Learned a lot."}
