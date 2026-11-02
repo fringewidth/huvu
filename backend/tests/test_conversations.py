@@ -303,6 +303,23 @@ async def test_a_fresh_session_reads_only_the_latest_turns_that_fit(kernel, herm
     assert [t.ask for t in kernel.conversations.turns("c1")] == ["one", "two", "three", "four"]
 
 
+async def test_a_fresh_session_fits_hermes_cap_on_a_message(kernel, hermes, monkeypatch):
+    from huvu import conversations
+
+    # Hermes's API server cuts a longer message from the end, which once
+    # dropped the newest turns and the ask itself.
+    monkeypatch.setattr(conversations, "HERMES_MESSAGE_CHARS", 1100)
+    monkeypatch.setattr(conversations, "TRANSCRIPT_CHARS", 100_000)
+    for n in range(30):
+        await collect(kernel, await kernel.conversations.ask("c1", f"ask {n:02}", user="me"))
+    last = kernel.conversations.turns("c1")[-1]
+    await collect(kernel, await kernel.conversations.ask("c1", "the edited ask", user="me", replaces=last.id))
+    message = hermes.messages[-1][1]
+    assert len(message) <= 1100
+    assert message.endswith("the edited ask") and "Them: ask 28\nYou: ok\n</earlier>" in message
+    assert "Them: ask 00" not in message and "the turns before it were left out" in message
+
+
 async def test_chat_turns_hold_the_turns_a_caller_may_see(kernel, hermes, family):
     await collect(kernel, await kernel.conversations.ask(family.me_phone.id, "plant the tulips", user="me"))
     await collect(kernel, await kernel.conversations.ask(family.me_phone.id, "water them", user="me"))

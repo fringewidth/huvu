@@ -339,12 +339,14 @@ def continued(earlier: list[tuple[list[str], str, str]], text: str, left_out: in
     `device` the conversation's device, to find them by."""
     lines = [f"{COMPACTED} {CUT.format(start=left_out + 1, device=device)}" if left_out else COMPACTED, "", "<earlier>"]
     for notes, ask, answer in earlier:
-        lines += notes
-        lines.append(f"Them: {ask}")
-        if answer:
-            lines.append(f"You: {answer}")
+        lines += earlier_turn(notes, ask, answer)
     lines += ["</earlier>", "", text]
     return "\n".join(lines)
+
+
+def earlier_turn(notes: list[str], ask: str, answer: str) -> list[str]:
+    """One earlier turn's lines in `continued`."""
+    return [*notes, f"Them: {ask}", *([f"You: {answer}"] if answer else [])]
 
 
 # Each person's nightly dream (dream.py): the trigger's note, which the

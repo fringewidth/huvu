@@ -15,8 +15,8 @@ answers so far: with the cache cold, a short transcript costs less than
 replaying the old session's thinking and tool output. When it never
 expires, a session always continues. A fresh session (also after a
 rewind or a change of model) reads only the latest turns that fit in its
-transcript (`_transcript_chars`), and the model reads older ones with
-data_sql, from `chat_turns`.
+transcript (`TRANSCRIPT_CHARS`, and Hermes's cap on a message), and the
+model reads older ones with data_sql, from `chat_turns`.
 
 Every turn that ends becomes a `chat_turns` row (builtin/chat.py), with
 its cache reads (`usage`), so the window can be checked against the
@@ -64,13 +64,16 @@ Ending = Literal["failed", "stopped"] | None
 
 HUVU_PREFIX = "mcp__huvu__"
 # How much of the conversation a fresh session reads: the latest turns that
-# fit, at about four characters a token. With a cache that expires, every
-# cold start replays it at full price, so it is about 12,000 tokens; with
-# one that doesn't, a fresh session is rare (a rewind, another model, the
-# retention sweep), so it is about 200,000. Older turns are left out; the
-# model reads them from `chat_turns`.
+# fit, about 12,000 tokens at four characters a token, since with a cache
+# that expires every cold start replays it at full price. Older turns are
+# left out; the model reads them from `chat_turns`.
 TRANSCRIPT_CHARS = 50_000
-TRANSCRIPT_CHARS_LASTING = 800_000
+# Hermes's API server cuts a message's text at this many characters, with
+# no error (MAX_NORMALIZED_TEXT_LENGTH in gateway/platforms/api_server.py),
+# so a fresh session's first message must fit whole. Cut from the end, it
+# lost the newest turns and the ask itself (2026-11-01, when a transcript
+# of up to 800,000 characters was sent while the cache didn't expire).
+HERMES_MESSAGE_CHARS = 65_536
 # How many notes wait for a device's next ask; older ones go. A phone
 # nobody asks from for days gathers every notification.
 NOTES_KEPT = 12
@@ -278,7 +281,7 @@ class ConversationHub:
                 # A rewind, a cold cache, another model, or a session the
                 # retention sweep deleted: a fresh session carries the
                 # conversation so far, the quick turns among it.
-                message = _seeded(kept, message, tz, conversation_id, self._transcript_chars())
+                message = _seeded(kept, message, tz, conversation_id, TRANSCRIPT_CHARS)
                 session = await self._new_session(conversation_id, user, group, profile, route.key, main=True)
             else:
                 message = _with_quick_turns(message, _unseen(kept, session), tz)
@@ -412,9 +415,6 @@ class ConversationHub:
             return False
         last = self._kernel.sessions.last_used(session)
         return last is None or self._kernel.now() - last > ttl
-
-    def _transcript_chars(self) -> int:
-        return TRANSCRIPT_CHARS if self._kernel.config.prompt_cache_ttl is not None else TRANSCRIPT_CHARS_LASTING
 
     async def stop(self, turn_id: str, *, wait: bool = False) -> None:
         """Asks Hermes to stop the turn. The relay goes on until Hermes's
@@ -821,10 +821,14 @@ def _seeded(kept: list[Turn], text: str, tz: tzinfo | None, device: str, chars: 
         return text
     earlier: list[tuple[list[str], str, str]] = []
     size = 0
+    # The whole message must fit in Hermes's cap, the new message included,
+    # with the note on left out turns counted as if every turn were left out.
+    room = HERMES_MESSAGE_CHARS - len(prompts.continued([], text, left_out=len(kept), device=device))
     for t in reversed(kept):
         notes = [_note(a, tz) for a in t.actions]
         size += sum(map(len, notes)) + len(t.ask) + len(t.answer)
-        if size > chars:
+        room -= len("\n".join(prompts.earlier_turn(notes, t.ask, t.answer))) + 1
+        if size > chars or room < 0:
             break
         earlier.append((notes, t.ask, t.answer))
     earlier.reverse()

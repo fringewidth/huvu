@@ -58,6 +58,7 @@ The last section lists what doesn't work yet, so you don't spend time on it.
 1. Queue a question, then tap the flower to talk. The queued question should go back into the text field, and huvu should listen to you.
 1. On the iPhone's home screen huvu, queue a question while huvu answers, switch to another app for half a minute, and come back. If the answer shows "try again", your queued question should be back in the text field, and huvu should not have been asked it. If the answer goes on, the queued question should go once it ends.
 1. Tap "edit" next to one of your earlier questions, change it, and send. That question and everything after it should go away, and huvu should answer the new question.
+1. In a conversation with weeks of turns behind it, edit your latest question and send it. huvu should answer the edited question, and know what you talked about just before it. It should not bring up something from long ago, or finish an old answer.
 1. Ask something that makes huvu offer choices, such as "help me pick a movie, give me three options". Tap one choice. It should be sent as your next question.
 1. Ask huvu to open a web page and show you a screenshot of it, such as "open wikipedia.org and show me what it looks like". The screenshot should show under the words huvu wrote before it, whole and not cut off. You should see no "MEDIA:" text and no file path. In history, the turn should show an "1 image" chip.
 1. Ask huvu to show you a picture from the web by its address, such as "show me this image: https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg". The picture should show in the answer.
@@ -229,9 +230,9 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 1. On a page, tap "edit". The page's text should appear for editing. Change a word and tap "save". The page should show your change.
 1. Edit a page, and before saving, ask huvu in another tab to change the same page. Then save. It should say huvu changed the page while you edited, and let you keep yours or take huvu's.
 1. Tap "new page", type a name, write something and save. The page should appear in the list.
-1. On the TV, there should be no wiki.
 1. Read a few pages the morning after a dream. Each should read like a Wikipedia article about one thing: a first sentence saying what it is, a short summary, then sections by topic, never by date. You should see no diary entries ("Oct 31: ..."), no ids or row numbers in the text, and sources only as footnotes under References at the end. Every page should sit in one flat list with no folders, and the first mention of anything that has its own page should link to it.
 1. Look at the index. It should list every article and nothing else, and no page in the wiki should be an index or a diary; dreams.md should be short, only where the last dream stopped and what it left open.
+1. On the TV, there should be no wiki.
 
 ## The menu (phone and laptop)
 
