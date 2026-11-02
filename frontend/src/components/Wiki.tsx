@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import wikiLink from "@flowershow/remark-wiki-link";
 import { errorText } from "../account/session";
 import { capsClass } from "../stage/style";
-import { listWiki, readPage, setWikiBack, setWikiOpen, type WikiListing, type WikiPage } from "../wiki/wiki";
+import { closeWiki, listWiki, onWikiStep, readPage, wikiBack, wikiBackTo, wikiDepth, wikiForward, type WikiListing, type WikiPage } from "../wiki/wiki";
 import { buttonClass, type Place } from "./wikiParts";
 
 // The editor, CodeMirror, is most of the wiki's weight, and most visits
@@ -18,6 +18,10 @@ const Editing = lazy(() => import("./WikiEditor").then((mod) => ({ default: mod.
 export function WikiView() {
   const [listing, setListing] = useState<WikiListing | null>(null);
   const [place, setPlace] = useState<Place>({ kind: "contents" });
+  // Where each of the wiki's history entries is, by depth: the contents
+  // first, then each page or edit opened after it. Back and forward, the
+  // browser's own among them, move between them (see wiki.ts).
+  const stack = useRef<Place[]>([{ kind: "contents" }]);
   const [trouble, setTrouble] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -33,37 +37,43 @@ export function WikiView() {
     scroller.current?.scrollTo({ top: 0 });
   }, [shown]);
 
-  const open = useCallback(async (path: string) => {
-    setTrouble(null);
-    try {
-      setPlace({ kind: "page", page: await readPage(path) });
-    } catch (err) {
-      setTrouble(errorText(err));
-    }
+  // A step further in, as an entry of its own in the browser's history.
+  const go = useCallback((next: Place) => {
+    const depth = wikiForward();
+    stack.current = [...stack.current.slice(0, depth), next];
+    setPlace(next);
   }, []);
 
-  // Back walks out one step: an edit to its page, a page to the contents,
-  // the contents out of the wiki.
-  useEffect(() => {
-    setWikiBack(() => {
-      if (place.kind === "edit") setPlace(place.page ? { kind: "page", page: place.page } : { kind: "contents" });
-      else if (place.kind === "page") setPlace({ kind: "contents" });
-      else return false;
-      return true;
-    });
-    return () => setWikiBack(null);
-  }, [place]);
+  // Changes where the current entry is, with no new entry.
+  const stay = useCallback((next: Place) => {
+    stack.current[wikiDepth()] = next;
+    setPlace(next);
+  }, []);
+
+  useEffect(() => onWikiStep((depth) => setPlace(stack.current[depth] ?? { kind: "contents" })), []);
+
+  const open = useCallback(
+    async (path: string) => {
+      setTrouble(null);
+      try {
+        go({ kind: "page", page: await readPage(path) });
+      } catch (err) {
+        setTrouble(errorText(err));
+      }
+    },
+    [go],
+  );
 
   const files = useMemo(() => listing?.pages.map((p) => p.path) ?? [], [listing]);
 
   return (
     <div className="absolute inset-0 z-40 flex flex-col bg-paper">
       <header className="flex items-center gap-4 border-b border-ivory/10 px-4 pb-2 pt-3.5 sm:px-10 sm:pt-[26px]">
-        <button type="button" onClick={() => setPlace({ kind: "contents" })} className={`${buttonClass} text-[11px] tracking-[0.42em] text-ivory/75 hover:text-ivory`}>
+        <button type="button" onClick={() => wikiBackTo(0)} className={`${buttonClass} text-[11px] tracking-[0.42em] text-ivory/75 hover:text-ivory`}>
           wiki
         </button>
         {place.kind !== "contents" && <span className={`${capsClass} min-w-0 truncate text-ivory/40`}>{place.kind === "edit" ? place.path : place.page.path}</span>}
-        <button type="button" onClick={() => setWikiOpen(false)} className={`${buttonClass} ml-auto text-ivory/60 hover:text-ivory`}>
+        <button type="button" onClick={closeWiki} className={`${buttonClass} ml-auto text-ivory/60 hover:text-ivory`}>
           close
         </button>
       </header>
@@ -74,24 +84,31 @@ export function WikiView() {
             <Contents
               listing={listing}
               onOpen={(path) => void open(path)}
-              onNew={(path) => setPlace({ kind: "edit", page: null, path, draft: `# ${titleOf(path)}\n\n` })}
+              onNew={(path) => go({ kind: "edit", page: null, path, draft: `# ${titleOf(path)}\n\n` })}
             />
           )}
           {place.kind === "page" && (
-            <Reading page={place.page} files={files} onOpen={(path) => void open(path)} onEdit={() => setPlace({ kind: "edit", page: place.page, path: place.page.path, draft: place.page.text })} />
+            <Reading page={place.page} files={files} onOpen={(path) => void open(path)} onEdit={() => go({ kind: "edit", page: place.page, path: place.page.path, draft: place.page.text })} />
           )}
           {place.kind === "edit" && (
             <Suspense fallback={<span className={`${capsClass} text-ivory/45`}>a moment</span>}>
               <Editing
                 key={place.path}
                 place={place}
-                onDraft={(draft) => setPlace({ ...place, draft })}
+                onDraft={(draft) => stay({ ...place, draft })}
                 onSaved={(page) => {
-                  setPlace({ kind: "page", page });
+                  // An edit of a page goes back to that page, now saved; a
+                  // new page becomes a page where its edit was.
+                  const depth = wikiDepth();
+                  const below = stack.current[depth - 1];
+                  if (below?.kind === "page" && below.page.path === page.path) {
+                    stack.current[depth - 1] = { kind: "page", page };
+                    wikiBack();
+                  } else stay({ kind: "page", page });
                   void refresh();
                 }}
                 onDeleted={() => {
-                  setPlace({ kind: "contents" });
+                  wikiBackTo(0);
                   void refresh();
                 }}
               />

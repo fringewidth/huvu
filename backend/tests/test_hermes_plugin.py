@@ -51,6 +51,7 @@ def test_the_guide_goes_into_every_session_prompt():
     assert len(ctx.sections["huvu"]) <= 4000
     # What every skill shares, said once.
     assert "standard columns id, at, ts" in ctx.sections["huvu-skills"] and "(user_id, ts)" in ctx.sections["huvu-skills"]
+    assert "Wikipedia" in ctx.sections["huvu-wiki"]
     assert all(len(s) <= 4000 for s in ctx.sections.values())
 
 

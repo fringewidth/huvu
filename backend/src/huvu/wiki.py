@@ -3,8 +3,9 @@
 The agent owns its wiki. It is a folder of Markdown pages in its Hermes
 profile, `<profile home>/wiki`, which the agent writes with Hermes's own file
 tools, and whose index is the profile's MEMORY.md, always in its prompt.
-huvu imposes no structure on it: the guide says where it is and that it is
-the agent's, and the dream tends it every night.
+Its standard is Wikipedia's (`prompts.WIKI`, a system prompt section of
+every session): one article per subject, a lead, sections by aspect,
+footnoted sources, links, and no logs. The dream tends it every night.
 
 This module is the app's side: list the pages, read one, write one, delete
 one, for the person whose profile it is. A write names the version it was

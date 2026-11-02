@@ -224,11 +224,14 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 
 1. Open the menu. Under "wiki", tap "open". The wiki should cover the whole screen, with an index (huvu's list of its pages, each with what it holds) and every page, newest first.
 1. Tap an index line or a page. The page should open as huvu's writing, with its headings, lists and tables. A link to another page should open that page in place. A link to a page that doesn't exist yet should look faded and do nothing.
-1. Press back (the back button on the phone, Escape on the laptop). It should go back one step: from a page to the list, then out of the wiki.
+1. Press back (the back button on the phone, Escape or the browser's back button on the laptop, the back gesture in a phone's browser). It should go back one step: from a page to the page you came from, then to the list, then out of the wiki. The browser's forward button should not reopen anything after the wiki closes.
+1. Open a page, tap edit, change a word and save. Back should go to the list (or the page you opened it from), not to the old text or the editor.
 1. On a page, tap "edit". The page's text should appear for editing. Change a word and tap "save". The page should show your change.
 1. Edit a page, and before saving, ask huvu in another tab to change the same page. Then save. It should say huvu changed the page while you edited, and let you keep yours or take huvu's.
 1. Tap "new page", type a name, write something and save. The page should appear in the list.
 1. On the TV, there should be no wiki.
+1. Read a few pages the morning after a dream. Each should read like a Wikipedia article about one thing: a first sentence saying what it is, a short summary, then sections by topic, never by date. You should see no diary entries ("Oct 31: ..."), no ids or row numbers in the text, and sources only as footnotes under References at the end. Every page should sit in one flat list with no folders, and the first mention of anything that has its own page should link to it.
+1. Look at the index. It should list every article and nothing else, and no page in the wiki should be an index or a diary; dreams.md should be short, only where the last dream stopped and what it left open.
 
 ## The menu (phone and laptop)
 

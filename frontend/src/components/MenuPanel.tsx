@@ -7,7 +7,7 @@ import { release, useWaiting } from "../account/waiting";
 import { turnOnWebPush, useWebPush } from "../account/webPush";
 import { allowOverApps, turnOffWakeWord, turnOnWakeWord, useWakeWord, WAKE_WORD } from "../voice/wakeWord";
 import { capsClass } from "../stage/style";
-import { setWikiOpen } from "../wiki/wiki";
+import { openWiki } from "../wiki/wiki";
 import type { MenuSection } from "./Menu";
 
 const buttonClass = `${capsClass} -mx-2 min-h-11 shrink-0 px-2 outline-none transition-colors duration-500 focus-visible:ring-1 focus-visible:ring-sindoor/60`;
@@ -198,7 +198,7 @@ function Wiki() {
     <Section title="wiki">
       <div className="flex items-baseline gap-3">
         <p className="m-0 font-bodoni text-[19px] italic leading-[1.3] text-ivory/70">What huvu has learned about you.</p>
-        <button type="button" onClick={() => setWikiOpen(true)} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
+        <button type="button" onClick={openWiki} className={`${buttonClass} ml-auto text-ivory hover:text-sindoor`}>
           open
         </button>
       </div>

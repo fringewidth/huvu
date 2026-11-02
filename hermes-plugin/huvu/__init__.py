@@ -12,6 +12,7 @@ can't tell which session a tool call came from. This plugin fills that in:
    with it. Hermes never shows the model an MCP server's own instructions,
    so this is the one place huvu can say it. BROWSER_HANDOFF follows in a
    section of its own: when to ask the person to take over the browser.
+   WIKI does too: the wiki's standard, Wikipedia's, which every write meets.
    SKILLS_SHARED does too: what every huvu-* skill has in common, said
    once instead of in each pinned skill.
 4. The model's reasoning summary, as it streams, goes to the backend
@@ -270,4 +271,5 @@ def register(ctx) -> None:
     if hasattr(ctx, "register_system_prompt_section"):
         ctx.register_system_prompt_section("huvu", GUIDE)
         ctx.register_system_prompt_section("huvu-browser", prompts.BROWSER_HANDOFF)
+        ctx.register_system_prompt_section("huvu-wiki", prompts.WIKI)
         ctx.register_system_prompt_section("huvu-skills", prompts.SKILLS_SHARED)
