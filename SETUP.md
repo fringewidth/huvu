@@ -113,6 +113,7 @@ docker compose exec huvu /command/s6-svc -r /run/service/huvu
 Add only the ones the user wants. Each person's data is theirs alone: nobody else, family included, sees it through huvu.
 
 1. **Location (OwnTracks).** Add the `location` source with the home's coordinates (`backend/huvu.toml.example`). For each person: `huvu tracker add <username>` prints a QR code that sets OwnTracks up on their phone. Waypoints such as "office" are made by asking huvu.
+1. **Weather.** Add the `weather` source with the home's coordinates (`backend/huvu.toml.example`). It needs no key or account. Other places are added by asking huvu. Check: `weather_now` has a row for home within a minute of the start.
 1. **Browsing (desktop Chrome).** Add the `browser` source. `huvu tracker add <username> --browser` prints a token. In Chrome, load `browser-extension/` unpacked, and paste the token and the address in its options. It sends page titles only, never addresses.
 1. **Mail.** Add the `mail` source. In Cloudflare, enable Email Routing for a subdomain only, such as `mail.example.com`. Enabling it on the zone apex replaces the apex's MX records, so check those first. Then:
    1. `huvu tracker add <username> --mail` prints `HUVU_URL` and `HUVU_TOKEN`.

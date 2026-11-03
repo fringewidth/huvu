@@ -442,6 +442,21 @@ def one_line(text: str) -> str:
     return line if line.endswith(".") else f"{line}."
 
 
+def _columns(columns: list[Any]) -> list[str]:
+    """A table's columns, one line each, with a run of columns that share a
+    description on one line."""
+    lines: list[str] = []
+    run: list[Any] = []
+    for col in [*columns, None]:
+        if run and (col is None or col.description != run[0].description):
+            names = ", ".join(f"`{c.name}` ({c.type})" for c in run)
+            lines.append(f"- {names}: {run[0].description}")
+            run = []
+        if col is not None:
+            run.append(col)
+    return lines
+
+
 def skill(spec: Any) -> str:
     """A source's Hermes skill, SKILL.md, from its spec: the driver's guide,
     then its actions, live tables and history tables."""
@@ -469,13 +484,13 @@ def skill(spec: Any) -> str:
         lines += ["## Live tables", ""]
         for table in live:
             lines += [f"### `{spec.name}_{table.name}`", "", one_line(table.description), ""]
-            lines += [f"- `{col.name}` ({col.type}): {col.description}" for col in table.columns]
+            lines += _columns(table.columns)
             lines.append("")
     if history:
         lines += ["## History tables", ""]
         for table in history:
             lines += [f"### `{spec.name}_{table.name}`", "", one_line(table.description), ""]
-            lines += [f"- `{col.name}` ({col.type}): {col.description}" for col in table.columns]
+            lines += _columns(table.columns)
             if table.indexes:
                 lines += ["", f"Also indexed on {indexes(table.indexes)}."]
             lines.append("")
@@ -521,6 +536,19 @@ For anything about the past (where was I on Saturday, how long do I spend at the
 - To react to someone coming home, register a trigger on `location_transitions` with fire rows and `WHERE changed = 1 AND event = 'enter' AND waypoint = 'near_home'`, not on a distance: it fires the moment they enter.
 - To remember a place someone was at, use `location_waypoint_add` with `from` and `until` (ISO 8601 local times): huvu takes the centre of their fixes in that window, and says how many fixes it used and how far they spread. Few fixes or a wide spread means a rough point: say so, and offer to fix it. With no coordinates and no window, it takes their latest fix. For an address, find its coordinates with a maps tool first.
 - An arrival or departure that came in late (phone offline) has `delay_min`.
+"""
+
+# The weather driver's guide; `{places_max}` and `{past_days}` are its limits.
+WEATHER_GUIDE = """The weather from Open-Meteo at every place in `weather_places`: those huvu's config names, and those added for a person. It is a weather model's estimate for a few square kilometres around each place, not a reading from a gauge or a station.
+
+A place added for a person is theirs alone until they share it with a group; the config's belong to the household. Add a place whenever the weather there matters to your person, and remove it once it no longer does: huvu keeps at most {places_max}, to stay within Open-Meteo's free tier. A new place has its tables within seconds, and its history from {past_days} days back.
+
+- `weather_now` is refreshed every 15 minutes, `weather_hourly` and `weather_daily` every hour. Together they reach from the start of yesterday to 16 days ahead, in each place's own time. Triggers read them like any table, so a trigger never needs a wake to fetch the weather.
+- A place with no row in `weather_now` has no conditions from the last hour, because huvu couldn't reach Open-Meteo. That is unknown, not fair weather.
+- Precipitation, sunshine, radiation and evapotranspiration are amounts over the interval that ends at the row's time. Temperatures, wind and the rest are values at that time.
+- Air quality comes from a separate model whose forecast reaches about 5 days ahead; beyond that its columns are NULL.
+- `weather_history` is every hour that passed at each place, kept for good, and joins the house's other history on `ts`. Use it for anything before the hourly table starts.
+- Never fetch Open-Meteo yourself for a place huvu keeps: the tables hold more than a call would bring. For a place huvu doesn't keep, add it.
 """
 
 # The Home Assistant driver's guide; `{name}` is the source's name.
@@ -744,4 +772,85 @@ TEXT: dict[str, str] = {
     'location.table.waypoints.column.name': 'Its name',
     'location.table.waypoints.column.named_by': "The person who named it; NULL for a group's own",
     'location.table.waypoints.column.radius_m': 'Its radius, metres',
+    'weather.description': 'The weather at home and at every place a person keeps it for: conditions now, hourly and daily forecasts 16 days ahead, air quality, and every past hour, for good.',
+    'weather.action.place_add': "Keeps the weather for a place, for the person you're helping. Give `lat` and `lon`, or neither, and huvu looks up `search` (the name by default; `country` narrows it) and takes the most populous match: check `found` in the result, and if it is the wrong place, remove it and add it again with coordinates. `share` shares it with their group (`group` names which, if they're in several).",
+    'weather.action.place_add.arg.search': 'The name to look up, when it differs from what to call the place',
+    'weather.action.place_add.arg.country': 'The ISO 3166-1 alpha-2 code of the country to look in',
+    'weather.action.place_remove': "Stops keeping the weather for a place the person added, or one of their group's; its history stays. The config's places stay.",
+    'weather.table.places': "Every place huvu keeps the weather for, one row each: the config's, which are the household's, and those added for a person, theirs alone unless shared.",
+    'weather.table.places.column.name': 'What huvu calls it: the `place` of every other weather table',
+    'weather.table.places.column.lat': 'Latitude',
+    'weather.table.places.column.lon': 'Longitude',
+    'weather.table.places.column.elevation_m': 'The elevation the weather model uses, metres; NULL until the first fetch',
+    'weather.table.places.column.timezone': "The place's own timezone, which the local times of its rows are in; NULL until the first fetch",
+    'weather.table.places.column.found': 'What the geocoder matched, for a place added by name; check it is the place meant',
+    'weather.table.places.column.added_by': "The person who added it; NULL for the config's and a group's own",
+    'weather.table.places.column.from_config': "Whether it comes from huvu's config",
+    'weather.table.places.column.updated_at': 'When its forecast was last fetched, ISO 8601; NULL until the first',
+    'weather.table.now': 'Conditions now at each place, one row each: the latest 15 minutes, refreshed every 15 minutes. A place with no row has no conditions from the last hour.',
+    'weather.table.now.column.observed_at': "The end of the 15 minutes the row describes, ISO 8601 in the place's time",
+    'weather.table.hourly': 'Every hour at each place, from the start of yesterday to 16 days ahead, refreshed every hour.',
+    'weather.table.hourly.column.time': "The hour, ISO 8601 with the place's offset",
+    'weather.table.hourly.column.time_ts': 'The hour as seconds since the epoch',
+    'weather.table.hourly.column.date': "The hour's date at the place",
+    'weather.table.daily': "Every day at each place, from yesterday to 16 days ahead, in the place's own days, refreshed every hour.",
+    'weather.table.history': "Every hour that passed at each place, weather and air together, recorded once each and kept for good. `at` and `ts` are the hour, and user_id and group_id are the place's. A place starts with the 92 days before it was added.",
+    'weather.table.history.column.place_time': "The hour in the place's own time, ISO 8601",
+    'weather.column.place': 'The place, by its name in weather_places',
+    'weather.column.as_hourly': 'As in weather_hourly',
+    'weather.column.temperature_c': 'Air temperature 2 m above ground, °C',
+    'weather.column.feels_like_c': 'Apparent temperature, from temperature, humidity, wind and sun, °C',
+    'weather.column.humidity_pct': 'Relative humidity, %',
+    'weather.column.dew_point_c': 'Dew point, °C',
+    'weather.column.precipitation_probability_pct': "Chance of more than 0.1 mm of precipitation, %, from how far the forecast models' runs spread",
+    'weather.column.precipitation_mm': 'Rain, showers and snow together, mm, over the hour before the row\'s time (in weather_now, the 15 minutes before)',
+    'weather.column.rain_mm': 'Rain from large weather systems, mm, over the same interval',
+    'weather.column.showers_mm': 'Rain from convective showers, mm, over the same interval',
+    'weather.column.snowfall_cm': 'Snowfall, cm, over the same interval',
+    'weather.column.weather_code': 'WMO weather code: 0 clear, 1 mainly clear, 2 partly cloudy, 3 overcast, 45 and 48 fog, 51 to 57 drizzle, 61 to 67 rain, 71 to 77 snow, 80 to 82 rain showers, 85 and 86 snow showers, 95 thunderstorm, 96 and 99 thunderstorm with hail',
+    'weather.column.cloud_cover_pct': 'Cloud cover, %',
+    'weather.column.visibility_m': 'Visibility, metres',
+    'weather.column.wind_speed_kmh': 'Wind speed 10 m above ground, km/h',
+    'weather.column.wind_direction_deg': 'Where the wind comes from, degrees clockwise from north',
+    'weather.column.wind_gusts_kmh': 'The strongest gust over the interval, km/h',
+    'weather.column.uv_index': 'UV index',
+    'weather.column.is_day': 'Whether the sun is up',
+    'weather.column.sunshine_s': 'Seconds of sunshine over the interval',
+    'weather.column.pressure_hpa': 'Air pressure reduced to sea level, hPa',
+    'weather.column.cape_jkg': 'Convective available potential energy, J/kg: the energy the air holds for thunderstorms to build',
+    'weather.column.et0_mm': 'FAO-56 reference evapotranspiration over the interval, mm: the water a reference grass gives up to the air',
+    'weather.column.radiation_wm2': 'Mean shortwave solar radiation over the interval, W/m²',
+    'weather.column.soil_moisture': 'Water in the top 1 cm of soil, m³/m³',
+    'weather.column.us_aqi': "US air quality index, the hour's",
+    'weather.column.european_aqi': "European air quality index, the hour's",
+    'weather.column.pm2_5': 'Particulate matter under 2.5 µm, µg/m³',
+    'weather.column.pm10': 'Particulate matter under 10 µm, µg/m³',
+    'weather.column.ozone': 'Ozone, µg/m³',
+    'weather.column.nitrogen_dioxide': 'Nitrogen dioxide, µg/m³',
+    'weather.column.sulphur_dioxide': 'Sulphur dioxide, µg/m³',
+    'weather.column.carbon_monoxide': 'Carbon monoxide, µg/m³',
+    'weather.column.dust': 'Dust, µg/m³',
+    'weather.column.aerosol_optical_depth': 'Aerosol optical depth at 550 nm: the haze between the ground and the sky',
+    'weather.table.daily.column.date': 'The day, at the place',
+    'weather.table.daily.column.weather_code': "The day's most severe WMO weather code, by the legend of weather_hourly",
+    'weather.table.daily.column.temperature_max_c': 'Highest air temperature, °C',
+    'weather.table.daily.column.temperature_min_c': 'Lowest air temperature, °C',
+    'weather.table.daily.column.feels_like_max_c': 'Highest apparent temperature, °C',
+    'weather.table.daily.column.feels_like_min_c': 'Lowest apparent temperature, °C',
+    'weather.table.daily.column.sunrise': "Sunrise, ISO 8601 in the place's time",
+    'weather.table.daily.column.sunset': "Sunset, ISO 8601 in the place's time",
+    'weather.table.daily.column.daylight_s': 'Seconds from sunrise to sunset',
+    'weather.table.daily.column.sunshine_s': 'Seconds of sunshine in the day',
+    'weather.table.daily.column.uv_index_max': 'Highest UV index',
+    'weather.table.daily.column.precipitation_mm': 'Rain, showers and snow together over the day, mm',
+    'weather.table.daily.column.rain_mm': 'Rain from large weather systems over the day, mm',
+    'weather.table.daily.column.showers_mm': 'Rain from convective showers over the day, mm',
+    'weather.table.daily.column.snowfall_cm': 'Snowfall over the day, cm',
+    'weather.table.daily.column.precipitation_hours': 'Hours with any precipitation',
+    'weather.table.daily.column.precipitation_probability_max_pct': 'The highest hourly chance of precipitation, %',
+    'weather.table.daily.column.wind_speed_max_kmh': 'Highest wind speed, km/h',
+    'weather.table.daily.column.wind_gusts_max_kmh': 'Strongest gust, km/h',
+    'weather.table.daily.column.wind_direction_deg': 'Where the wind mostly came from, degrees clockwise from north',
+    'weather.table.daily.column.radiation_mj': 'Shortwave solar radiation over the day, MJ/m²',
+    'weather.table.daily.column.et0_mm': 'FAO-56 reference evapotranspiration over the day, mm',
 }

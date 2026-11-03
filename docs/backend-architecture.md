@@ -333,6 +333,18 @@ huvu has no access to anyone's inbox. A person forwards what they want huvu to h
 1. **When huvu is down.** With a copy in the inbox, the worker logs the failure and the person forwards the mail again later. With none, it rejects the mail, so the sender gets a bounce.
 1. **Privacy and provenance.** Mail is private to its person, like location: every row is theirs. Mail is written by strangers, so both tables are labelled `external`.
 
+## Weather
+
+Decided and built on 2026-11-03. The driver is `huvu_drivers/weather.py`. Before it, the model fetched Open-Meteo itself, through `web_extract` or Python in its terminal, so a trigger on the weather had to wake a model on a timer to fetch it (the owner's 08:00 rain-aware plant check), and the fetch through `web_extract` failed on several mornings. Now the weather is tables, so a trigger reads it with SQL and runs no model, and the dream joins it with the house's history.
+
+1. **Open-Meteo, on its free tier.** No account and no key. Personal home automation counts as non-commercial use under its terms, which allow 10,000 calls a day, 5,000 an hour and 600 a minute, per IP address. A request with more than 10 variables or more than 14 days counts as more than one call, by `variables / 10 × days / 14`. The driver weighs each fetch that way, reserves the whole fetch's weight before its first request, and stops at `daily_calls` (8,000 by default, leaving room for the model's own calls and a development machine behind the same address). A fetch that would pass the budget waits for the next day; a cheaper one still runs. The data is CC BY 4.0.
+1. **Places.** A place is a named point. The config's (`places`) belong to the household's group (`group`). The model adds more for its person with `weather_place_add`, by coordinates, or by name through Open-Meteo's geocoder, which takes the most populous match and reports the others, since its first match for a name can be a village of the same name (Gurgaon was one in Maharashtra). A place is its person's alone until shared with a group, and every row of every weather table carries the place's scope, so nobody reads the weather at a place someone keeps to themselves. At most `places_max` places (12 by default); the driver keeps them in `weather.db` in its folder.
+1. **Live tables.** `weather_now` (conditions over the latest 15 minutes, fetched every 15 minutes), `weather_hourly` and `weather_daily` (from the start of yesterday to 16 days ahead, fetched every hour, in each place's own timezone), and `weather_places`. Air quality (CAMS, through Open-Meteo's air quality API) is merged into the hours; its forecast reaches about 5 days, and beyond that its columns are NULL. A place whose conditions are more than an hour old leaves `weather_now`, so a stale reading is never taken for the present. A table no place has data for yet stays unavailable rather than empty.
+1. **History.** Every hour that has passed at each place is a row of `weather_history`, weather and air together, recorded once each with `at` the hour. A new place starts with the 92 days before it, as far back as the forecast API reaches, and after downtime each forecast fetch reaches back to the latest recorded hour, so a gap of up to 92 days fills itself. A place removed and added again under the same owner records no hour twice.
+1. **Cost.** With 12 places, about 4,400 calls a day: each place's conditions weigh 2.3 every 15 minutes, its forecast and air 5.9 every hour, and its first fetch about 41.
+1. **The skill.** 10,000 characters, pinned in every session like every huvu skill. `weather_hourly` describes the 33 weather and air columns, and `weather_now` and `weather_history` point to it.
+1. **Not built**: older history from Open-Meteo's archive (ERA5, back to 1940) for climate questions, and a place that follows a person's phone.
+
 ## Actions and the policy
 
 Every write goes through one policy check in the backend, whoever asks: Hermes, a script, or a frontend button.
@@ -466,6 +478,7 @@ backend/
     location.py       where each person is, from OwnTracks
     browser.py        what each person browses, as page titles, from huvu's Chrome extension
     mail.py           the mail each person forwards to huvu, its files and their text, checked for DKIM
+    weather.py        the weather, forecasts and air quality at each place, and every past hour, from Open-Meteo
   tests/              fakes.py (a fake house and Hermes), fake_ha.py (a fake Home Assistant)
 hermes-plugin/huvu/   the Hermes plugin
 ```

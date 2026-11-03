@@ -322,6 +322,15 @@ huvu keeps what it learns about you in a wiki of its own. It writes most of it a
 1. From another family member's phone, ask huvu about your bills. It should say it can't see them.
 1. Stop the backend and forward a bill from Gmail to `bills@mail.hrishik.me`. No bounce should come back. Start the backend and forward it again. huvu should have it once.
 
+## Weather
+
+1. Ask huvu what the weather is like now, and whether it will rain tomorrow. It should answer at once, with no web search, and its numbers should match a weather app's to within a degree or two.
+1. Ask how much it rained yesterday, and what the air quality is. It should say both.
+1. Ask huvu to keep the weather for a city the family cares about, by its name. It should say which city it found, with its state and country. Ask about the weather there. It should answer.
+1. From another family member's phone, ask about the weather in that city. huvu shouldn't have it. Then, from your phone, ask huvu to share that place with the family, and ask again from theirs. It should answer now.
+1. Ask huvu to tell you when it starts raining at home. It should set a trigger. On the next rainy day, the notification should come within about 15 minutes of the rain starting.
+1. Ask huvu to stop keeping that city. It should say it no longer keeps it.
+
 ## YouTube
 
 1. On the Android phone, say "play Kesariya". huvu should say what it found, and a card should show under its answer: the video's picture, its title, its channel and "open in youtube". Tap it. The YouTube app should open on that video.

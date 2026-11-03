@@ -69,6 +69,14 @@ url = "http://localhost:8642"
 # name = "mail"
 # driver = "huvu_drivers.mail:MailSource"
 
+# The weather, forecasts and air quality at each place, from Open-Meteo:
+# free, no key. `places` belong to `group`; huvu adds more when a person
+# wants one, up to `places_max`. `daily_calls` keeps it inside the free tier.
+# [[sources]]
+# name = "weather"
+# driver = "huvu_drivers.weather:WeatherSource"
+# options = { places = { home = { lat = 17.385, lon = 78.4867 } }, group = "home" }
+
 # The model behind each tier. An ask runs on the tier the router picks, pro
 # when it can't; a trigger's wakes on its own tier, basic by default;
 # advanced needs the person's yes.
