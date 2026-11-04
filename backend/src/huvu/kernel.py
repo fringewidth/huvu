@@ -9,6 +9,7 @@ with its sessions and wakes, and the link to the frontend.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -22,7 +23,7 @@ from .accounts import Accounts
 from .attendance import Attendance
 from .builtin.chat import ChatSource
 from .builtin.huvu import HuvuSource
-from .config import Config
+from .config import REPO, Config
 from .conversations import ConversationHub
 from .data import DataStore
 from .db import connect, from_iso, iso
@@ -147,7 +148,30 @@ class Kernel:
             shared = (group_named.name if group_named else group, people)
         pending = self.policy.pending_for(self.accounts.scope(user, group))
         folder = wiki.folder(self.config.hermes_home, self.accounts.profile(user, group))
-        return prompts.situation(f"{self.now():%a %Y-%m-%d %H:%M}", helping, shared, self.huvu.mode(), len(pending), str(folder))
+        return prompts.situation(self.stamp(), helping, shared, self.huvu.mode(), len(pending), str(folder))
+
+    def stamp(self) -> str:
+        """The local day, date and time, as the model reads it."""
+        return f"{self.now():%a %Y-%m-%d %H:%M}"
+
+    def prompt_version(self) -> str:
+        """A hash of every text huvu puts in a Hermes session's system
+        prompt: each source's skill (all pinned in full, skills.auto_load),
+        the plugin's sections and the soul. Hermes keeps a session's system
+        prompt for the session's life, to keep its cache, so a session made
+        under another version never sees what changed since; a conversation
+        starts a fresh one instead (conversations.py). Found 2026-11-04,
+        when a phone conversation older than huvu-weather searched the web
+        for the weather."""
+        texts = [prompts.skill(spec) for spec in sorted(self.registry.specs(), key=lambda s: s.name)]
+        texts += [prompts.GUIDE, prompts.BROWSER_HANDOFF, prompts.WIKI, prompts.SKILLS_SHARED]
+        soul = REPO / "SOUL.md"
+        texts.append(soul.read_text() if soul.exists() else "")
+        digest = hashlib.sha256()
+        for text in texts:
+            digest.update(text.encode())
+            digest.update(b"\0")
+        return digest.hexdigest()[:16]
 
     def may_browse(self, session: str, user: str | None, group: str | None) -> bool:
         """Whether a Hermes session may use the browser, and the external
@@ -185,8 +209,9 @@ class Kernel:
         """A source's spec changed while it runs (see SourceContext.respec):
         describe it again, and rebuild what is built from specs. The MCP
         tool list doesn't change, since source actions run through `act`,
-        so no Hermes session loses its prompt cache; only the source's
-        skill does. A trigger script whose grant names a tool that is gone
+        but the source's skill does, and it is pinned in every session's
+        system prompt: each conversation's next ask starts a fresh session
+        (prompt_version). A trigger script whose grant names a tool that is gone
         fails at its next run, as a trigger.error row the dream reads."""
         old, new = self.registry.respec(name)
         self.data.ensure(new)

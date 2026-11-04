@@ -42,17 +42,20 @@ class SessionBook:
         device: str | None = None,
         trigger_id: str | None = None,
         route: str | None = None,
+        prompt: str | None = None,
     ) -> None:
         self._conn.execute(
-            "INSERT INTO hermes_sessions (id, kind, user_id, group_id, device_id, trigger_id, created_at, route) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (id) DO NOTHING",
-            (session_id, kind, user, group, device, trigger_id, iso(self._now()), route),
+            "INSERT INTO hermes_sessions (id, kind, user_id, group_id, device_id, trigger_id, created_at, route, prompt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
+            (session_id, kind, user, group, device, trigger_id, iso(self._now()), route, prompt),
         )
 
-    def route(self, session_id: str) -> str | None:
-        """The route a chat session runs on (Route.key in routing.py)."""
-        row = self._conn.execute("SELECT route FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone()
-        return row["route"] if row else None
+    def matches(self, session_id: str, *, route: str, prompt: str) -> bool:
+        """Whether a chat session runs on `route` (Route.key in routing.py)
+        with version `prompt` of huvu's texts in its system prompt
+        (Kernel.prompt_version): the two things a session keeps for life."""
+        row = self._conn.execute("SELECT route, prompt FROM hermes_sessions WHERE id = ?", (session_id,)).fetchone()
+        return row is not None and row["route"] == route and row["prompt"] == prompt
 
     def owner(self, session_id: str | None) -> SessionOwner | None:
         query = "SELECT user_id, group_id, device_id FROM hermes_sessions WHERE id = ?"

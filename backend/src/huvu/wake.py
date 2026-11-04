@@ -231,7 +231,7 @@ class Waker:
             row = self._mine(wake_id, device)
         user = row["user_id"]
         profile = self._kernel.accounts.profile(user)
-        message = _with_actions(f"{prompts.mode_note(mode)}\n\n{text}", actions or [], self._kernel.now().tzinfo)
+        message = _with_actions(f"{prompts.mode_note(mode, self._kernel.stamp())}\n\n{text}", actions or [], self._kernel.now().tzinfo)
         session = row["session"]
         history: list[dict[str, str]] = []
         if row["carried"] is not None:

@@ -496,14 +496,35 @@ async def _drain(events) -> list[tuple[str, dict]]:
     return [item async for item in events]
 
 
-async def test_every_ask_says_whether_it_was_spoken_or_typed(kernel, hermes):
+async def test_every_ask_says_when_and_whether_it_was_spoken_or_typed(kernel, hermes, clock):
+    await collect(kernel, await kernel.conversations.ask("c1", "what's up", user="me", mode="voice"))
+    assert hermes.messages[-1][1].startswith("(huvu, Sat 2026-10-03 23:50: they're talking to you by voice")
+    assert "no emojis" in hermes.messages[-1][1] and hermes.messages[-1][1].endswith(")\n\nwhat's up")
+    # A session that never expires runs for days: each ask says its own date.
+    clock.advance(days=2, minutes=15)
+    await collect(kernel, await kernel.conversations.ask("c1", "and now?", user="me"))
+    assert hermes.messages[-1][1].endswith("(huvu, Tue 2026-10-06 00:05: they're typing to you, and your answer is read on screen. Not a request, no reply needed.)\n\nand now?")
+
+
+async def test_a_session_older_than_huvus_texts_starts_over(kernel, hermes, home, monkeypatch):
     from huvu import prompts
 
-    await collect(kernel, await kernel.conversations.ask("c1", "what's up", user="me", mode="voice"))
-    assert hermes.messages[-1][1] == f"{prompts.VOICE_NOTE}\n\nwhat's up"
-    assert "no emojis" in prompts.VOICE_NOTE
-    await collect(kernel, await kernel.conversations.ask("c1", "and now?", user="me"))
-    assert hermes.messages[-1][1] == f"{prompts.TEXT_NOTE}\n\nand now?"
+    await collect(kernel, await kernel.conversations.ask("c1", "one", user="me"))
+    await collect(kernel, await kernel.conversations.ask("c1", "two", user="me"))
+    assert len(hermes.sessions) == 1
+    # A skill changed (a source added, a spec changed): Hermes keeps the old
+    # one in the session's system prompt, so the next ask starts afresh.
+    real = prompts.skill
+    monkeypatch.setattr(prompts, "skill", lambda spec: real(spec) + "\nA table added since.")
+    await collect(kernel, await kernel.conversations.ask("c1", "three", user="me"))
+    assert len(hermes.sessions) == 2 and hermes.messages[-1][0] == hermes.sessions[-1]
+    assert "Them: one\nYou: ok\nThem: two\nYou: ok\n</earlier>" in hermes.messages[-1][1]
+    await collect(kernel, await kernel.conversations.ask("c1", "four", user="me"))
+    assert len(hermes.sessions) == 2
+    # So does a change to the guide in every session's system prompt.
+    monkeypatch.setattr(prompts, "GUIDE", prompts.GUIDE + "\nA new rule.")
+    await collect(kernel, await kernel.conversations.ask("c1", "five", user="me"))
+    assert len(hermes.sessions) == 3
 
 
 async def test_ui_learn_voice_opens_the_recording_screen_on_a_personal_device(kernel, hermes):

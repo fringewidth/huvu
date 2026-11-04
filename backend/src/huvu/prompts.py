@@ -276,17 +276,20 @@ def action_note(when: str, text: str) -> str:
     return f"(Owner action in the app, {when}: {text}. Not a request, no reply needed.)"
 
 
-# Rides with every ask from the app: how it was made. A spoken answer is
+# Rides with every ask from the app: when it was made and how. A session
+# can run for days, and the situation block's time comes once, at its
+# start, so each ask says the date and time itself. A spoken answer is
 # heard, not read, so it gets none of what only reads well.
 VOICE_NOTE = (
-    "(huvu: they're talking to you by voice, and your answer is spoken aloud. Write it to be heard: "
+    "(huvu, {now}: they're talking to you by voice, and your answer is spoken aloud. Write it to be heard: "
     "plain sentences, no emojis, no markdown, lists or links. Not a request, no reply needed.)"
 )
-TEXT_NOTE = "(huvu: they're typing to you, and your answer is read on screen. Not a request, no reply needed.)"
+TEXT_NOTE = "(huvu, {now}: they're typing to you, and your answer is read on screen. Not a request, no reply needed.)"
 
 
-def mode_note(mode: str) -> str:
-    return VOICE_NOTE if mode == "voice" else TEXT_NOTE
+def mode_note(mode: str, now: str) -> str:
+    """`now` is the local day, date and time (Kernel.stamp)."""
+    return (VOICE_NOTE if mode == "voice" else TEXT_NOTE).format(now=now)
 
 
 # The router's one question to Clef-flash (routing.py), for every ask: does

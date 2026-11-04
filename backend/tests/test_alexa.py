@@ -155,7 +155,7 @@ async def test_an_ask_goes_to_the_tv_showing_huvu(kernel, family, hermes):
     await asyncio.gather(*alexa._asks)
     [turn] = kernel.conversations.turns(family.tv.id)
     assert turn.ask == "what time is it"
-    assert any(message.startswith(prompts.mode_note("voice")) and message.endswith("what time is it") for _, message in hermes.messages)
+    assert any(message.startswith(prompts.mode_note("voice", kernel.stamp())) and message.endswith("what time is it") for _, message in hermes.messages)
     showing.cancel()
 
 

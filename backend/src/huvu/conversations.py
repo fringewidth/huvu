@@ -14,7 +14,8 @@ after it starts a fresh session, primed with a transcript of the asks and
 answers so far: with the cache cold, a short transcript costs less than
 replaying the old session's thinking and tool output. When it never
 expires, a session always continues. A fresh session (also after a
-rewind or a change of model) reads only the latest turns that fit in its
+rewind, a change of model, or a change to huvu's texts in the system
+prompt, which Hermes keeps for a session's life) reads only the latest turns that fit in its
 transcript (`TRANSCRIPT_CHARS`, and Hermes's cap on a message), and the
 model reads older ones with data_sql, from `chat_turns`.
 
@@ -256,7 +257,7 @@ class ConversationHub:
         actions = actions or []
         tz = self._kernel.now().tzinfo
         self._kernel.attendance.touch(conversation_id)
-        asked = f"{prompts.mode_note(mode)}\n\n{text}"
+        asked = f"{prompts.mode_note(mode, self._kernel.stamp())}\n\n{text}"
         if replaces is not None:
             index = next((i for i, t in enumerate(kept) if t.id == replaces), None)
             if index is None:
@@ -267,22 +268,24 @@ class ConversationHub:
             self._db.execute("UPDATE conversations SET hermes_session = NULL WHERE id = ?", (conversation_id,))
             session = None
         route = await self._kernel.router.route(text, notes=bool(self._notes(conversation_id)))
+        prompt = self._kernel.prompt_version()
         if route.tier == "basic":
             # A one-off: a session of its own with the ask alone, so the
             # main session and its cache are never touched.
             message = asked
-            session = await self._new_session(conversation_id, user, group, profile, route.key, main=False)
+            session = await self._new_session(conversation_id, user, group, profile, route.key, prompt, main=False)
         else:
-            if session is not None and (self._cold(session) or self._kernel.sessions.route(session) != route.key):
+            if session is not None and (self._cold(session) or not self._kernel.sessions.matches(session, route=route.key, prompt=prompt)):
                 session = None
             notes = self._take_notes(conversation_id)
             message = _with_notes(_with_actions(asked, actions, tz), notes, tz)
             if session is None:
-                # A rewind, a cold cache, another model, or a session the
-                # retention sweep deleted: a fresh session carries the
+                # A rewind, a cold cache, another model, huvu's texts
+                # changed since (a skill, the guide, the soul), or a session
+                # the retention sweep deleted: a fresh session carries the
                 # conversation so far, the quick turns among it.
                 message = _seeded(kept, message, tz, conversation_id, TRANSCRIPT_CHARS)
-                session = await self._new_session(conversation_id, user, group, profile, route.key, main=True)
+                session = await self._new_session(conversation_id, user, group, profile, route.key, prompt, main=True)
             else:
                 message = _with_quick_turns(message, _unseen(kept, session), tz)
         turn = Turn(
@@ -360,7 +363,7 @@ class ConversationHub:
         return row
 
     async def _new_session(
-        self, conversation_id: str, user: str | None, group: str | None, profile: Profile, route: str, *, main: bool
+        self, conversation_id: str, user: str | None, group: str | None, profile: Profile, route: str, prompt: str, *, main: bool
     ) -> str:
         """A Hermes session for the conversation. `main` makes it the one
         its next asks on pro continue; a quick turn's session is used once."""
@@ -369,7 +372,7 @@ class ConversationHub:
         # two quick turns can start in the same minute: the id keeps it unique.
         title = f"huvu {'chat' if main else 'quick turn'} on {conversation_id} {self._kernel.now():%Y-%m-%d %H:%M} ({session})"
         await self._kernel.hermes.create_session(profile, session, title=title)
-        self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id, route=route)
+        self._kernel.sessions.record(session, "chat", user=user, group=group, device=conversation_id, route=route, prompt=prompt)
         if main:
             self._db.execute("UPDATE conversations SET hermes_session = ? WHERE id = ?", (session, conversation_id))
         return session

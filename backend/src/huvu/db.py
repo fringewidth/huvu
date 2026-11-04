@@ -227,7 +227,10 @@ CREATE TABLE IF NOT EXISTS hermes_sessions (
     last_used_at TEXT,
     -- A chat session's model, provider and effort (Route.key in
     -- routing.py), which its prompt cache depends on.
-    route TEXT
+    route TEXT,
+    -- The version of huvu's texts in its system prompt
+    -- (Kernel.prompt_version), which Hermes keeps for the session's life.
+    prompt TEXT
 );
 
 -- Wakes (wake.py): a model instance a trigger started, and the
@@ -263,7 +266,7 @@ CREATE INDEX IF NOT EXISTS wakes_session ON wakes (session);
 
 # Columns added to a table after it was first made, which CREATE TABLE IF
 # NOT EXISTS doesn't add to an older database.
-ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("notifications", "sender_id", "TEXT"), ("push_tokens", "keys", "TEXT"), ("triggers", "skip", "INTEGER NOT NULL DEFAULT 0")]
+ADDED_COLUMNS = [("hermes_sessions", "route", "TEXT"), ("hermes_sessions", "prompt", "TEXT"), ("notifications", "sender_id", "TEXT"), ("push_tokens", "keys", "TEXT"), ("triggers", "skip", "INTEGER NOT NULL DEFAULT 0")]
 
 
 # How long a statement waits for a lock another connection holds, in ms,
