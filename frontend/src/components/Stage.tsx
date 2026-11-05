@@ -17,6 +17,7 @@ import { useScrollIntent } from "../stage/useScrollIntent";
 import { useSlotGeometry } from "../stage/useSlotGeometry";
 import { useStable } from "../stage/useStable";
 import { useWide } from "../stage/useWide";
+import { dayKey, dayLabel } from "../stage/when";
 import { speaking, stopSpeaking } from "../voice/speaker";
 import { isWikiOpen, onWikiChange, useWikiOpen, wikiBack } from "../wiki/wiki";
 import { useSpokenAnswers } from "../voice/useSpokenAnswers";
@@ -689,17 +690,37 @@ export function Stage() {
         >
           <li aria-hidden="true" className={view.kind === "history" ? "mt-auto" : ""} />
           <AnimatePresence mode="popLayout" initial={false}>
-            {shown.map((turn) => (
-              <TurnView
-                key={turn.id}
-                turn={turn}
-                variant={view.kind === "history" ? "row" : "hero"}
-                wide={wide}
-                answerShown={ui.voiceAnswerText || !voiceStage}
-                rewindable={!wake}
-                actions={turnActions}
-              />
-            ))}
+            {/* History heads each day's first turn with the day, the way
+                a chat app does; each turn carries its own time. */}
+            {shown.flatMap((turn, i) => {
+              const row = (
+                <TurnView
+                  key={turn.id}
+                  turn={turn}
+                  variant={view.kind === "history" ? "row" : "hero"}
+                  wide={wide}
+                  answerShown={ui.voiceAnswerText || !voiceStage}
+                  rewindable={!wake}
+                  actions={turnActions}
+                />
+              );
+              const day = dayKey(turn.at);
+              if (view.kind !== "history" || (i > 0 && dayKey(shown[i - 1].at) === day)) return [row];
+              return [
+                <m.li
+                  key={`day:${day}`}
+                  layout="position"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0, transition: { duration: 0.35, ease: EASE } }}
+                  transition={{ layout: { duration: 0.8, ease: EASE }, default: { duration: 0.6, ease: EASE } }}
+                  className={`${capsClass} halo -mb-3 text-center text-ivory/40`}
+                >
+                  {dayLabel(turn.at)}
+                </m.li>,
+                row,
+              ];
+            })}
             {view.kind === "stage" && heroId === null && !wake && (
               <m.li
                 key="empty"

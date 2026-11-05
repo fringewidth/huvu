@@ -6,6 +6,7 @@ import { ui } from "../config/interaction";
 import { land, snapshot, type Snapshot } from "../stage/flight";
 import { chipsFor, interleave, isBrowser, kindOf, partsInSlot, type Slot } from "../stage/parts";
 import { capsClass, EASE } from "../stage/style";
+import { dateOf, timeOf } from "../stage/when";
 import type { ImagePart, Notice, RichPart, ToolPart, Turn } from "../chat/thread";
 import type { MenuSection } from "./Menu";
 
@@ -274,9 +275,51 @@ export const TurnView = memo(function TurnView({ ref, turn, variant, wide, answe
           </m.div>
         )}
       </AnimatePresence>
+
+      <Stamp at={turn.at} />
     </m.li>
   );
 });
+
+const stampClass = "halo font-display text-[11px] tabular-nums text-ivory/40";
+
+// When the turn was asked, small at its bottom right. A tap adds the date
+// beside the time, and another takes it away. A screen with no input of
+// its own shows the time alone; its history heads each day anyway.
+function Stamp({ at }: { at: number }) {
+  const [dated, setDated] = useState(false);
+  const label = (
+    <>
+      {/* Right aligned, so the time stays put while the date comes and
+          goes to its left. */}
+      <AnimatePresence initial={false}>
+        {dated && (
+          <m.span key="date" {...fade}>
+            {dateOf(at)} ·{" "}
+          </m.span>
+        )}
+      </AnimatePresence>
+      <span>{timeOf(at)}</span>
+    </>
+  );
+  return (
+    <div className="relative z-10 -mt-1 flex justify-end">
+      {ui.hasInput ? (
+        <button
+          type="button"
+          aria-pressed={dated}
+          aria-label={dated ? `${dateOf(at)}, ${timeOf(at)}` : `${timeOf(at)}, show the date`}
+          onClick={() => setDated(!dated)}
+          className={`${stampClass} pointer-events-auto -my-3 -mr-2 min-h-11 px-2 outline-none transition-colors duration-500 hover:text-ivory/70 focus-visible:text-sindoor focus-visible:ring-1 focus-visible:ring-sindoor/60`}
+        >
+          {label}
+        </button>
+      ) : (
+        <span className={stampClass}>{label}</span>
+      )}
+    </div>
+  );
+}
 
 interface PartsProps {
   here: RichPart[];

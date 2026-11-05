@@ -7,10 +7,11 @@ import { PLATE } from "../config/palette";
 // real gateway sends any. Dev builds only, and only with ?seed in the URL.
 export function devSeed(): Turn[] {
   if (!import.meta.env.DEV || !new URLSearchParams(window.location.search).has("seed")) return [];
-  // Dated yesterday, like real history would be, so the stage treats them
-  // as old turns: they don't grow the garland or get announced.
-  const at = Date.now() - 86_400_000;
-  return SEED.map((t, i) => ({ id: `seed-${i}`, at, feed: null, notice: null, thinking: "", parts: [], running: false, stopping: false, ending: null, ...t }));
+  // Dated over the past few days, like real history would be, so the
+  // stage treats them as old turns (they don't grow the garland or get
+  // announced) and the history heads more than one day.
+  const at = (i: number) => Date.now() - (SEED.length - i) * 20 * 3_600_000;
+  return SEED.map((t, i) => ({ id: `seed-${i}`, at: at(i), feed: null, notice: null, thinking: "", parts: [], running: false, stopping: false, ending: null, ...t }));
 }
 
 const tool = (id: string, toolName: string, args: Record<string, unknown>, result: unknown = {}): RichPart => ({
